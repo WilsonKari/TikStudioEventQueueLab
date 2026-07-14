@@ -17,6 +17,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(TikStudioEventCore STATIC
   Core/Private/EventQueueSystem/TikStudioEventQueueSystem.cpp
+  Core/Private/EventQueueSystem/TSEventQueueSystemSettings.cpp
   Core/Private/EventQueueSystem/Events/TikStudioEventQueueSystem_Chat.cpp
   Core/Private/EventQueueSystem/Events/TikStudioEventQueueSystem_Gift.cpp
   Core/Private/EventQueueSystem/Events/TikStudioEventQueueSystem_Like.cpp

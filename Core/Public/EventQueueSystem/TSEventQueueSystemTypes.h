@@ -1,8 +1,60 @@
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
+
+enum class ETSEventFlow : std::uint8_t
+{
+    Chat,
+    Gift,
+    GiftCombo,
+    Follow,
+    Like,
+    LikeUser,
+    MemberIdentity,
+    MemberNormalized,
+    RoomUser,
+    RoomUserMilestone,
+    RoomUserTop1Change,
+    Share,
+    ShareMilestone,
+    Count
+};
+
+inline constexpr std::size_t TSEventFlowCount =
+    static_cast<std::size_t>(ETSEventFlow::Count);
+
+constexpr std::size_t ToIndex(ETSEventFlow Flow) noexcept
+{
+    return static_cast<std::size_t>(Flow);
+}
+
+enum class ETSEventExpirePolicy : std::uint8_t
+{
+    Discard,
+    Consolidate
+};
+
+// El reloj monotónico evita que cambios en la hora del sistema alteren el TTL.
+using FTSEventQueueClock = std::chrono::steady_clock;
+using FTSEventQueueTimePoint = FTSEventQueueClock::time_point;
+
+using FTSEmissionId = std::uint64_t;
+using FTSEmissionSequence = std::uint64_t;
+
+// Metadatos portables que el core necesita para administrar una emisión.
+struct FTSEmissionEnvelope
+{
+    FTSEmissionId EmissionId = 0;
+    ETSEventFlow Flow = ETSEventFlow::Chat;
+    FTSEmissionSequence Sequence = 0;
+    FTSEventQueueTimePoint CreatedAt{};
+    FTSEventQueueTimePoint ExpiresAt{};
+    std::int64_t PriorityScore = 0;
+};
 
 // Instantánea portable de los datos comunes del usuario recibidos con un evento.
 struct FTSUserSnapshot
