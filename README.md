@@ -5,7 +5,7 @@ Laboratorio en C++ creado con Visual Studio y CMake.
 ## Requisitos
 
 - Visual Studio con las herramientas de desarrollo de C++.
-- CMake 3.10 o posterior.
+- CMake 3.12 o posterior.
 - Ninja.
 
 ## Compilar
