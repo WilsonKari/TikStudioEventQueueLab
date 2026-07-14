@@ -2,67 +2,67 @@
 
 FTSEventQueueSettings::FTSEventQueueSettings()
 {
-    GetFlowSettings(ETSEventFlow::Chat) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Chat)] = FTSFlowQueueSettings{
         true, 40, std::chrono::milliseconds{8000},
         ETSEventExpirePolicy::Discard, 30, false
     };
 
-    GetFlowSettings(ETSEventFlow::Gift) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Gift)] = FTSFlowQueueSettings{
         true, 70, std::chrono::milliseconds{45000},
         ETSEventExpirePolicy::Discard, 1000, false
     };
 
-    GetFlowSettings(ETSEventFlow::GiftCombo) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::GiftCombo)] = FTSFlowQueueSettings{
         true, 80, std::chrono::milliseconds{60000},
         ETSEventExpirePolicy::Discard, 1000, false
     };
 
-    GetFlowSettings(ETSEventFlow::Follow) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Follow)] = FTSFlowQueueSettings{
         true, 60, std::chrono::milliseconds{30000},
         ETSEventExpirePolicy::Discard, 10, false
     };
 
-    GetFlowSettings(ETSEventFlow::Like) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Like)] = FTSFlowQueueSettings{
         true, 25, std::chrono::milliseconds{10000},
         ETSEventExpirePolicy::Discard, 1, false
     };
 
-    GetFlowSettings(ETSEventFlow::LikeUser) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::LikeUser)] = FTSFlowQueueSettings{
         true, 10, std::chrono::milliseconds{5000},
         ETSEventExpirePolicy::Discard, 5, false
     };
 
-    GetFlowSettings(ETSEventFlow::MemberIdentity) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::MemberIdentity)] = FTSFlowQueueSettings{
         true, 5, std::chrono::milliseconds{6000},
         ETSEventExpirePolicy::Discard, 10, false
     };
 
-    GetFlowSettings(ETSEventFlow::MemberNormalized) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::MemberNormalized)] = FTSFlowQueueSettings{
         true, 20, std::chrono::milliseconds{12000},
         ETSEventExpirePolicy::Discard, 1, false
     };
 
-    GetFlowSettings(ETSEventFlow::RoomUser) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::RoomUser)] = FTSFlowQueueSettings{
         true, 35, std::chrono::milliseconds{15000},
         ETSEventExpirePolicy::Discard, 1, false
     };
 
-    GetFlowSettings(ETSEventFlow::RoomUserMilestone) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::RoomUserMilestone)] = FTSFlowQueueSettings{
         true, 30, std::chrono::milliseconds{8000},
         ETSEventExpirePolicy::Discard, 1, false
     };
 
-    GetFlowSettings(ETSEventFlow::RoomUserTop1Change) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::RoomUserTop1Change)] = FTSFlowQueueSettings{
         true, 50, std::chrono::milliseconds{10000},
         ETSEventExpirePolicy::Discard, 2, false
     };
 
-    GetFlowSettings(ETSEventFlow::Share) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Share)] = FTSFlowQueueSettings{
         true, 55, std::chrono::milliseconds{25000},
         ETSEventExpirePolicy::Discard, 10, false
     };
 
-    GetFlowSettings(ETSEventFlow::ShareMilestone) = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::ShareMilestone)] = FTSFlowQueueSettings{
         true, 50, std::chrono::milliseconds{15000},
         ETSEventExpirePolicy::Discard, 1, false
     };
@@ -73,7 +73,6 @@ FTSEventQueueSettings::FTSEventQueueSettings()
     Fairness.AgingPointsPerSecond = 0.0;
     Fairness.AgingMaxBonus = 20;
 
-    Pump.bPumpOnFirstEnqueue = true;
+    Pump.bPumpAfterEnqueueWhenIdle = true;
     Pump.bPumpAfterConfirm = true;
-    Pump.bRecomputeOnPump = true;
 }
