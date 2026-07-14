@@ -78,8 +78,10 @@ enum class ETSEnqueueStatus : std::uint8_t
     AcceptedWithEviction,
     RejectedInvalidFlow,
     RejectedDisabled,
-    // bOverrideTTL es true y TTLOverride es negativo.
+    // El TTL efectivo, proveniente del override o de los settings, es negativo.
     RejectedInvalidTTL,
+    // No puede producirse un nuevo par válido de EmissionId y Sequence.
+    RejectedIdentityExhausted,
     RejectedAtCapacity
 };
 
