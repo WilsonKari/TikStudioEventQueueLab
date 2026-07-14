@@ -2,6 +2,6 @@
 
 int main()
 {
-    std::cout << "TikStudioEventQueueLab ready1.\n";
+    std::cout << "TikStudioEventQueueLab ready.\n";
     return 0;
 }
