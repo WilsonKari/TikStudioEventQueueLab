@@ -3,6 +3,8 @@
 #include "EventQueueSystem/TSEventQueueSystemOperations.h"
 #include "EventQueueSystem/TSEventQueueSystemSettings.h"
 
+#include <memory>
+
 class TikStudioEventQueueSystem final
 {
 public:
@@ -12,6 +14,24 @@ public:
         FTSEventQueueSettings Settings = FTSEventQueueSettings{},
         FTSNowProvider NowProvider = {}
     );
+
+    ~TikStudioEventQueueSystem();
+
+    TikStudioEventQueueSystem(
+        const TikStudioEventQueueSystem&
+    ) = delete;
+
+    TikStudioEventQueueSystem& operator=(
+        const TikStudioEventQueueSystem&
+    ) = delete;
+
+    TikStudioEventQueueSystem(
+        TikStudioEventQueueSystem&&
+    ) noexcept;
+
+    TikStudioEventQueueSystem& operator=(
+        TikStudioEventQueueSystem&&
+    ) noexcept;
 
     [[nodiscard]]
     FTSEnqueueResult Enqueue(const FTSEnqueueRequest& Request);
@@ -30,4 +50,9 @@ public:
 
     [[nodiscard]]
     FTSCancelInFlightResult CancelInFlight(FTSEmissionId EmissionId);
+
+private:
+    class FImpl;
+
+    std::unique_ptr<FImpl> Impl;
 };
