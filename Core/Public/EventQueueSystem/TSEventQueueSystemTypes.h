@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,12 @@ constexpr std::size_t ToIndex(ETSEventFlow Flow) noexcept
     return static_cast<std::size_t>(Flow);
 }
 
+[[nodiscard]]
+constexpr bool IsValidFlow(ETSEventFlow Flow) noexcept
+{
+    return ToIndex(Flow) < TSEventFlowCount;
+}
+
 enum class ETSEventExpirePolicy : std::uint8_t
 {
     Discard,
@@ -41,6 +48,9 @@ enum class ETSEventExpirePolicy : std::uint8_t
 // El reloj monotónico evita que cambios en la hora del sistema alteren el TTL.
 using FTSEventQueueClock = std::chrono::steady_clock;
 using FTSEventQueueTimePoint = FTSEventQueueClock::time_point;
+
+// Produce el instante monotónico que el core capturará una vez por operación pública.
+using FTSNowProvider = std::function<FTSEventQueueTimePoint()>;
 
 using FTSEmissionId = std::uint64_t;
 using FTSEmissionSequence = std::uint64_t;
@@ -53,6 +63,8 @@ struct FTSEmissionEnvelope
     FTSEmissionSequence Sequence = 0;
     FTSEventQueueTimePoint CreatedAt{};
     FTSEventQueueTimePoint ExpiresAt{};
+    // Puntuación base congelada al admitir; el aging futuro se evaluará por separado.
+    // Se calculará mediante una suma saturada de BaseWeight y PriorityAdjustment.
     std::int64_t PriorityScore = 0;
 };
 

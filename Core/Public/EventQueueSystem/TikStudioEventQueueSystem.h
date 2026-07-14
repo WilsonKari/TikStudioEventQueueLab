@@ -6,8 +6,11 @@
 class TikStudioEventQueueSystem final
 {
 public:
+    // Un proveedor vacío usará FTSEventQueueClock::now(); uno válido producirá
+    // el instante monotónico que se capturará una vez por operación pública.
     explicit TikStudioEventQueueSystem(
-        FTSEventQueueSettings Settings = FTSEventQueueSettings{}
+        FTSEventQueueSettings Settings = FTSEventQueueSettings{},
+        FTSNowProvider NowProvider = {}
     );
 
     [[nodiscard]]
@@ -18,4 +21,13 @@ public:
 
     [[nodiscard]]
     FTSConfirmResult Confirm(FTSEmissionId EmissionId);
+
+    [[nodiscard]]
+    FTSProcessDueExpirationsResult ProcessDueExpirations();
+
+    [[nodiscard]]
+    FTSNextWakeTimeResult GetNextWakeTime();
+
+    [[nodiscard]]
+    FTSCancelInFlightResult CancelInFlight(FTSEmissionId EmissionId);
 };
