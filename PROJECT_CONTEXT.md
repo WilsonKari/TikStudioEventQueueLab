@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-14.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `72541ff`
-(`feat(core): add authoritative emission storage and basic enqueue`). Los cambios de
-la Fase 4A.5 permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `11631ba`
+(`feat(core): add priority and expiration indexes`). Los cambios de la Fase 4A.6
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -112,10 +112,12 @@ Fuente externa                                      [futuro]
 → construir FTSEmissionEnvelope                     [implementado]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
+→ GetNextWakeTime consulta próximo vencimiento        [implementado]
+→ ProcessDueExpirations elimina Pending vencidos      [implementado]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 → Pump selecciona y marca InFlight                   [no implementado]
 → host despacha payload tipado                       [no implementado]
-→ Confirm / Cancel / expiración                      [no implementado]
+→ Confirm / Cancel                                   [no implementado]
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
 ```
 
@@ -144,9 +146,9 @@ protección ante evicción. Existen contratos de resultado para `Enqueue`, `Pump
 `Enqueue` ya tiene una implementación básica funcional: valida la solicitud, comprueba
 la capacidad del flujo, captura el tiempo una vez, asigna identidad, construye el
 envelope, almacena un record `Pending` e inserta sus snapshots en los índices derivados
-de prioridad y expiración finita. `Pump`, `Confirm`, `CancelInFlight`,
-`ProcessDueExpirations` y `GetNextWakeTime` siguen declaradas sin definición; llamarlas
-todavía produciría un error de enlace.
+de prioridad y expiración finita. `GetNextWakeTime` y `ProcessDueExpirations` ya son
+operativas. `Pump`, `Confirm` y `CancelInFlight` siguen declaradas sin definición;
+llamarlas todavía produciría un error de enlace.
 
 Estados relevantes de admisión:
 
@@ -226,7 +228,7 @@ Defaults globales:
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
 
-## 7. Estado privado implementado hasta 4A.5
+## 7. Estado privado implementado hasta 4A.6
 
 `TikStudioEventQueueSystem` usa PImpl con `std::unique_ptr<FImpl>`. Es no copiable,
 movible con operaciones `noexcept`, y su destructor está fuera de línea. Un objeto
@@ -285,6 +287,12 @@ menor `Sequence`; el min-heap temporal ordena por menor `ExpiresAt` y luego meno
 `Sequence`. Ambos guardan ID + Revision, sin punteros, referencias ni iteradores al map.
 Sólo las expiraciones finitas entran al índice temporal. Todavía no hay contadores.
 
+El índice temporal ya dispone de validación contra `Records` mediante existencia,
+estado `Pending`, Revision, Sequence, ExpiresAt y finitud. La limpieza lazy sólo retira
+entradas stale desde el frente. `GetNextWakeTime` limpia y devuelve el próximo tiempo
+sin capturar `Now`; `ProcessDueExpirations` captura `Now` una vez, procesa
+`ExpiresAt <= Now`, emite `ExpiredDiscard` o `ExpiredConsolidate` y elimina el record.
+
 ## 8. Arquitectura privada aprobada para fases futuras
 
 La dirección aprobada es:
@@ -298,11 +306,11 @@ La dirección aprobada es:
 - Una sola emisión `InFlight`.
 - Orden: mayor prioridad primero; empate por menor Sequence (FIFO).
 
-Ya existen `Records`, records `Pending`, revisión inicial y ambos heaps derivados. No
-existen todavía consumo o limpieza de índices, validación de entradas stale,
-compactación, contadores por flujo, `InFlight`, almacenamiento de payloads, Pump,
-evicción, aging ni procesamiento de expiraciones. La capacidad actual se determina por
-escaneo del map; se reemplazará por contadores cuando una fase posterior lo autorice.
+Ya existen `Records`, records `Pending`, ambos heaps derivados, limpieza lazy del frente
+temporal, próximo despertar y expiración operativa. No existen todavía consumo o
+limpieza de `PriorityIndex`, compactación, contadores por flujo, `InFlight`,
+almacenamiento de payloads, Pump, evicción ni aging. La capacidad actual se determina
+por escaneo del map; al eliminar un record vencido su slot queda libre sin contadores.
 
 ## 9. Estructura y CMake
 
@@ -425,13 +433,27 @@ externas.
   no anticipado.
 - No implementó consumo o limpieza de heaps, Pump, InFlight, expiración operativa,
   evicción ni lógica de familias.
-- Cambios locales actuales; commit sugerido:
+- Commit `11631ba` —
   `feat(core): add priority and expiration indexes`.
+
+### Fase 4A.6 — Expiración operativa y próximo despertar
+
+- Añadió validación completa de entradas temporales contra el record autoritativo y
+  limpieza lazy limitada al frente de `ExpirationIndex`.
+- Implementó `GetNextWakeTime` sin captura de tiempo, eliminación de records ni
+  procesamiento de vencimientos.
+- Implementó `ProcessDueExpirations` con una captura de `Now`, comparación inclusiva,
+  orden del min-heap y terminales según `ExpirePolicy`.
+- Cada expiración elimina su entrada temporal y su record después de añadir el lifecycle
+  event; la entrada derivada de prioridad queda stale.
+- No implementó Pump, InFlight, Auto Pump, consumo de prioridad, evicción ni aging.
+- Cambios locales actuales; commit sugerido:
+  `feat(core): add expiration processing and wake scheduling`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `72541ff`.
+  `11631ba`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -447,5 +469,6 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir de `Records` y los índices derivados de 4A.5, pero
-  debe esperarse la especificación exacta de la siguiente fase.
+- El próximo trabajo debe partir de la expiración operativa de 4A.6 y del índice de
+  prioridad aún no consumido, pero debe esperarse la especificación exacta de la
+  siguiente fase.

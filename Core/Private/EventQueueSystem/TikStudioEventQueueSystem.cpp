@@ -278,6 +278,57 @@ public:
         return FTSEventQueueTimePoint{NowDuration + TTLDuration};
     }
 
+    [[nodiscard]]
+    bool IsExpirationEntryCurrent(
+        const FExpirationIndexEntry& Entry
+    ) const
+    {
+        const auto RecordIt = Records.find(Entry.EmissionId);
+
+        if (RecordIt == Records.end())
+        {
+            return false;
+        }
+
+        const FInternalEmissionRecord& Record = RecordIt->second;
+
+        return Record.State == EInternalEmissionState::Pending
+            && Record.Revision == Entry.Revision
+            && Record.Envelope.Sequence == Entry.Sequence
+            && Record.Envelope.ExpiresAt == Entry.ExpiresAt
+            && Record.Envelope.ExpiresAt != FTSEventQueueTimePoint::max();
+    }
+
+    void DiscardStaleExpirationEntries()
+    {
+        while (!ExpirationIndex.empty())
+        {
+            if (IsExpirationEntryCurrent(ExpirationIndex.top()))
+            {
+                return;
+            }
+
+            ExpirationIndex.pop();
+        }
+    }
+
+    [[nodiscard]]
+    static ETSEmissionTerminalReason ResolveExpirationTerminalReason(
+        ETSEventExpirePolicy ExpirePolicy
+    )
+    {
+        switch (ExpirePolicy)
+        {
+        case ETSEventExpirePolicy::Discard:
+            return ETSEmissionTerminalReason::ExpiredDiscard;
+
+        case ETSEventExpirePolicy::Consolidate:
+            return ETSEmissionTerminalReason::ExpiredConsolidate;
+        }
+
+        throw std::logic_error("Invalid expiration policy");
+    }
+
     FTSEventQueueSettings Settings;
     FTSNowProvider NowProvider;
     FTSEmissionId NextEmissionId = 1;
@@ -429,6 +480,62 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
 
     Result.Status = ETSEnqueueStatus::Accepted;
     Result.AdmittedEmission = Envelope;
+    return Result;
+}
+
+FTSNextWakeTimeResult TikStudioEventQueueSystem::GetNextWakeTime()
+{
+    FTSNextWakeTimeResult Result;
+
+    Impl->DiscardStaleExpirationEntries();
+
+    if (Impl->ExpirationIndex.empty())
+    {
+        return Result;
+    }
+
+    Result.Status = ETSNextWakeStatus::WakeScheduled;
+    Result.WakeTime = Impl->ExpirationIndex.top().ExpiresAt;
+    return Result;
+}
+
+FTSProcessDueExpirationsResult
+TikStudioEventQueueSystem::ProcessDueExpirations()
+{
+    FTSProcessDueExpirationsResult Result;
+    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+
+    while (true)
+    {
+        Impl->DiscardStaleExpirationEntries();
+
+        if (Impl->ExpirationIndex.empty())
+        {
+            break;
+        }
+
+        const FImpl::FExpirationIndexEntry Entry =
+            Impl->ExpirationIndex.top();
+
+        if (!(Entry.ExpiresAt <= Now))
+        {
+            break;
+        }
+
+        const auto RecordIt = Impl->Records.find(Entry.EmissionId);
+        const FImpl::FInternalEmissionRecord& Record = RecordIt->second;
+
+        FTSEmissionLifecycleEvent LifecycleEvent;
+        LifecycleEvent.Envelope = Record.Envelope;
+        LifecycleEvent.Reason = FImpl::ResolveExpirationTerminalReason(
+            Record.ExpirePolicy
+        );
+
+        Result.LifecycleEvents.push_back(std::move(LifecycleEvent));
+        Impl->ExpirationIndex.pop();
+        Impl->Records.erase(RecordIt);
+    }
+
     return Result;
 }
 
