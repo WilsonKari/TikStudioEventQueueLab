@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `9d8019d`
-(`feat(core): add pump selection and in-flight state`). Los cambios de la Fase 4A.8
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `d504df7`
+(`feat(core): add in-flight confirmation and cancellation`). Los cambios de la Fase
+4A.9 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -112,11 +112,13 @@ Fuente externa                                      [futuro]
 → construir FTSEmissionEnvelope                     [implementado]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
+→ Auto Pump tras Enqueue aceptado e idle               [implementado]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
 → host despacha payload tipado                         [no implementado]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
+→ Auto Pump tras Confirm exitoso                       [implementado]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
 ```
@@ -150,7 +152,9 @@ de prioridad y expiración finita. `GetNextWakeTime` y `ProcessDueExpirations` y
 operativas. `Pump` procesa expiraciones, selecciona por prioridad y mantiene una única
 emisión `InFlight`. `Confirm` y `CancelInFlight` validan el ID solicitado contra esa
 emisión activa, generan exactamente un terminal en caso de éxito y eliminan su record,
-liberando el slot. Ninguna de las dos realiza Auto Pump todavía.
+liberando el slot. `Enqueue` intenta Auto Pump tras una admisión cuando el setting está
+activo y el core está idle; `Confirm` hace lo mismo después de confirmar cuando su
+setting está activo. `CancelInFlight` permanece sin Auto Pump.
 
 Estados relevantes de admisión:
 
@@ -188,7 +192,8 @@ reordenarse por ID, flujo o prioridad.
 - El host programa temporizadores; el core no crea Tick ni timers.
 - `FTSNowProvider` es inyectable. Vacío se normaliza a
   `FTSEventQueueClock::now()`.
-- Regla futura: capturar `Now` una sola vez por operación pública.
+- Cada operación pública captura `Now` como máximo una vez y reutiliza esa instantánea
+  en cualquier Auto Pump que forme parte de la misma llamada.
 - `MaxSlots` cuenta `Pending + InFlight`.
 - `MaxSlots == 0` significa sin capacidad, no ilimitado.
 - Pump no libera slot; Confirm, Cancel, expiración y evicción sí.
@@ -230,7 +235,7 @@ Defaults globales:
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
 
-## 7. Estado privado implementado hasta 4A.8
+## 7. Estado privado implementado hasta 4A.9
 
 `TikStudioEventQueueSystem` usa PImpl con `std::unique_ptr<FImpl>`. Es no copiable,
 movible con operaciones `noexcept`, y su destructor está fuera de línea. Un objeto
@@ -297,14 +302,16 @@ sin capturar `Now`; `ProcessDueExpirations` captura `Now` una vez, procesa
 `ExpiresAt <= Now`, emite `ExpiredDiscard` o `ExpiredConsolidate` y elimina el record.
 
 La misma lógica vive en `ProcessDueExpirationsAt`, que recibe un `Now` ya capturado y
-es compartido por la operación pública y `Pump`. El índice de prioridad valida
+es compartido por la ruta interna de Pump. El índice de prioridad valida
 existencia, estado `Pending`, Revision, Sequence y PriorityScore, y descarta entradas
 stale sólo desde el frente.
 
-`Pump` captura tiempo una vez, procesa expiraciones, devuelve `Busy` si
-`InFlightEmissionId` identifica un record `InFlight`, o selecciona el top vigente. La
-selección copia el envelope público, cambia el record `Pending → InFlight`, conserva el
-record en `Records`, retira la clave de prioridad y deja stale la clave temporal.
+`HasInFlightEmission` valida que un ID activo siga correspondiendo al record `InFlight`
+autoritativo. `PumpAt` recibe un `Now`, procesa expiraciones, devuelve `Busy` si existe
+una emisión activa, o selecciona el top vigente. La selección copia el envelope
+público, cambia el record `Pending → InFlight`, conserva el record en `Records`, retira
+la clave de prioridad y deja stale la clave temporal. `Pump`, `Enqueue` y `Confirm`
+reutilizan esta única ruta interna.
 
 `Confirm` y `CancelInFlight` comparten una validación que distingue ausencia de emisión
 activa, ID solicitado distinto e invariante interna rota. El ciclo operativo actual es:
@@ -317,6 +324,18 @@ La finalización publica primero el lifecycle event. Sólo después elimina el r
 restablece `InFlightEmissionId` a cero; si la publicación lanza, la emisión permanece
 íntegramente `InFlight`. El borrado autoritativo libera capacidad y deja las claves
 derivadas restantes como stale para su limpieza lazy.
+
+Tras una admisión completa, `Enqueue` ejecuta `PumpAt` sólo si
+`bPumpAfterEnqueueWhenIdle` está activo y no existe emisión `InFlight`; reutiliza el
+`Now` ya capturado para admitir. Si está ocupado, el Auto Pump queda `NotRequested`.
+La emisión nueva compite normalmente con todos los candidatos por prioridad y
+Sequence.
+
+Tras validar un Confirm exitoso, `bPumpAfterConfirm` decide si se captura `Now`. Con el
+setting desactivado no se captura tiempo. Con el setting activo, la captura ocurre antes
+de mutar, se publica `Confirmed`, se elimina el record y luego `PumpAt` añade posibles
+expiraciones antes de seleccionar. `CancelInFlight` no captura tiempo ni ejecuta Auto
+Pump.
 
 ## 8. Arquitectura privada aprobada para fases futuras
 
@@ -333,10 +352,12 @@ La dirección aprobada es:
 
 Ya existen `Records`, records `Pending`, ambos heaps derivados, limpieza lazy del frente
 temporal y de prioridad, próximo despertar, expiración operativa, Pump y una única
-emisión `InFlight`. Confirm y CancelInFlight ya completan y eliminan esa emisión. No
-existen todavía Auto Pump, compactación, contadores por flujo, almacenamiento de
-payloads, evicción ni aging. La capacidad se determina por escaneo del map: un record
-`InFlight` ocupa slot hasta su confirmación o cancelación exitosa.
+emisión `InFlight`. Confirm y CancelInFlight ya completan y eliminan esa emisión, y los
+Auto Pump configurables de Enqueue y Confirm ya reutilizan `PumpAt`. Con esto queda
+completo el MVP funcional básico del core. No existen todavía compactación, contadores
+por flujo, almacenamiento de payloads, evicción ni aging. La capacidad se determina por
+escaneo del map: un record `InFlight` ocupa slot hasta su confirmación o cancelación
+exitosa.
 
 ## 9. Estructura y CMake
 
@@ -512,13 +533,28 @@ externas.
 - El borrado del record libera el slot y deja stale cualquier clave derivada restante.
 - No añadió Auto Pump, captura temporal, expiraciones, evicción, aging ni payloads a
   estas operaciones.
-- Cambios locales actuales; commit sugerido:
+- Commit `d504df7` —
   `feat(core): add in-flight confirmation and cancellation`.
+
+### Fase 4A.9 — Auto Pump después de Enqueue y Confirm
+
+- Añadió `HasInFlightEmission` como validación compartida del localizador activo.
+- Extrajo `PumpAt` como única ruta interna de expiración y selección para Pump público,
+  Enqueue y Confirm.
+- Implementó Auto Pump tras Enqueue aceptado cuando el setting está activo y el core
+  está idle, reutilizando el `Now` de admisión.
+- Implementó Auto Pump tras Confirm cuando su setting está activo, capturando `Now`
+  antes de finalizar y conservando el orden Confirmed → expiraciones.
+- `CancelInFlight` permanece sin captura temporal ni Auto Pump.
+- El MVP funcional básico del core queda completo; evicción, aging, payloads y familias
+  siguen fuera.
+- Cambios locales actuales; commit sugerido:
+  `feat(core): add auto pump after enqueue and confirm`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `9d8019d`.
+  `d504df7`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -534,6 +570,5 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del ciclo completo `Pending → InFlight → terminal` de
-  4A.8. Auto Pump sigue pendiente y debe esperarse la especificación exacta de la
-  siguiente fase.
+- El próximo trabajo debe partir del MVP básico completo, incluida la selección manual
+  y automática de 4A.9, y esperar la especificación exacta de la siguiente fase.

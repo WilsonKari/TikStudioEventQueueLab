@@ -383,16 +383,14 @@ public:
         }
     }
 
-    // El ID activo sólo es un localizador: antes de compararlo con la solicitud se
-    // comprueba que continúe describiendo el único record InFlight autoritativo.
+    // El ID activo es sólo un localizador; cualquier valor no cero debe seguir
+    // correspondiendo al record InFlight autoritativo.
     [[nodiscard]]
-    EInFlightTargetStatus ValidateInFlightTarget(
-        FTSEmissionId RequestedEmissionId
-    ) const
+    bool HasInFlightEmission() const
     {
         if (InFlightEmissionId == 0)
         {
-            return EInFlightTargetStatus::NoInFlightEmission;
+            return false;
         }
 
         const auto RecordIt = Records.find(InFlightEmissionId);
@@ -404,6 +402,21 @@ public:
         )
         {
             throw std::logic_error("Invalid in-flight emission state");
+        }
+
+        return true;
+    }
+
+    // El ID activo sólo es un localizador: antes de compararlo con la solicitud se
+    // comprueba que continúe describiendo el único record InFlight autoritativo.
+    [[nodiscard]]
+    EInFlightTargetStatus ValidateInFlightTarget(
+        FTSEmissionId RequestedEmissionId
+    ) const
+    {
+        if (!HasInFlightEmission())
+        {
+            return EInFlightTargetStatus::NoInFlightEmission;
         }
 
         if (RequestedEmissionId != InFlightEmissionId)
@@ -421,17 +434,12 @@ public:
         FTSEmissionLifecycleEvents& OutLifecycleEvents
     )
     {
-        const auto RecordIt = Records.find(InFlightEmissionId);
-
-        if (
-            InFlightEmissionId == 0
-            || RecordIt == Records.end()
-            || RecordIt->second.State != EInternalEmissionState::InFlight
-            || RecordIt->second.Envelope.EmissionId != InFlightEmissionId
-        )
+        if (!HasInFlightEmission())
         {
             throw std::logic_error("Invalid in-flight emission state");
         }
+
+        const auto RecordIt = Records.find(InFlightEmissionId);
 
         if (
             Reason != ETSEmissionTerminalReason::Confirmed
@@ -510,6 +518,48 @@ public:
             ExpirationIndex.pop();
             Records.erase(RecordIt);
         }
+    }
+
+    // Una única ruta sirve al Pump solicitado y al automático. El caller aporta la
+    // instantánea temporal para impedir capturas divergentes dentro de una operación.
+    [[nodiscard]]
+    FTSPumpOutcome PumpAt(
+        FTSEventQueueTimePoint Now,
+        FTSEmissionLifecycleEvents& OutLifecycleEvents
+    )
+    {
+        FTSPumpOutcome Outcome;
+        ProcessDueExpirationsAt(Now, OutLifecycleEvents);
+
+        if (HasInFlightEmission())
+        {
+            Outcome.Status = ETSPumpStatus::Busy;
+            return Outcome;
+        }
+
+        DiscardStalePriorityEntries();
+
+        if (PriorityIndex.empty())
+        {
+            Outcome.Status = ETSPumpStatus::QueueEmpty;
+            return Outcome;
+        }
+
+        const FPriorityIndexEntry Entry = PriorityIndex.top();
+        const auto RecordIt = Records.find(Entry.EmissionId);
+        FInternalEmissionRecord& Record = RecordIt->second;
+
+        Outcome.ReadyEmission = Record.Envelope;
+
+        // El record permanece en Records y conserva el slot; el ID activo sólo impide
+        // una segunda selección mientras su estado autoritativo sea InFlight.
+        Record.State = EInternalEmissionState::InFlight;
+        InFlightEmissionId = Record.Envelope.EmissionId;
+        PriorityIndex.pop();
+
+        // La clave temporal no se toca: el cambio de estado basta para volverla stale.
+        Outcome.Status = ETSPumpStatus::EmissionReady;
+        return Outcome;
     }
 
     FTSEventQueueSettings Settings;
@@ -674,58 +724,30 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
 
     Result.Status = ETSEnqueueStatus::Accepted;
     Result.AdmittedEmission = Envelope;
+
+    // Auto Pump sólo se solicita después de una admisión completa y estando idle; usa
+    // el mismo Now de Enqueue para ordenar expiraciones y selección coherentemente.
+    if (
+        Impl->Settings.Pump.bPumpAfterEnqueueWhenIdle
+        && !Impl->HasInFlightEmission()
+    )
+    {
+        Result.AutoPumpOutcome = Impl->PumpAt(
+            Now,
+            Result.LifecycleEvents
+        );
+    }
+
     return Result;
 }
 
 FTSPumpResult TikStudioEventQueueSystem::Pump()
 {
-    // Expirar primero garantiza que Busy, QueueEmpty y la selección observen el mismo
-    // estado autoritativo para la única instantánea temporal de esta llamada.
+    // El Pump público sólo añade la captura propia de una solicitud explícita; la ruta
+    // de expiración y selección es la misma usada por los Auto Pump.
     FTSPumpResult Result;
     const FTSEventQueueTimePoint Now = Impl->CaptureNow();
-    Impl->ProcessDueExpirationsAt(Now, Result.LifecycleEvents);
-
-    if (Impl->InFlightEmissionId != 0)
-    {
-        const auto InFlightRecordIt = Impl->Records.find(
-            Impl->InFlightEmissionId
-        );
-
-        if (
-            InFlightRecordIt == Impl->Records.end()
-            || InFlightRecordIt->second.State
-                != FImpl::EInternalEmissionState::InFlight
-        )
-        {
-            throw std::logic_error("Invalid in-flight emission state");
-        }
-
-        Result.Outcome.Status = ETSPumpStatus::Busy;
-        return Result;
-    }
-
-    Impl->DiscardStalePriorityEntries();
-
-    if (Impl->PriorityIndex.empty())
-    {
-        Result.Outcome.Status = ETSPumpStatus::QueueEmpty;
-        return Result;
-    }
-
-    const FImpl::FPriorityIndexEntry Entry = Impl->PriorityIndex.top();
-    const auto RecordIt = Impl->Records.find(Entry.EmissionId);
-    FImpl::FInternalEmissionRecord& Record = RecordIt->second;
-
-    Result.Outcome.ReadyEmission = Record.Envelope;
-
-    // El record permanece en Records y conserva el slot; el ID activo sólo impide
-    // una segunda selección mientras su estado autoritativo sea InFlight.
-    Record.State = FImpl::EInternalEmissionState::InFlight;
-    Impl->InFlightEmissionId = Record.Envelope.EmissionId;
-    Impl->PriorityIndex.pop();
-
-    // La clave temporal no se toca: el cambio de estado basta para volverla stale.
-    Result.Outcome.Status = ETSPumpStatus::EmissionReady;
+    Result.Outcome = Impl->PumpAt(Now, Result.LifecycleEvents);
     return Result;
 }
 
@@ -748,11 +770,31 @@ FTSConfirmResult TikStudioEventQueueSystem::Confirm(
         break;
     }
 
+    if (!Impl->Settings.Pump.bPumpAfterConfirm)
+    {
+        Impl->CompleteInFlight(
+            ETSEmissionTerminalReason::Confirmed,
+            Result.LifecycleEvents
+        );
+        Result.Status = ETSConfirmStatus::Confirmed;
+        return Result;
+    }
+
+    // Capturar antes de finalizar garantiza que un fallo del proveedor no confirme
+    // parcialmente; el mismo Now gobierna expiraciones y la siguiente selección.
+    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+
     Impl->CompleteInFlight(
         ETSEmissionTerminalReason::Confirmed,
         Result.LifecycleEvents
     );
     Result.Status = ETSConfirmStatus::Confirmed;
+
+    // Confirmed se publica antes de los terminales que PumpAt pueda producir.
+    Result.AutoPumpOutcome = Impl->PumpAt(
+        Now,
+        Result.LifecycleEvents
+    );
     return Result;
 }
 
