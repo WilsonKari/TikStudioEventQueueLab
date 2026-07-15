@@ -39,6 +39,8 @@ public:
         Pending
     };
 
+    // Unidad autoritativa de una emisión viva. Conserva los snapshots efectivos
+    // necesarios para decidir su ciclo de vida sin volver a consultar settings.
     struct FInternalEmissionRecord
     {
         FTSEmissionEnvelope Envelope{};
@@ -48,6 +50,8 @@ public:
         std::uint64_t Revision = 1;
     };
 
+    // Snapshot derivado y reconstruible. EmissionId + Revision permite rechazar
+    // una clave obsoleta sin almacenar enlaces hacia el record autoritativo.
     struct FPriorityIndexEntry
     {
         std::int64_t PriorityScore = 0;
@@ -56,6 +60,8 @@ public:
         std::uint64_t Revision = 0;
     };
 
+    // std::priority_queue deja arriba el mayor score; Sequence ascendente conserva
+    // FIFO entre emisiones con la misma prioridad congelada.
     struct FPriorityIndexCompare
     {
         bool operator()(
@@ -72,6 +78,8 @@ public:
         }
     };
 
+    // Sólo representa vencimientos finitos. La política permanece en Records para
+    // que el índice temporal siga siendo una vista mínima y no autoritativa.
     struct FExpirationIndexEntry
     {
         FTSEventQueueTimePoint ExpiresAt{};
@@ -80,6 +88,8 @@ public:
         std::uint64_t Revision = 0;
     };
 
+    // Invierte la prioridad natural para obtener un min-heap por vencimiento y usa
+    // Sequence como desempate determinista FIFO.
     struct FExpirationIndexCompare
     {
         bool operator()(
@@ -112,6 +122,8 @@ public:
         }
     }
 
+    // El par ID/Sequence avanza como una sola identidad monotónica. Cero marca
+    // agotamiento permanente, por lo que nunca se reutilizan valores tras el máximo.
     [[nodiscard]]
     bool TryAllocateEmissionIdentity(
         FEmissionIdentity& OutIdentity
@@ -131,6 +143,8 @@ public:
         return true;
     }
 
+    // Fija la precedencia de rechazos y resuelve el TTL efectivo antes de cualquier
+    // mutación, de modo que una solicitud inválida no consuma identidad ni tiempo.
     [[nodiscard]]
     FAdmissionValidationResult ValidateEnqueueRequest(
         const FTSEnqueueRequest& Request
@@ -172,6 +186,8 @@ public:
         return Result;
     }
 
+    // La saturación mantiene un orden total incluso en los extremos sin incurrir en
+    // overflow firmado al combinar el peso base y el ajuste externo.
     [[nodiscard]]
     static std::int64_t CalculatePriorityScore(
         std::int32_t BaseWeight,
@@ -198,12 +214,16 @@ public:
         return PriorityAdjustment + BaseWeight64;
     }
 
+    // Aísla el proveedor para que cada operación pública sensible al tiempo pueda
+    // trabajar con una única instantánea coherente de Now.
     [[nodiscard]]
     FTSEventQueueTimePoint CaptureNow() const
     {
         return NowProvider();
     }
 
+    // Records define qué emisiones siguen vivas; este escaneo O(n) evita introducir
+    // una segunda fuente de verdad mientras no existan contadores derivados.
     [[nodiscard]]
     bool IsFlowAtCapacity(
         ETSEventFlow Flow,
@@ -235,6 +255,8 @@ public:
         return false;
     }
 
+    // time_point::max() es el sentinel de “sin expiración”. La comparación amplia
+    // evita casts fuera de rango y ceil impide truncar un TTL positivo a cero ticks.
     [[nodiscard]]
     static FTSEventQueueTimePoint CalculateExpiresAt(
         FTSEventQueueTimePoint Now,
@@ -278,6 +300,8 @@ public:
         return FTSEventQueueTimePoint{NowDuration + TTLDuration};
     }
 
+    // Una clave temporal sólo es vigente si identidad, revisión, estado y snapshots
+    // de orden siguen coincidiendo con la fuente autoritativa.
     [[nodiscard]]
     bool IsExpirationEntryCurrent(
         const FExpirationIndexEntry& Entry
@@ -299,6 +323,8 @@ public:
             && Record.Envelope.ExpiresAt != FTSEventQueueTimePoint::max();
     }
 
+    // La invalidación lazy descarta únicamente el frente porque las entradas más
+    // profundas todavía no pueden determinar el próximo despertar o vencimiento.
     void DiscardStaleExpirationEntries()
     {
         while (!ExpirationIndex.empty())
@@ -312,6 +338,8 @@ public:
         }
     }
 
+    // El motivo terminal deriva de la política congelada al admitir; un valor fuera
+    // del contrato revela una invariante rota antes de eliminar estado autoritativo.
     [[nodiscard]]
     static ETSEmissionTerminalReason ResolveExpirationTerminalReason(
         ETSEventExpirePolicy ExpirePolicy
@@ -333,6 +361,8 @@ public:
     FTSNowProvider NowProvider;
     FTSEmissionId NextEmissionId = 1;
     FTSEmissionSequence NextSequence = 1;
+    // Única fuente de verdad. Los heaps sólo contienen vistas pequeñas que pueden
+    // quedar stale y reconstruirse a partir de estos records.
     std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
     std::priority_queue<
         FPriorityIndexEntry,
@@ -375,6 +405,8 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     const FTSEnqueueRequest& Request
 )
 {
+    // La admisión valida antes de mutar y congela todos los valores de orden con una
+    // sola captura temporal antes de establecer el record autoritativo.
     FTSEnqueueResult Result;
     const FImpl::FAdmissionValidationResult Validation =
         Impl->ValidateEnqueueRequest(Request);
@@ -440,6 +472,8 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
         || FlowSettings.bExemptFromEviction;
     Record.Revision = 1;
 
+    // Una colisión contradice la identidad monotónica: es una violación interna, no
+    // una condición de rechazo que deba exponerse en el contrato público.
     const auto [RecordIt, bInserted] = Impl->Records.emplace(
         Envelope.EmissionId,
         std::move(Record)
@@ -450,6 +484,8 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
         throw std::logic_error("Duplicate emission identity");
     }
 
+    // Accepted exige que todas las vistas derivadas requeridas existan. Si indexar
+    // falla, retirar el record evita dejar estado autoritativo parcialmente admitido.
     try
     {
         const FImpl::FInternalEmissionRecord& StoredRecord = RecordIt->second;
@@ -483,6 +519,8 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     return Result;
 }
 
+// Consulta pura respecto del tiempo y de Records: sólo limpia claves stale del frente
+// y expone el menor vencimiento vigente, aunque ya haya quedado en el pasado.
 FTSNextWakeTimeResult TikStudioEventQueueSystem::GetNextWakeTime()
 {
     FTSNextWakeTimeResult Result;
@@ -502,6 +540,8 @@ FTSNextWakeTimeResult TikStudioEventQueueSystem::GetNextWakeTime()
 FTSProcessDueExpirationsResult
 TikStudioEventQueueSystem::ProcessDueExpirations()
 {
+    // Una sola captura hace determinista todo el lote; el min-heap preserva orden por
+    // ExpiresAt y luego Sequence durante la generación de terminales.
     FTSProcessDueExpirationsResult Result;
     const FTSEventQueueTimePoint Now = Impl->CaptureNow();
 
@@ -531,6 +571,8 @@ TikStudioEventQueueSystem::ProcessDueExpirations()
             Record.ExpirePolicy
         );
 
+        // Publicar primero mantiene record y clave temporal disponibles si el vector
+        // lanza. Después, PriorityIndex queda stale de forma intencional y segura.
         Result.LifecycleEvents.push_back(std::move(LifecycleEvent));
         Impl->ExpirationIndex.pop();
         Impl->Records.erase(RecordIt);

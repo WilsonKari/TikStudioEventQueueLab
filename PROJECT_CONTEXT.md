@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-14.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `11631ba`
-(`feat(core): add priority and expiration indexes`). Los cambios de la Fase 4A.6
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `5f56c23`
+(`feat(core): add expiration processing and wake scheduling`). La pausa de documentación
+posterior permanece local y sin commit.
 
 ## 1. Objetivo general
 
@@ -447,13 +447,24 @@ externas.
 - Cada expiración elimina su entrada temporal y su record después de añadir el lifecycle
   event; la entrada derivada de prioridad queda stale.
 - No implementó Pump, InFlight, Auto Pump, consumo de prioridad, evicción ni aging.
-- Cambios locales actuales; commit sugerido:
+- Commit `5f56c23` —
   `feat(core): add expiration processing and wake scheduling`.
+
+### Pausa de documentación — Comentarios internos del core
+
+- Documentó responsabilidades e invariantes de records, índices derivados, identidad,
+  admisión, prioridad, TTL, capacidad, Enqueue y expiración operativa.
+- Reforzó por comentarios la autoridad exclusiva de `Records`, la validación mediante
+  `EmissionId + Revision`, el orden de heaps y las garantías ante excepciones.
+- No modificó comportamiento, firmas, nombres, estructuras, contratos ni el punto
+  funcional alcanzado después de 4A.6.
+- Cambios locales actuales; commit sugerido:
+  `docs(core): document queue internals and expiration lifecycle`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `11631ba`.
+  `5f56c23`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
