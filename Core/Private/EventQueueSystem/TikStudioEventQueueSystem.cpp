@@ -36,7 +36,8 @@ public:
 
     enum class EInternalEmissionState : std::uint8_t
     {
-        Pending
+        Pending,
+        InFlight
     };
 
     // Unidad autoritativa de una emisión viva. Conserva los snapshots efectivos
@@ -338,6 +339,43 @@ public:
         }
     }
 
+    // La vista de prioridad es vigente sólo mientras el record continúe siendo un
+    // candidato Pending con los mismos snapshots usados para ordenar.
+    [[nodiscard]]
+    bool IsPriorityEntryCurrent(
+        const FPriorityIndexEntry& Entry
+    ) const
+    {
+        const auto RecordIt = Records.find(Entry.EmissionId);
+
+        if (RecordIt == Records.end())
+        {
+            return false;
+        }
+
+        const FInternalEmissionRecord& Record = RecordIt->second;
+
+        return Record.State == EInternalEmissionState::Pending
+            && Record.Revision == Entry.Revision
+            && Record.Envelope.Sequence == Entry.Sequence
+            && Record.Envelope.PriorityScore == Entry.PriorityScore;
+    }
+
+    // Sólo el frente puede afectar la próxima selección; las claves stale se
+    // descartan sin tocar Records ni producir eventos de ciclo de vida.
+    void DiscardStalePriorityEntries()
+    {
+        while (!PriorityIndex.empty())
+        {
+            if (IsPriorityEntryCurrent(PriorityIndex.top()))
+            {
+                return;
+            }
+
+            PriorityIndex.pop();
+        }
+    }
+
     // El motivo terminal deriva de la política congelada al admitir; un valor fuera
     // del contrato revela una invariante rota antes de eliminar estado autoritativo.
     [[nodiscard]]
@@ -357,10 +395,53 @@ public:
         throw std::logic_error("Invalid expiration policy");
     }
 
+    // Recibe un Now ya capturado para compartir una única semántica de expiración
+    // entre operaciones públicas sin duplicar tiempo, orden ni transiciones.
+    void ProcessDueExpirationsAt(
+        FTSEventQueueTimePoint Now,
+        FTSEmissionLifecycleEvents& OutLifecycleEvents
+    )
+    {
+        while (true)
+        {
+            DiscardStaleExpirationEntries();
+
+            if (ExpirationIndex.empty())
+            {
+                break;
+            }
+
+            const FExpirationIndexEntry Entry = ExpirationIndex.top();
+
+            if (!(Entry.ExpiresAt <= Now))
+            {
+                break;
+            }
+
+            const auto RecordIt = Records.find(Entry.EmissionId);
+            const FInternalEmissionRecord& Record = RecordIt->second;
+
+            FTSEmissionLifecycleEvent LifecycleEvent;
+            LifecycleEvent.Envelope = Record.Envelope;
+            LifecycleEvent.Reason = ResolveExpirationTerminalReason(
+                Record.ExpirePolicy
+            );
+
+            // Publicar primero mantiene record y clave temporal disponibles si el
+            // vector lanza; la entrada de prioridad queda stale tras la eliminación.
+            OutLifecycleEvents.push_back(std::move(LifecycleEvent));
+            ExpirationIndex.pop();
+            Records.erase(RecordIt);
+        }
+    }
+
     FTSEventQueueSettings Settings;
     FTSNowProvider NowProvider;
     FTSEmissionId NextEmissionId = 1;
     FTSEmissionSequence NextSequence = 1;
+    // Cero representa idle. Un valor activo sólo localiza el record autoritativo;
+    // no duplica estado, envelope ni ownership fuera de Records.
+    FTSEmissionId InFlightEmissionId = 0;
     // Única fuente de verdad. Los heaps sólo contienen vistas pequeñas que pueden
     // quedar stale y reconstruirse a partir de estos records.
     std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
@@ -519,6 +600,58 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     return Result;
 }
 
+FTSPumpResult TikStudioEventQueueSystem::Pump()
+{
+    // Expirar primero garantiza que Busy, QueueEmpty y la selección observen el mismo
+    // estado autoritativo para la única instantánea temporal de esta llamada.
+    FTSPumpResult Result;
+    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+    Impl->ProcessDueExpirationsAt(Now, Result.LifecycleEvents);
+
+    if (Impl->InFlightEmissionId != 0)
+    {
+        const auto InFlightRecordIt = Impl->Records.find(
+            Impl->InFlightEmissionId
+        );
+
+        if (
+            InFlightRecordIt == Impl->Records.end()
+            || InFlightRecordIt->second.State
+                != FImpl::EInternalEmissionState::InFlight
+        )
+        {
+            throw std::logic_error("Invalid in-flight emission state");
+        }
+
+        Result.Outcome.Status = ETSPumpStatus::Busy;
+        return Result;
+    }
+
+    Impl->DiscardStalePriorityEntries();
+
+    if (Impl->PriorityIndex.empty())
+    {
+        Result.Outcome.Status = ETSPumpStatus::QueueEmpty;
+        return Result;
+    }
+
+    const FImpl::FPriorityIndexEntry Entry = Impl->PriorityIndex.top();
+    const auto RecordIt = Impl->Records.find(Entry.EmissionId);
+    FImpl::FInternalEmissionRecord& Record = RecordIt->second;
+
+    Result.Outcome.ReadyEmission = Record.Envelope;
+
+    // El record permanece en Records y conserva el slot; el ID activo sólo impide
+    // una segunda selección mientras su estado autoritativo sea InFlight.
+    Record.State = FImpl::EInternalEmissionState::InFlight;
+    Impl->InFlightEmissionId = Record.Envelope.EmissionId;
+    Impl->PriorityIndex.pop();
+
+    // La clave temporal no se toca: el cambio de estado basta para volverla stale.
+    Result.Outcome.Status = ETSPumpStatus::EmissionReady;
+    return Result;
+}
+
 // Consulta pura respecto del tiempo y de Records: sólo limpia claves stale del frente
 // y expone el menor vencimiento vigente, aunque ya haya quedado en el pasado.
 FTSNextWakeTimeResult TikStudioEventQueueSystem::GetNextWakeTime()
@@ -544,39 +677,7 @@ TikStudioEventQueueSystem::ProcessDueExpirations()
     // ExpiresAt y luego Sequence durante la generación de terminales.
     FTSProcessDueExpirationsResult Result;
     const FTSEventQueueTimePoint Now = Impl->CaptureNow();
-
-    while (true)
-    {
-        Impl->DiscardStaleExpirationEntries();
-
-        if (Impl->ExpirationIndex.empty())
-        {
-            break;
-        }
-
-        const FImpl::FExpirationIndexEntry Entry =
-            Impl->ExpirationIndex.top();
-
-        if (!(Entry.ExpiresAt <= Now))
-        {
-            break;
-        }
-
-        const auto RecordIt = Impl->Records.find(Entry.EmissionId);
-        const FImpl::FInternalEmissionRecord& Record = RecordIt->second;
-
-        FTSEmissionLifecycleEvent LifecycleEvent;
-        LifecycleEvent.Envelope = Record.Envelope;
-        LifecycleEvent.Reason = FImpl::ResolveExpirationTerminalReason(
-            Record.ExpirePolicy
-        );
-
-        // Publicar primero mantiene record y clave temporal disponibles si el vector
-        // lanza. Después, PriorityIndex queda stale de forma intencional y segura.
-        Result.LifecycleEvents.push_back(std::move(LifecycleEvent));
-        Impl->ExpirationIndex.pop();
-        Impl->Records.erase(RecordIt);
-    }
+    Impl->ProcessDueExpirationsAt(Now, Result.LifecycleEvents);
 
     return Result;
 }

@@ -1,10 +1,10 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-14.
+Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `5f56c23`
-(`feat(core): add expiration processing and wake scheduling`). La pausa de documentación
-posterior permanece local y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `c64db91`
+(`docs(core): document queue internals and expiration lifecycle`). Los cambios de la
+Fase 4A.7 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -114,8 +114,8 @@ Fuente externa                                      [futuro]
 → indexar prioridad y expiración finita               [implementado]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
+→ Pump selecciona y cambia Pending a InFlight          [implementado]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ Pump selecciona y marca InFlight                   [no implementado]
 → host despacha payload tipado                       [no implementado]
 → Confirm / Cancel                                   [no implementado]
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
@@ -147,7 +147,8 @@ protección ante evicción. Existen contratos de resultado para `Enqueue`, `Pump
 la capacidad del flujo, captura el tiempo una vez, asigna identidad, construye el
 envelope, almacena un record `Pending` e inserta sus snapshots en los índices derivados
 de prioridad y expiración finita. `GetNextWakeTime` y `ProcessDueExpirations` ya son
-operativas. `Pump`, `Confirm` y `CancelInFlight` siguen declaradas sin definición;
+operativas. `Pump` procesa expiraciones, selecciona por prioridad y mantiene una única
+emisión `InFlight`. `Confirm` y `CancelInFlight` siguen declaradas sin definición;
 llamarlas todavía produciría un error de enlace.
 
 Estados relevantes de admisión:
@@ -228,7 +229,7 @@ Defaults globales:
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
 
-## 7. Estado privado implementado hasta 4A.6
+## 7. Estado privado implementado hasta 4A.7
 
 `TikStudioEventQueueSystem` usa PImpl con `std::unique_ptr<FImpl>`. Es no copiable,
 movible con operaciones `noexcept`, y su destructor está fuera de línea. Un objeto
@@ -242,6 +243,7 @@ FTSEventQueueSettings Settings;
 FTSNowProvider NowProvider;
 FTSEmissionId NextEmissionId = 1;
 FTSEmissionSequence NextSequence = 1;
+FTSEmissionId InFlightEmissionId = 0;
 std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
 std::priority_queue<
     FPriorityIndexEntry,
@@ -259,7 +261,7 @@ std::priority_queue<
 `FInternalEmissionRecord` conserva:
 
 - el `FTSEmissionEnvelope` admitido;
-- estado interno `Pending`;
+- estado interno `Pending` o `InFlight`;
 - snapshot de `ExpirePolicy`;
 - protección efectiva ante evicción, calculada como OR entre request y settings;
 - `Revision = 1` para la futura invalidación diferida de índices.
@@ -293,6 +295,16 @@ entradas stale desde el frente. `GetNextWakeTime` limpia y devuelve el próximo 
 sin capturar `Now`; `ProcessDueExpirations` captura `Now` una vez, procesa
 `ExpiresAt <= Now`, emite `ExpiredDiscard` o `ExpiredConsolidate` y elimina el record.
 
+La misma lógica vive en `ProcessDueExpirationsAt`, que recibe un `Now` ya capturado y
+es compartido por la operación pública y `Pump`. El índice de prioridad valida
+existencia, estado `Pending`, Revision, Sequence y PriorityScore, y descarta entradas
+stale sólo desde el frente.
+
+`Pump` captura tiempo una vez, procesa expiraciones, devuelve `Busy` si
+`InFlightEmissionId` identifica un record `InFlight`, o selecciona el top vigente. La
+selección copia el envelope público, cambia el record `Pending → InFlight`, conserva el
+record en `Records`, retira la clave de prioridad y deja stale la clave temporal.
+
 ## 8. Arquitectura privada aprobada para fases futuras
 
 La dirección aprobada es:
@@ -303,14 +315,14 @@ La dirección aprobada es:
 - Min-heap de expiración (implementado en 4A.5).
 - Invalidación diferida mediante ID + revisión y compactación controlada.
 - Contadores vivos por flujo.
-- Una sola emisión `InFlight`.
+- Una sola emisión `InFlight` (implementado en 4A.7).
 - Orden: mayor prioridad primero; empate por menor Sequence (FIFO).
 
 Ya existen `Records`, records `Pending`, ambos heaps derivados, limpieza lazy del frente
-temporal, próximo despertar y expiración operativa. No existen todavía consumo o
-limpieza de `PriorityIndex`, compactación, contadores por flujo, `InFlight`,
-almacenamiento de payloads, Pump, evicción ni aging. La capacidad actual se determina
-por escaneo del map; al eliminar un record vencido su slot queda libre sin contadores.
+temporal y de prioridad, próximo despertar, expiración operativa, Pump y una única
+emisión `InFlight`. No existen todavía Confirm, CancelInFlight, Auto Pump, compactación,
+contadores por flujo, almacenamiento de payloads, evicción ni aging. La capacidad se
+determina por escaneo del map, por lo que un record `InFlight` continúa ocupando slot.
 
 ## 9. Estructura y CMake
 
@@ -458,13 +470,27 @@ externas.
   `EmissionId + Revision`, el orden de heaps y las garantías ante excepciones.
 - No modificó comportamiento, firmas, nombres, estructuras, contratos ni el punto
   funcional alcanzado después de 4A.6.
-- Cambios locales actuales; commit sugerido:
+- Commit `c64db91` —
   `docs(core): document queue internals and expiration lifecycle`.
+
+### Fase 4A.7 — Selección por prioridad y primera transición a InFlight
+
+- Añadió el estado interno `InFlight` y `InFlightEmissionId` como localizador único del
+  record activo dentro de `Records`.
+- Extrajo el procesamiento de expiraciones a un helper que recibe `Now` y es compartido
+  por `ProcessDueExpirations` y `Pump`.
+- Añadió validación y limpieza lazy del frente de `PriorityIndex` mediante ID, Revision,
+  estado y snapshots de orden.
+- Implementó `Pump` con expiraciones previas, estados Busy/QueueEmpty/EmissionReady y
+  transición `Pending → InFlight`.
+- No implementó Confirm, CancelInFlight, Auto Pump, evicción, aging ni payloads.
+- Cambios locales actuales; commit sugerido:
+  `feat(core): add pump selection and in-flight state`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `5f56c23`.
+  `c64db91`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -480,6 +506,5 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir de la expiración operativa de 4A.6 y del índice de
-  prioridad aún no consumido, pero debe esperarse la especificación exacta de la
-  siguiente fase.
+- El próximo trabajo debe partir de `Pump` y la única emisión `InFlight` de 4A.7, pero
+  debe esperarse la especificación exacta de la siguiente fase.
