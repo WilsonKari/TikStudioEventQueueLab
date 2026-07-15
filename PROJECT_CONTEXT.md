@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `c64db91`
-(`docs(core): document queue internals and expiration lifecycle`). Los cambios de la
-Fase 4A.7 permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `9d8019d`
+(`feat(core): add pump selection and in-flight state`). Los cambios de la Fase 4A.8
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -115,9 +115,9 @@ Fuente externa                                      [futuro]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
+→ host despacha payload tipado                         [no implementado]
+→ Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ host despacha payload tipado                       [no implementado]
-→ Confirm / Cancel                                   [no implementado]
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
 ```
 
@@ -148,8 +148,9 @@ la capacidad del flujo, captura el tiempo una vez, asigna identidad, construye e
 envelope, almacena un record `Pending` e inserta sus snapshots en los índices derivados
 de prioridad y expiración finita. `GetNextWakeTime` y `ProcessDueExpirations` ya son
 operativas. `Pump` procesa expiraciones, selecciona por prioridad y mantiene una única
-emisión `InFlight`. `Confirm` y `CancelInFlight` siguen declaradas sin definición;
-llamarlas todavía produciría un error de enlace.
+emisión `InFlight`. `Confirm` y `CancelInFlight` validan el ID solicitado contra esa
+emisión activa, generan exactamente un terminal en caso de éxito y eliminan su record,
+liberando el slot. Ninguna de las dos realiza Auto Pump todavía.
 
 Estados relevantes de admisión:
 
@@ -229,7 +230,7 @@ Defaults globales:
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
 
-## 7. Estado privado implementado hasta 4A.7
+## 7. Estado privado implementado hasta 4A.8
 
 `TikStudioEventQueueSystem` usa PImpl con `std::unique_ptr<FImpl>`. Es no copiable,
 movible con operaciones `noexcept`, y su destructor está fuera de línea. Un objeto
@@ -305,6 +306,18 @@ stale sólo desde el frente.
 selección copia el envelope público, cambia el record `Pending → InFlight`, conserva el
 record en `Records`, retira la clave de prioridad y deja stale la clave temporal.
 
+`Confirm` y `CancelInFlight` comparten una validación que distingue ausencia de emisión
+activa, ID solicitado distinto e invariante interna rota. El ciclo operativo actual es:
+
+```text
+Enqueue → Pending → Pump → InFlight → Confirmed | Cancelled
+```
+
+La finalización publica primero el lifecycle event. Sólo después elimina el record y
+restablece `InFlightEmissionId` a cero; si la publicación lanza, la emisión permanece
+íntegramente `InFlight`. El borrado autoritativo libera capacidad y deja las claves
+derivadas restantes como stale para su limpieza lazy.
+
 ## 8. Arquitectura privada aprobada para fases futuras
 
 La dirección aprobada es:
@@ -320,9 +333,10 @@ La dirección aprobada es:
 
 Ya existen `Records`, records `Pending`, ambos heaps derivados, limpieza lazy del frente
 temporal y de prioridad, próximo despertar, expiración operativa, Pump y una única
-emisión `InFlight`. No existen todavía Confirm, CancelInFlight, Auto Pump, compactación,
-contadores por flujo, almacenamiento de payloads, evicción ni aging. La capacidad se
-determina por escaneo del map, por lo que un record `InFlight` continúa ocupando slot.
+emisión `InFlight`. Confirm y CancelInFlight ya completan y eliminan esa emisión. No
+existen todavía Auto Pump, compactación, contadores por flujo, almacenamiento de
+payloads, evicción ni aging. La capacidad se determina por escaneo del map: un record
+`InFlight` ocupa slot hasta su confirmación o cancelación exitosa.
 
 ## 9. Estructura y CMake
 
@@ -484,13 +498,27 @@ externas.
 - Implementó `Pump` con expiraciones previas, estados Busy/QueueEmpty/EmissionReady y
   transición `Pending → InFlight`.
 - No implementó Confirm, CancelInFlight, Auto Pump, evicción, aging ni payloads.
-- Cambios locales actuales; commit sugerido:
+- Commit `9d8019d` —
   `feat(core): add pump selection and in-flight state`.
+
+### Fase 4A.8 — Confirmación y cancelación de InFlight
+
+- Añadió validación compartida del target activo con estados para ausencia, mismatch e
+  invariante interna rota.
+- Implementó una ruta terminal compartida que publica el lifecycle antes de borrar el
+  record autoritativo y restablecer el ID activo.
+- Implementó `Confirm` con terminal `Confirmed` y `CancelInFlight` con terminal
+  `Cancelled`; los fallos no mutan estado ni generan lifecycle events.
+- El borrado del record libera el slot y deja stale cualquier clave derivada restante.
+- No añadió Auto Pump, captura temporal, expiraciones, evicción, aging ni payloads a
+  estas operaciones.
+- Cambios locales actuales; commit sugerido:
+  `feat(core): add in-flight confirmation and cancellation`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `c64db91`.
+  `9d8019d`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -506,5 +534,6 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir de `Pump` y la única emisión `InFlight` de 4A.7, pero
-  debe esperarse la especificación exacta de la siguiente fase.
+- El próximo trabajo debe partir del ciclo completo `Pending → InFlight → terminal` de
+  4A.8. Auto Pump sigue pendiente y debe esperarse la especificación exacta de la
+  siguiente fase.

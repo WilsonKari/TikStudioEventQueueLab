@@ -40,6 +40,13 @@ public:
         InFlight
     };
 
+    enum class EInFlightTargetStatus : std::uint8_t
+    {
+        Valid,
+        NoInFlightEmission,
+        EmissionIdMismatch
+    };
+
     // Unidad autoritativa de una emisión viva. Conserva los snapshots efectivos
     // necesarios para decidir su ciclo de vida sin volver a consultar settings.
     struct FInternalEmissionRecord
@@ -376,6 +383,76 @@ public:
         }
     }
 
+    // El ID activo sólo es un localizador: antes de compararlo con la solicitud se
+    // comprueba que continúe describiendo el único record InFlight autoritativo.
+    [[nodiscard]]
+    EInFlightTargetStatus ValidateInFlightTarget(
+        FTSEmissionId RequestedEmissionId
+    ) const
+    {
+        if (InFlightEmissionId == 0)
+        {
+            return EInFlightTargetStatus::NoInFlightEmission;
+        }
+
+        const auto RecordIt = Records.find(InFlightEmissionId);
+
+        if (
+            RecordIt == Records.end()
+            || RecordIt->second.State != EInternalEmissionState::InFlight
+            || RecordIt->second.Envelope.EmissionId != InFlightEmissionId
+        )
+        {
+            throw std::logic_error("Invalid in-flight emission state");
+        }
+
+        if (RequestedEmissionId != InFlightEmissionId)
+        {
+            return EInFlightTargetStatus::EmissionIdMismatch;
+        }
+
+        return EInFlightTargetStatus::Valid;
+    }
+
+    // El terminal se publica antes de retirar la fuente autoritativa. Si el vector
+    // lanza, la emisión permanece íntegramente InFlight y puede reintentarse.
+    void CompleteInFlight(
+        ETSEmissionTerminalReason Reason,
+        FTSEmissionLifecycleEvents& OutLifecycleEvents
+    )
+    {
+        const auto RecordIt = Records.find(InFlightEmissionId);
+
+        if (
+            InFlightEmissionId == 0
+            || RecordIt == Records.end()
+            || RecordIt->second.State != EInternalEmissionState::InFlight
+            || RecordIt->second.Envelope.EmissionId != InFlightEmissionId
+        )
+        {
+            throw std::logic_error("Invalid in-flight emission state");
+        }
+
+        if (
+            Reason != ETSEmissionTerminalReason::Confirmed
+            && Reason != ETSEmissionTerminalReason::Cancelled
+        )
+        {
+            throw std::logic_error("Invalid in-flight terminal reason");
+        }
+
+        FTSEmissionLifecycleEvent LifecycleEvent;
+        LifecycleEvent.Envelope = RecordIt->second.Envelope;
+        LifecycleEvent.Reason = Reason;
+
+        OutLifecycleEvents.push_back(std::move(LifecycleEvent));
+
+        // Eliminar el record libera el slot; los índices derivados conservan sólo
+        // claves stale que sus validadores retirarán de forma lazy.
+        Records.erase(RecordIt);
+        InFlightEmissionId = 0;
+    }
+
     // El motivo terminal deriva de la política congelada al admitir; un valor fuera
     // del contrato revela una invariante rota antes de eliminar estado autoritativo.
     [[nodiscard]]
@@ -649,6 +726,60 @@ FTSPumpResult TikStudioEventQueueSystem::Pump()
 
     // La clave temporal no se toca: el cambio de estado basta para volverla stale.
     Result.Outcome.Status = ETSPumpStatus::EmissionReady;
+    return Result;
+}
+
+FTSConfirmResult TikStudioEventQueueSystem::Confirm(
+    FTSEmissionId EmissionId
+)
+{
+    FTSConfirmResult Result;
+
+    switch (Impl->ValidateInFlightTarget(EmissionId))
+    {
+    case FImpl::EInFlightTargetStatus::NoInFlightEmission:
+        return Result;
+
+    case FImpl::EInFlightTargetStatus::EmissionIdMismatch:
+        Result.Status = ETSConfirmStatus::EmissionIdMismatch;
+        return Result;
+
+    case FImpl::EInFlightTargetStatus::Valid:
+        break;
+    }
+
+    Impl->CompleteInFlight(
+        ETSEmissionTerminalReason::Confirmed,
+        Result.LifecycleEvents
+    );
+    Result.Status = ETSConfirmStatus::Confirmed;
+    return Result;
+}
+
+FTSCancelInFlightResult TikStudioEventQueueSystem::CancelInFlight(
+    FTSEmissionId EmissionId
+)
+{
+    FTSCancelInFlightResult Result;
+
+    switch (Impl->ValidateInFlightTarget(EmissionId))
+    {
+    case FImpl::EInFlightTargetStatus::NoInFlightEmission:
+        return Result;
+
+    case FImpl::EInFlightTargetStatus::EmissionIdMismatch:
+        Result.Status = ETSCancelInFlightStatus::EmissionIdMismatch;
+        return Result;
+
+    case FImpl::EInFlightTargetStatus::Valid:
+        break;
+    }
+
+    Impl->CompleteInFlight(
+        ETSEmissionTerminalReason::Cancelled,
+        Result.LifecycleEvents
+    );
+    Result.Status = ETSCancelInFlightStatus::Cancelled;
     return Result;
 }
 
