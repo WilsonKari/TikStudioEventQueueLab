@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 
 class TikStudioEventQueueSystem::FImpl final
@@ -27,6 +28,20 @@ public:
             EAdmissionValidationStatus::InvalidFlow;
         const FTSFlowQueueSettings* FlowSettings = nullptr;
         std::chrono::milliseconds EffectiveTTL{0};
+    };
+
+    enum class EInternalEmissionState : std::uint8_t
+    {
+        Pending
+    };
+
+    struct FInternalEmissionRecord
+    {
+        FTSEmissionEnvelope Envelope{};
+        EInternalEmissionState State = EInternalEmissionState::Pending;
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard;
+        bool bProtectedFromEviction = false;
+        std::uint64_t Revision = 1;
     };
 
     explicit FImpl(
@@ -137,10 +152,83 @@ public:
         return NowProvider();
     }
 
+    [[nodiscard]]
+    bool IsFlowAtCapacity(
+        ETSEventFlow Flow,
+        std::uint32_t MaxSlots
+    ) const noexcept
+    {
+        if (MaxSlots == 0)
+        {
+            return true;
+        }
+
+        std::size_t LiveCount = 0;
+
+        for (const auto& Entry : Records)
+        {
+            if (Entry.second.Envelope.Flow != Flow)
+            {
+                continue;
+            }
+
+            ++LiveCount;
+
+            if (LiveCount >= static_cast<std::size_t>(MaxSlots))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]]
+    static FTSEventQueueTimePoint CalculateExpiresAt(
+        FTSEventQueueTimePoint Now,
+        std::chrono::milliseconds EffectiveTTL
+    ) noexcept
+    {
+        using FClockDuration = FTSEventQueueTimePoint::duration;
+
+        const FTSEventQueueTimePoint MaxTimePoint =
+            FTSEventQueueTimePoint::max();
+
+        if (EffectiveTTL.count() == 0)
+        {
+            return MaxTimePoint;
+        }
+
+        const std::chrono::milliseconds MaxDurationInMilliseconds =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                FClockDuration::max()
+            );
+
+        if (EffectiveTTL > MaxDurationInMilliseconds)
+        {
+            return MaxTimePoint;
+        }
+
+        const FClockDuration TTLDuration =
+            std::chrono::duration_cast<FClockDuration>(EffectiveTTL);
+        const FClockDuration NowDuration = Now.time_since_epoch();
+
+        if (
+            NowDuration > FClockDuration::zero()
+            && TTLDuration > FClockDuration::max() - NowDuration
+        )
+        {
+            return MaxTimePoint;
+        }
+
+        return FTSEventQueueTimePoint{NowDuration + TTLDuration};
+    }
+
     FTSEventQueueSettings Settings;
     FTSNowProvider NowProvider;
     FTSEmissionId NextEmissionId = 1;
     FTSEmissionSequence NextSequence = 1;
+    std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
 
 private:
     static void AdvanceCounterOrMarkExhausted(
@@ -166,6 +254,82 @@ TikStudioEventQueueSystem::TikStudioEventQueueSystem(
         std::move(NowProvider)
     ))
 {
+}
+
+FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
+    const FTSEnqueueRequest& Request
+)
+{
+    FTSEnqueueResult Result;
+    const FImpl::FAdmissionValidationResult Validation =
+        Impl->ValidateEnqueueRequest(Request);
+
+    switch (Validation.Status)
+    {
+    case FImpl::EAdmissionValidationStatus::InvalidFlow:
+        Result.Status = ETSEnqueueStatus::RejectedInvalidFlow;
+        return Result;
+
+    case FImpl::EAdmissionValidationStatus::Disabled:
+        Result.Status = ETSEnqueueStatus::RejectedDisabled;
+        return Result;
+
+    case FImpl::EAdmissionValidationStatus::InvalidTTL:
+        Result.Status = ETSEnqueueStatus::RejectedInvalidTTL;
+        return Result;
+
+    case FImpl::EAdmissionValidationStatus::Valid:
+        break;
+    }
+
+    const FTSFlowQueueSettings& FlowSettings = *Validation.FlowSettings;
+
+    if (Impl->IsFlowAtCapacity(Request.Flow, FlowSettings.MaxSlots))
+    {
+        Result.Status = ETSEnqueueStatus::RejectedAtCapacity;
+        return Result;
+    }
+
+    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+    const std::int64_t PriorityScore = FImpl::CalculatePriorityScore(
+        FlowSettings.BaseWeight,
+        Request.PriorityAdjustment
+    );
+    const FTSEventQueueTimePoint ExpiresAt = FImpl::CalculateExpiresAt(
+        Now,
+        Validation.EffectiveTTL
+    );
+
+    FImpl::FEmissionIdentity Identity;
+
+    if (!Impl->TryAllocateEmissionIdentity(Identity))
+    {
+        Result.Status = ETSEnqueueStatus::RejectedIdentityExhausted;
+        return Result;
+    }
+
+    FTSEmissionEnvelope Envelope;
+    Envelope.EmissionId = Identity.EmissionId;
+    Envelope.Flow = Request.Flow;
+    Envelope.Sequence = Identity.Sequence;
+    Envelope.CreatedAt = Now;
+    Envelope.ExpiresAt = ExpiresAt;
+    Envelope.PriorityScore = PriorityScore;
+
+    FImpl::FInternalEmissionRecord Record;
+    Record.Envelope = Envelope;
+    Record.State = FImpl::EInternalEmissionState::Pending;
+    Record.ExpirePolicy = FlowSettings.ExpirePolicy;
+    Record.bProtectedFromEviction =
+        Request.bProtectedFromEviction
+        || FlowSettings.bExemptFromEviction;
+    Record.Revision = 1;
+
+    Impl->Records.emplace(Envelope.EmissionId, std::move(Record));
+
+    Result.Status = ETSEnqueueStatus::Accepted;
+    Result.AdmittedEmission = Envelope;
+    return Result;
 }
 
 TikStudioEventQueueSystem::~TikStudioEventQueueSystem() = default;
