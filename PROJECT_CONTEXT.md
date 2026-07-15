@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-14.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `3d45a9b`
-(`feat(core): add admission validation and emission identity primitives`). La Fase
-4A.4 y este documento se publican juntos en el siguiente commit del historial.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `72541ff`
+(`feat(core): add authoritative emission storage and basic enqueue`). Los cambios de
+la Fase 4A.5 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -111,8 +111,8 @@ Fuente externa                                      [futuro]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
 → construir FTSEmissionEnvelope                     [implementado]
 → crear y almacenar record autoritativo Pending      [implementado]
+→ indexar prioridad y expiración finita               [implementado]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ índices de prioridad y expiración                  [no implementado]
 → Pump selecciona y marca InFlight                   [no implementado]
 → host despacha payload tipado                       [no implementado]
 → Confirm / Cancel / expiración                      [no implementado]
@@ -143,7 +143,8 @@ protección ante evicción. Existen contratos de resultado para `Enqueue`, `Pump
 
 `Enqueue` ya tiene una implementación básica funcional: valida la solicitud, comprueba
 la capacidad del flujo, captura el tiempo una vez, asigna identidad, construye el
-envelope y almacena un record `Pending`. `Pump`, `Confirm`, `CancelInFlight`,
+envelope, almacena un record `Pending` e inserta sus snapshots en los índices derivados
+de prioridad y expiración finita. `Pump`, `Confirm`, `CancelInFlight`,
 `ProcessDueExpirations` y `GetNextWakeTime` siguen declaradas sin definición; llamarlas
 todavía produciría un error de enlace.
 
@@ -225,7 +226,7 @@ Defaults globales:
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
 
-## 7. Estado privado implementado hasta 4A.4
+## 7. Estado privado implementado hasta 4A.5
 
 `TikStudioEventQueueSystem` usa PImpl con `std::unique_ptr<FImpl>`. Es no copiable,
 movible con operaciones `noexcept`, y su destructor está fuera de línea. Un objeto
@@ -240,6 +241,16 @@ FTSNowProvider NowProvider;
 FTSEmissionId NextEmissionId = 1;
 FTSEmissionSequence NextSequence = 1;
 std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
+std::priority_queue<
+    FPriorityIndexEntry,
+    std::vector<FPriorityIndexEntry>,
+    FPriorityIndexCompare
+> PriorityIndex;
+std::priority_queue<
+    FExpirationIndexEntry,
+    std::vector<FExpirationIndexEntry>,
+    FExpirationIndexCompare
+> ExpirationIndex;
 ```
 
 `Records` es la primera fuente autoritativa de emisiones. Cada
@@ -264,11 +275,15 @@ Helpers internos conectados a `Enqueue`:
 - `IsFlowAtCapacity`: cuenta records vivos del flujo mediante un escaneo O(n);
   `MaxSlots == 0` rechaza toda admisión.
 - `CalculateExpiresAt`: representa TTL cero con `time_point::max()` y satura en el
-  máximo cuando la suma temporal no es representable.
+  máximo cuando la suma temporal no es representable. Compara en una duración común
+  amplia y redondea TTL positivos hacia arriba al tick del reloj.
 
 Las validaciones y el rechazo por capacidad ocurren antes de capturar tiempo o consumir
 identidad. Una admisión aceptada construye el record completo y lo inserta en `Records`
-antes de devolver el envelope público. Todavía no hay contadores o índices auxiliares.
+antes de indexarlo. El max-heap de prioridad ordena por mayor `PriorityScore` y luego
+menor `Sequence`; el min-heap temporal ordena por menor `ExpiresAt` y luego menor
+`Sequence`. Ambos guardan ID + Revision, sin punteros, referencias ni iteradores al map.
+Sólo las expiraciones finitas entran al índice temporal. Todavía no hay contadores.
 
 ## 8. Arquitectura privada aprobada para fases futuras
 
@@ -276,18 +291,18 @@ La dirección aprobada es:
 
 - `std::unordered_map<FTSEmissionId, Record>` como fuente autoritativa
   (implementado en 4A.4).
-- Max-heap de prioridad con claves/snapshots pequeños.
-- Min-heap de expiración.
+- Max-heap de prioridad con claves/snapshots pequeños (implementado en 4A.5).
+- Min-heap de expiración (implementado en 4A.5).
 - Invalidación diferida mediante ID + revisión y compactación controlada.
 - Contadores vivos por flujo.
 - Una sola emisión `InFlight`.
 - Orden: mayor prioridad primero; empate por menor Sequence (FIFO).
 
-Ya existen `Records`, records `Pending` y revisión inicial. No existen todavía heaps,
-índices, invalidación diferida operativa, contadores por flujo, `InFlight`,
-almacenamiento de payloads, Pump, evicción, aging ni procesamiento de expiraciones.
-La capacidad actual se determina por escaneo del map; se reemplazará por contadores
-cuando una fase posterior lo autorice.
+Ya existen `Records`, records `Pending`, revisión inicial y ambos heaps derivados. No
+existen todavía consumo o limpieza de índices, validación de entradas stale,
+compactación, contadores por flujo, `InFlight`, almacenamiento de payloads, Pump,
+evicción, aging ni procesamiento de expiraciones. La capacidad actual se determina por
+escaneo del map; se reemplazará por contadores cuando una fase posterior lo autorice.
 
 ## 9. Estructura y CMake
 
@@ -395,13 +410,28 @@ externas.
   inicial antes de insertarse autoritativamente.
 - No añadió Pump, InFlight, heaps, expiración operativa, evicción, Auto Pump ni lógica
   específica de familias.
-- Commit de esta publicación —
+- Commit `72541ff` —
   `feat(core): add authoritative emission storage and basic enqueue`.
+
+### Fase 4A.5 — Índices internos de prioridad y expiración
+
+- Añadió un max-heap derivado de prioridad y un min-heap derivado de expiración; sus
+  entradas sólo contienen claves congeladas, `EmissionId` y `Revision`.
+- Toda admisión aceptada se indexa por prioridad; sólo una expiración finita se indexa
+  temporalmente.
+- `Enqueue` comprueba la inserción autoritativa y retira el record si falla la
+  indexación, propagando la excepción. Una entrada stale sin record puede permanecer.
+- Endureció `CalculateExpiresAt` para resoluciones distintas a milisegundos y redondeo
+  no anticipado.
+- No implementó consumo o limpieza de heaps, Pump, InFlight, expiración operativa,
+  evicción ni lógica de familias.
+- Cambios locales actuales; commit sugerido:
+  `feat(core): add priority and expiration indexes`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `3d45a9b`.
+  `72541ff`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -417,5 +447,5 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del record autoritativo y `Enqueue` básico de 4A.4,
-  pero debe esperarse la especificación exacta de la siguiente fase.
+- El próximo trabajo debe partir de `Records` y los índices derivados de 4A.5, pero
+  debe esperarse la especificación exacta de la siguiente fase.

@@ -2,8 +2,12 @@
 
 #include <limits>
 #include <memory>
+#include <queue>
+#include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 class TikStudioEventQueueSystem::FImpl final
 {
@@ -42,6 +46,54 @@ public:
         ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard;
         bool bProtectedFromEviction = false;
         std::uint64_t Revision = 1;
+    };
+
+    struct FPriorityIndexEntry
+    {
+        std::int64_t PriorityScore = 0;
+        FTSEmissionSequence Sequence = 0;
+        FTSEmissionId EmissionId = 0;
+        std::uint64_t Revision = 0;
+    };
+
+    struct FPriorityIndexCompare
+    {
+        bool operator()(
+            const FPriorityIndexEntry& Left,
+            const FPriorityIndexEntry& Right
+        ) const noexcept
+        {
+            if (Left.PriorityScore != Right.PriorityScore)
+            {
+                return Left.PriorityScore < Right.PriorityScore;
+            }
+
+            return Left.Sequence > Right.Sequence;
+        }
+    };
+
+    struct FExpirationIndexEntry
+    {
+        FTSEventQueueTimePoint ExpiresAt{};
+        FTSEmissionSequence Sequence = 0;
+        FTSEmissionId EmissionId = 0;
+        std::uint64_t Revision = 0;
+    };
+
+    struct FExpirationIndexCompare
+    {
+        bool operator()(
+            const FExpirationIndexEntry& Left,
+            const FExpirationIndexEntry& Right
+        ) const noexcept
+        {
+            if (Left.ExpiresAt != Right.ExpiresAt)
+            {
+                return Left.ExpiresAt > Right.ExpiresAt;
+            }
+
+            return Left.Sequence > Right.Sequence;
+        }
     };
 
     explicit FImpl(
@@ -190,6 +242,10 @@ public:
     ) noexcept
     {
         using FClockDuration = FTSEventQueueTimePoint::duration;
+        using FWideDuration = std::common_type_t<
+            std::chrono::duration<long double, FClockDuration::period>,
+            std::chrono::duration<long double, std::milli>
+        >;
 
         const FTSEventQueueTimePoint MaxTimePoint =
             FTSEventQueueTimePoint::max();
@@ -199,18 +255,16 @@ public:
             return MaxTimePoint;
         }
 
-        const std::chrono::milliseconds MaxDurationInMilliseconds =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                FClockDuration::max()
-            );
+        const FWideDuration WideTTL = EffectiveTTL;
+        const FWideDuration WideMaxClockDuration = FClockDuration::max();
 
-        if (EffectiveTTL > MaxDurationInMilliseconds)
+        if (WideTTL > WideMaxClockDuration)
         {
             return MaxTimePoint;
         }
 
         const FClockDuration TTLDuration =
-            std::chrono::duration_cast<FClockDuration>(EffectiveTTL);
+            std::chrono::ceil<FClockDuration>(EffectiveTTL);
         const FClockDuration NowDuration = Now.time_since_epoch();
 
         if (
@@ -229,6 +283,16 @@ public:
     FTSEmissionId NextEmissionId = 1;
     FTSEmissionSequence NextSequence = 1;
     std::unordered_map<FTSEmissionId, FInternalEmissionRecord> Records;
+    std::priority_queue<
+        FPriorityIndexEntry,
+        std::vector<FPriorityIndexEntry>,
+        FPriorityIndexCompare
+    > PriorityIndex;
+    std::priority_queue<
+        FExpirationIndexEntry,
+        std::vector<FExpirationIndexEntry>,
+        FExpirationIndexCompare
+    > ExpirationIndex;
 
 private:
     static void AdvanceCounterOrMarkExhausted(
@@ -325,7 +389,43 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
         || FlowSettings.bExemptFromEviction;
     Record.Revision = 1;
 
-    Impl->Records.emplace(Envelope.EmissionId, std::move(Record));
+    const auto [RecordIt, bInserted] = Impl->Records.emplace(
+        Envelope.EmissionId,
+        std::move(Record)
+    );
+
+    if (!bInserted)
+    {
+        throw std::logic_error("Duplicate emission identity");
+    }
+
+    try
+    {
+        const FImpl::FInternalEmissionRecord& StoredRecord = RecordIt->second;
+        const FTSEmissionEnvelope& StoredEnvelope = StoredRecord.Envelope;
+
+        Impl->PriorityIndex.push(FImpl::FPriorityIndexEntry{
+            StoredEnvelope.PriorityScore,
+            StoredEnvelope.Sequence,
+            StoredEnvelope.EmissionId,
+            StoredRecord.Revision
+        });
+
+        if (StoredEnvelope.ExpiresAt != FTSEventQueueTimePoint::max())
+        {
+            Impl->ExpirationIndex.push(FImpl::FExpirationIndexEntry{
+                StoredEnvelope.ExpiresAt,
+                StoredEnvelope.Sequence,
+                StoredEnvelope.EmissionId,
+                StoredRecord.Revision
+            });
+        }
+    }
+    catch (...)
+    {
+        Impl->Records.erase(RecordIt);
+        throw;
+    }
 
     Result.Status = ETSEnqueueStatus::Accepted;
     Result.AdmittedEmission = Envelope;
