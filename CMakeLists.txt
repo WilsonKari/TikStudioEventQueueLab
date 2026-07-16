@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+enable_testing()
+
 add_library(TikStudioEventCore STATIC
   Core/Private/EventQueueSystem/TikStudioEventQueueSystem.cpp
   Core/Private/EventQueueSystem/TSEventQueueSystemSettings.cpp
@@ -69,4 +71,18 @@ target_link_libraries(TikStudioEventConsole
     TikStudioEventCore
     TikStudioEventSimulator
     TikStudioTikFinityAdapter
+)
+
+add_executable(TikStudioEventCoreTests
+  Tests/TikStudioEventQueueSystemTests.cpp
+)
+
+target_link_libraries(TikStudioEventCoreTests
+  PRIVATE
+    TikStudioEventCore
+)
+
+add_test(
+  NAME TikStudioEventCoreTests
+  COMMAND TikStudioEventCoreTests
 )

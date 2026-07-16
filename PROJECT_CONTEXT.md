@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `d504df7`
-(`feat(core): add in-flight confirmation and cancellation`). Los cambios de la Fase
-4A.9 permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `a1be3ce`
+(`feat(core): add auto pump after enqueue and confirm`). Los cambios de la Fase 4B.1
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -122,6 +122,10 @@ Fuente externa                                      [futuro]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
 ```
+
+El MVP del core dispone localmente de un runner portable de caja negra con reloj
+controlado. La compilación y ejecución manual de esa cobertura siguen pendientes del
+propietario; el pipeline semántico de familias y payloads continúa sin implementar.
 
 ## 4. Contratos públicos actuales
 
@@ -359,7 +363,7 @@ por flujo, almacenamiento de payloads, evicción ni aging. La capacidad se deter
 escaneo del map: un record `InFlight` ocupa slot hasta su confirmación o cancelación
 exitosa.
 
-## 9. Estructura y CMake
+## 9. Estructura, CMake y pruebas
 
 Targets explícitos, sin `file(GLOB ...)`:
 
@@ -370,9 +374,26 @@ Targets explícitos, sin `file(GLOB ...)`:
   WebSocket ni JSON.
 - `TikStudioEventConsole` (executable): enlaza los tres targets; actualmente sólo
   imprime `TikStudioEventQueueLab ready.`.
+- `TikStudioEventCoreTests` (executable): enlaza únicamente con Core y está registrado
+  en CTest mediante `add_test`.
 
-Tests contiene únicamente `.gitkeep`. No hay framework de pruebas ni dependencias
-externas.
+`Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
+continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
+prueba falla. Usa un `FTSNowProvider` controlado, sin tiempo real, sleeps ni threads.
+No hay framework de pruebas ni dependencias externas.
+
+La cobertura local comprueba mediante API pública:
+
+- prioridad y FIFO;
+- Auto Pump después de Enqueue y Enqueue ocupado;
+- Confirm con Auto Pump y orden de lifecycle events;
+- Cancel sin Auto Pump;
+- expiración exacta en el límite de TTL e inmunidad de InFlight;
+- capacidad contando Pending + InFlight y liberación por Confirm/Cancel;
+- preservación de InFlight ante un ID de Confirm incorrecto.
+
+Estas pruebas no acceden a `FImpl`, `Records` ni índices privados. Todavía no fueron
+compiladas ni ejecutadas por instrucción expresa de la Fase 4B.1.
 
 ## 10. Historial de tareas y commits
 
@@ -548,13 +569,27 @@ externas.
 - `CancelInFlight` permanece sin captura temporal ni Auto Pump.
 - El MVP funcional básico del core queda completo; evicción, aging, payloads y familias
   siguen fuera.
-- Cambios locales actuales; commit sugerido:
+- Commit `a1be3ce` —
   `feat(core): add auto pump after enqueue and confirm`.
+
+### Fase 4B.1 — Pruebas portables deterministas del MVP
+
+- Añadió `TikStudioEventCoreTests`, enlazado únicamente con `TikStudioEventCore` y
+  registrado mediante CTest.
+- Añadió un runner sin frameworks externos que ejecuta pruebas por nombre, continúa
+  después de fallos y devuelve un código no cero cuando alguna falla.
+- Añadió un reloj controlado mediante `FTSNowProvider`, sin esperas ni tiempo real.
+- Cubrió prioridad, FIFO, Auto Pump, InFlight, Confirm, Cancel, TTL, capacidad,
+  lifecycle events e ID incorrecto exclusivamente mediante la API pública.
+- No modificó código de producción. La compilación y ejecución quedan pendientes del
+  propietario y el pipeline semántico continúa fuera de alcance.
+- Cambios locales actuales; commit sugerido:
+  `test(core): add deterministic MVP queue tests`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `d504df7`.
+  `a1be3ce`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -570,5 +605,5 @@ externas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del MVP básico completo, incluida la selección manual
-  y automática de 4A.9, y esperar la especificación exacta de la siguiente fase.
+- El próximo trabajo debe partir del MVP básico completo y su cobertura portable de
+  4B.1. El pipeline semántico sigue pendiente y requiere una especificación separada.
