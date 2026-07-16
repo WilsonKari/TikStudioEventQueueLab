@@ -36,6 +36,7 @@ target_include_directories(TikStudioEventCore
 
 add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
+  Pipeline/Private/EventPipeline/Families/TSChatFamily.cpp
 )
 
 target_include_directories(TikStudioEventPipeline
@@ -99,4 +100,18 @@ target_link_libraries(TikStudioEventCoreTests
 add_test(
   NAME TikStudioEventCoreTests
   COMMAND TikStudioEventCoreTests
+)
+
+add_executable(TikStudioEventPipelineTests
+  Tests/TikStudioEventPipelineTests.cpp
+)
+
+target_link_libraries(TikStudioEventPipelineTests
+  PRIVATE
+    TikStudioEventPipeline
+)
+
+add_test(
+  NAME TikStudioEventPipelineTests
+  COMMAND TikStudioEventPipelineTests
 )

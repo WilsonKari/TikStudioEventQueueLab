@@ -2,8 +2,8 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `9efc3b9`
-(`test(core): add deterministic MVP queue tests`). Los cambios de la Fase 4B.2
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `62d8491`
+(`feat(pipeline): add portable pipeline contracts`). Los cambios de la Fase 4B.3
 permanecen locales y sin commit.
 
 ## 1. Objetivo general
@@ -75,8 +75,9 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones todavía
-no los recibe, interpreta ni almacena. No se ha implementado lógica específica de Chat,
-Gift, Like, Member, RoomUser, Share o Follow.
+no los recibe, interpreta ni almacena. Chat ya dispone de una primera familia portable
+que convierte su input en un candidato tipado; Gift, Like, Member, RoomUser, Share y
+Follow continúan sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -114,8 +115,8 @@ El pipeline previsto y el punto exacto alcanzado son:
 Fuente externa                                      [futuro]
 → adaptador de fuente                               [placeholder]
 → FTS*Input portable                                [contratos listos]
-→ familia interpreta payload y elige flujo          [no implementado]
-→ decisión familiar / candidato de admisión tipado  [contratos listos]
+→ familia interpreta payload y elige flujo          [implementado sólo para Chat]
+→ decisión familiar / candidato de admisión tipado  [Chat implementado]
 → FTSEnqueueRequest                                  [contrato listo]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
@@ -135,9 +136,9 @@ Fuente externa                                      [futuro]
 ```
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
-10 pruebas aprobadas y 0 fallos. El módulo Pipeline ya expone contratos mínimos de
-datos, pero la interpretación de familias, los repositorios de payloads y la
-coordinación operativa continúan sin implementar.
+10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
+compilados en `62d8491`. Chat ya produce localmente un candidato tipado, pero todavía
+no existe repositorio, binding operativo, coordinador ni llamada a `Enqueue`.
 
 ## 4. Contratos públicos actuales
 
@@ -159,6 +160,22 @@ coordinación operativa continúan sin implementar.
 `EmissionId` es la única clave global. `FamilyKind` y `ExpectedFlow` sólo sirven como
 metadatos de verificación y enrutamiento. Estos contratos no implementan ownership,
 repositorios, procesamiento ni coordinación.
+
+### Primera familia semántica: Chat
+
+`FTSChatPayload` posee un snapshot completo de `FTSChatInput`. La clase sin estado
+`FTSChatFamily` recibe el input por valor y devuelve siempre un
+`TTSFamilyDecision<FTSChatPayload>` con candidato para un input normalizado válido:
+
+- `FamilyKind = Chat`;
+- `Flow = Chat`;
+- ajuste de prioridad cero;
+- sin override de TTL;
+- sin protección especial ante evicción;
+- snapshot completo de Comment, emotes y usuario.
+
+La familia sólo produce datos. No llama al core, no asigna `EmissionId`, no almacena el
+payload y no conoce repositorios, bindings ni procesadores.
 
 ### Metadatos
 
@@ -400,8 +417,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
-- `TikStudioEventPipeline` (STATIC): contratos portables del pipeline; publica
-  `Pipeline/Public` y enlaza públicamente sólo con Core.
+- `TikStudioEventPipeline` (STATIC): contratos portables y primera familia Chat;
+  publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): enlaza con Core; actualmente placeholder, sin
   WebSocket ni JSON.
@@ -409,6 +426,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   imprime `TikStudioEventQueueLab ready.`.
 - `TikStudioEventCoreTests` (executable): enlaza únicamente con Core y está registrado
   en CTest mediante `add_test`.
+- `TikStudioEventPipelineTests` (executable): enlaza únicamente con Pipeline y está
+  registrado en CTest mediante `add_test`.
 
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
@@ -427,6 +446,11 @@ La cobertura local comprueba mediante API pública:
 
 Estas pruebas no acceden a `FImpl`, `Records` ni índices privados. La compilación
 publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
+
+`Tests/TikStudioEventPipelineTests.cpp` comprueba mediante API pública que Chat produce
+un candidato con los defaults esperados, conserva íntegramente Comment, emotes y datos
+de usuario, y no modifica el input original recibido por copia. Estas pruebas locales
+de 4B.3 todavía no fueron compiladas ni ejecutadas.
 
 ## 10. Historial de tareas y commits
 
@@ -629,13 +653,27 @@ publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
   internos del core y lógica específica de flujos derivados.
 - No añadió familias reales, repositorios, coordinador, procesadores, bindings
   operativos ni nuevas pruebas.
-- Cambios locales actuales; commit sugerido:
+- La biblioteca fue compilada correctamente.
+- Commit `62d8491` —
   `feat(pipeline): add portable pipeline contracts`.
+
+### Fase 4B.3 — Familia Chat y candidato tipado
+
+- Añadió `FTSChatPayload` como snapshot propietario del input normalizado completo.
+- Añadió `FTSChatFamily` sin estado, que produce un candidato Chat con defaults de
+  admisión explícitos y payload tipado.
+- La familia no llama al core, no genera IDs y no conoce almacenamiento ni coordinación.
+- Añadió `TikStudioEventPipelineTests`, enlazado únicamente con Pipeline, para validar
+  candidato, defaults, snapshot completo y preservación del input original.
+- No añadió repositorios, coordinador, Enqueue real, bindings operativos, procesadores,
+  otras familias ni flujos derivados.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): add chat family candidate`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `9efc3b9`.
+  `62d8491`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -651,6 +689,6 @@ publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir de los contratos no operativos de 4B.2. La familia
-  Chat y el resto del pipeline requieren especificaciones separadas; no deben
+- El próximo trabajo debe partir del candidato Chat no operativo de 4B.3. Repositorios,
+  coordinador y las demás familias requieren especificaciones separadas; no deben
   implementarse automáticamente.
