@@ -2,8 +2,8 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `a1be3ce`
-(`feat(core): add auto pump after enqueue and confirm`). Los cambios de la Fase 4B.1
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `9efc3b9`
+(`test(core): add deterministic MVP queue tests`). Los cambios de la Fase 4B.2
 permanecen locales y sin commit.
 
 ## 1. Objetivo general
@@ -48,6 +48,16 @@ Blueprint
 ```
 
 Blueprint nunca será dependencia directa del core.
+
+La frontera añadida para coordinar familias y payloads conserva una única dirección:
+
+```text
+TikStudioEventPipeline
+        ↓
+TikStudioEventCore
+```
+
+El Core no incluye ni enlaza el Pipeline.
 
 ## 2. Datos entrantes y familias portables
 
@@ -105,6 +115,7 @@ Fuente externa                                      [futuro]
 → adaptador de fuente                               [placeholder]
 → FTS*Input portable                                [contratos listos]
 → familia interpreta payload y elige flujo          [no implementado]
+→ decisión familiar / candidato de admisión tipado  [contratos listos]
 → FTSEnqueueRequest                                  [contrato listo]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
@@ -123,11 +134,31 @@ Fuente externa                                      [futuro]
 → lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
 ```
 
-El MVP del core dispone localmente de un runner portable de caja negra con reloj
-controlado. La compilación y ejecución manual de esa cobertura siguen pendientes del
-propietario; el pipeline semántico de familias y payloads continúa sin implementar.
+El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
+10 pruebas aprobadas y 0 fallos. El módulo Pipeline ya expone contratos mínimos de
+datos, pero la interpretación de familias, los repositorios de payloads y la
+coordinación operativa continúan sin implementar.
 
 ## 4. Contratos públicos actuales
+
+### Pipeline portable
+
+`TikStudioEventPipelineContracts.h` define:
+
+- `ETSEventFamilyKind` para las siete familias nativas;
+- `FTSPayloadHandle` como identidad opaca y distinta de `FTSEmissionId`, con cero
+  inválido;
+- `ETSExternalEmissionState` para el estado externo del binding;
+- `ETSProcessingResult` para el resultado futuro del procesamiento;
+- `TTSAdmissionCandidate<TPayload>` con familia, request y payload tipado;
+- `TTSFamilyDecision<TPayload>` como decisión opcional, donde vacío significa
+  `NoEmission`;
+- `FTSEmissionBinding` para asociar la identidad global del core con familia, flujo
+  esperado, handle tipado externo y estado externo.
+
+`EmissionId` es la única clave global. `FamilyKind` y `ExpectedFlow` sólo sirven como
+metadatos de verificación y enrutamiento. Estos contratos no implementan ownership,
+repositorios, procesamiento ni coordinación.
 
 ### Metadatos
 
@@ -369,6 +400,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
+- `TikStudioEventPipeline` (STATIC): contratos portables del pipeline; publica
+  `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): enlaza con Core; actualmente placeholder, sin
   WebSocket ni JSON.
@@ -392,8 +425,8 @@ La cobertura local comprueba mediante API pública:
 - capacidad contando Pending + InFlight y liberación por Confirm/Cancel;
 - preservación de InFlight ante un ID de Confirm incorrecto.
 
-Estas pruebas no acceden a `FImpl`, `Records` ni índices privados. Todavía no fueron
-compiladas ni ejecutadas por instrucción expresa de la Fase 4B.1.
+Estas pruebas no acceden a `FImpl`, `Records` ni índices privados. La compilación
+publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
 
 ## 10. Historial de tareas y commits
 
@@ -581,15 +614,28 @@ compiladas ni ejecutadas por instrucción expresa de la Fase 4B.1.
 - Añadió un reloj controlado mediante `FTSNowProvider`, sin esperas ni tiempo real.
 - Cubrió prioridad, FIFO, Auto Pump, InFlight, Confirm, Cancel, TTL, capacidad,
   lifecycle events e ID incorrecto exclusivamente mediante la API pública.
-- No modificó código de producción. La compilación y ejecución quedan pendientes del
-  propietario y el pipeline semántico continúa fuera de alcance.
-- Cambios locales actuales; commit sugerido:
+- No modificó código de producción. La compilación fue correcta y las 10 pruebas
+  terminaron con 0 fallos; el pipeline semántico continuó fuera de alcance.
+- Commit `9efc3b9` —
   `test(core): add deterministic MVP queue tests`.
+
+### Fase 4B.2 — Contratos mínimos del pipeline portable
+
+- Creó `TikStudioEventPipeline` como biblioteca estática dependiente públicamente de
+  `TikStudioEventCore`, sin dependencia inversa.
+- Añadió los contratos de familia, handle opaco, estado externo, resultado de
+  procesamiento, candidato tipado, decisión opcional y binding por EmissionId.
+- Conservó el payload como parámetro de template y evitó payloads universales, estados
+  internos del core y lógica específica de flujos derivados.
+- No añadió familias reales, repositorios, coordinador, procesadores, bindings
+  operativos ni nuevas pruebas.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): add portable pipeline contracts`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `a1be3ce`.
+  `9efc3b9`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -605,5 +651,6 @@ compiladas ni ejecutadas por instrucción expresa de la Fase 4B.1.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del MVP básico completo y su cobertura portable de
-  4B.1. El pipeline semántico sigue pendiente y requiere una especificación separada.
+- El próximo trabajo debe partir de los contratos no operativos de 4B.2. La familia
+  Chat y el resto del pipeline requieren especificaciones separadas; no deben
+  implementarse automáticamente.

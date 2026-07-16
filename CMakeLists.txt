@@ -34,6 +34,20 @@ target_include_directories(TikStudioEventCore
     Core/Public
 )
 
+add_library(TikStudioEventPipeline STATIC
+  Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
+)
+
+target_include_directories(TikStudioEventPipeline
+  PUBLIC
+    Pipeline/Public
+)
+
+target_link_libraries(TikStudioEventPipeline
+  PUBLIC
+    TikStudioEventCore
+)
+
 add_library(TikStudioEventSimulator STATIC
   Adapters/Simulator/TikStudioEventSimulator.cpp
 )
