@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `ca936b6`
-(`feat(pipeline): add emission binding registry`). Los cambios de la Fase 4B.5a
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `0755199`
+(`fix(pipeline): harden payload and binding ownership`). Los ajustes documentales de la
+Fase 4B.5a permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -141,9 +141,9 @@ El MVP del core quedó compilado correctamente en 4B.1 y su runner portable term
 10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
 compilados en `62d8491`, la familia Chat fue publicada y compilada en `b9c3998`, y el
 repositorio tipado fue publicado y compilado en `bb7fdbd`, y el registro externo de
-bindings fue publicado en `ca936b6`. El endurecimiento de ownership está implementado
-localmente, pero Chat continúa sin conectarse al repositorio, al registro ni a
-`Enqueue`; tampoco existe coordinador.
+bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicado en
+`0755199`, pero Chat continúa sin conectarse al repositorio, al registro ni a `Enqueue`;
+tampoco existe coordinador.
 
 ## 4. Contratos públicos actuales
 
@@ -204,18 +204,18 @@ condición que sólo existe desde la perspectiva de la coordinación externa dur
 recorrido:
 
 ```text
-coordinador inserta payload
-→ todavía no existe binding: uso provisional
+payload insertado antes de la admisión
+→ uso provisional definido por el coordinador
 
 admisión aceptada
-→ crea binding EmissionId → PayloadHandle
+→ el mismo handle se vinculará a un EmissionId
 → el payload permanece en la misma entrada
 
 admisión rechazada
-→ elimina la entrada provisional
+→ el coordinador eliminará el payload provisional
 
-terminal manejado correctamente
-→ elimina binding y payload
+terminal manejado
+→ se eliminarán binding y payload
 ```
 
 El repositorio no conoce `Enqueue`, lifecycle ni ninguna de estas etapas.
@@ -508,11 +508,11 @@ publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
 un candidato con los defaults esperados, conserva íntegramente Comment, emotes y datos
 de usuario, y no modifica el input original recibido por copia. La cobertura publicada
 de 4B.4 también comprueba handles no cero y distintos, snapshots independientes,
-`Visit`, handles inválidos, `Erase`, `Size`, `Empty` y no reutilización. La ampliación
-local de 4B.5 cubre inserción y consulta de bindings, validaciones, duplicados,
+`Visit`, handles inválidos, `Erase`, `Size`, `Empty` y no reutilización. La cobertura
+publicada de 4B.5 comprueba inserción y consulta de bindings, validaciones, duplicados,
 transiciones condicionales, eliminación única y tamaño/vacío. La Fase 4B.5a añade
-comprobaciones estáticas de que repositorio y registro no son copiables ni movibles;
-estas comprobaciones nuevas todavía no fueron compiladas ni ejecutadas.
+comprobaciones estáticas de que repositorio y registro no son copiables ni movibles; no
+se registra aquí un resultado manual de compilación o ejecución para esta fase.
 
 ## 10. Historial de tareas y commits
 
@@ -773,13 +773,13 @@ estas comprobaciones nuevas todavía no fueron compiladas ni ejecutadas.
 - Añadió comprobaciones estáticas de las garantías de ownership sin cambiar el
   comportamiento de las pruebas existentes.
 - Chat continúa sin conectarse a `Enqueue`.
-- Cambios locales actuales; commit sugerido:
+- Commit `0755199` —
   `fix(pipeline): harden payload and binding ownership`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `ca936b6`.
+  `0755199`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -795,6 +795,6 @@ estas comprobaciones nuevas todavía no fueron compiladas ni ejecutadas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El siguiente paso previsto es la primera coordinación vertical de Chat, partiendo del
+- El siguiente paso previsto es el coordinador de admisión Chat, partiendo del
   candidato, el repositorio y el registro de bindings todavía desconectados. Requiere
   una especificación separada y no debe implementarse automáticamente.

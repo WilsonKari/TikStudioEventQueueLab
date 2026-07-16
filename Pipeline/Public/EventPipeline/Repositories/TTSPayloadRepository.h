@@ -109,7 +109,7 @@ public:
 
 private:
     std::uint64_t NextHandleValue = 1;
-    // El repositorio desconoce si la coordinación considera estos payloads
-    // provisionales, vinculados o terminales.
+    // El repositorio sólo posee payloads; desconoce si la coordinación externa los
+    // considera provisionales, vinculados o terminales.
     std::unordered_map<std::uint64_t, TPayload> Payloads;
 };
