@@ -2,8 +2,8 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `20ca6e2`
-(`feat(pipeline): authorize chat processing dispatch`). Los cambios de la Fase 4B.8
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `2bce321`
+(`feat(pipeline): complete chat processing lifecycle`). Los cambios de la Fase 4C.1
 permanecen locales y sin commit.
 
 ## 1. Objetivo general
@@ -49,15 +49,17 @@ Blueprint
 
 Blueprint nunca será dependencia directa del core.
 
-La frontera añadida para coordinar familias y payloads conserva una única dirección:
+Las fronteras portables conservan una única dirección:
 
 ```text
+TikStudioEventHost
+        ↓
 TikStudioEventPipeline
         ↓
 TikStudioEventCore
 ```
 
-El Core no incluye ni enlaza el Pipeline.
+El Pipeline no incluye ni enlaza el Host. El Core no incluye ni enlaza Pipeline o Host.
 
 ## 2. Datos entrantes y familias portables
 
@@ -135,7 +137,7 @@ Fuente externa                                      [futuro]
 → coordinador captura ready interno de un solo uso     [implementado para Chat]
 → BeginChatProcessing produce copia propietaria        [implementado para Chat]
 → binding externo Bound → Processing                    [implementado para Chat]
-→ host recibe despacho tipado propietario              [implementado para Chat]
+→ coordinador entrega despacho tipado propietario       [implementado para Chat]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
 → Succeeded coordina Confirm                            [implementado para Chat]
@@ -143,8 +145,12 @@ Fuente externa                                      [futuro]
 → lifecycle terminal limpia binding y payload           [implementado para Chat]
 → Confirm captura el siguiente ready de Auto Pump       [implementado para Chat]
 → Pump y expiración se exponen por el coordinador       [implementado para Chat]
+→ fuentes publican input/completion en bandeja segura   [implementado en Host]
+→ RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
+→ mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
+→ Host devuelve como máximo un despacho propietario     [implementado en Host]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ procesadores de efectos externos y otras familias    [no implementados]
+→ conversión determinista de mensajes TikFinity Chat   [siguiente fase 4C.2]
 ```
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
@@ -155,9 +161,11 @@ bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicad
 compilado en `2923fb5`; su runner manual terminó con 8 PASS y 0 FAIL. La Fase 4B.6 fue
 publicada y compilada en `2ff496e`: Core terminó con 10 PASS y 0 FAIL, y Pipeline con
 13 PASS y 0 FAIL. La Fase 4B.7 fue publicada y compilada en `20ca6e2`: Core terminó
-con 10 PASS y 0 FAIL, y Pipeline con 18 PASS y 0 FAIL. La Fase 4B.8 implementa
-localmente la finalización y el lifecycle completo de Chat; sus pruebas nuevas todavía
-no fueron compiladas ni ejecutadas por el agente.
+con 10 PASS y 0 FAIL, y Pipeline con 18 PASS y 0 FAIL. La Fase 4B.8 fue publicada en
+`2bce321`: Core terminó con 10 PASS y 0 FAIL, y Pipeline con 28 PASS y 0 FAIL. Con ello
+queda completo el vertical slice portable interno de Chat. La Fase 4C.1 añade
+localmente la capa Host; sus pruebas todavía no fueron compiladas ni ejecutadas por el
+agente.
 
 ## 4. Contratos públicos actuales
 
@@ -334,6 +342,33 @@ el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()
 al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
 Chat de la misma forma; la consolidación semántica continúa fuera de alcance.
 
+### Host portable de ejecución Chat
+
+`FTSChatExecutionHost` es una biblioteca separada que posee el coordinador mediante un
+PImpl no copiable ni movible. Su API pública permite `PostChat` y
+`PostChatCompletion` desde cualquier hilo, pero reserva `RunOneCycle` al hilo que
+construyó la instancia. El Host no expone mutexes, bandeja, variante, thread ID ni el
+coordinador.
+
+La bandeja privada contiene únicamente inputs Chat y finalizaciones tipadas. Un mutex
+protege exclusivamente la inserción, extracción y consulta de comandos; nunca permanece
+bloqueado durante una llamada a Pipeline. El FIFO de publicaciones concurrentes queda
+definido por el orden efectivo de inserción obtenido bajo ese mutex, no por el instante
+en que distintos threads comenzaron a publicar. El booleano devuelto por `PostChat` y
+`PostChatCompletion` sólo indica la transición de bandeja vacía a ocupada para que la
+composición externa solicite un ciclo.
+
+Cada `RunOneCycle` consume como máximo un comando, procesa expiraciones, intenta obtener
+un ready ya autorizado y, si no existe, ejecuta un único Pump explícito. Como máximo
+devuelve un `FTSChatProcessingDispatch` propietario. Después consulta el próximo wake y
+si quedan comandos. La política es work-conserving: desactivar Auto Pump en Core no
+prohíbe que el Host llame Pump explícitamente para avanzar trabajo Pending.
+
+El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
+procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
+permanecen en la bandeja. La composición propietaria debe solicitar explícitamente otro
+ciclo después de capturar el fallo si desea continuar.
+
 ### Metadatos
 
 `FTSEmissionEnvelope` contiene solamente:
@@ -398,7 +433,8 @@ reordenarse por ID, flujo o prioridad.
 - TTL igual a cero: sin expiración.
 - TTL negativo: inválido.
 - Una emisión `InFlight` no expira por TTL de cola.
-- El host programa temporizadores; el core no crea Tick ni timers.
+- El scheduler externo decide cuándo ejecutar el Host; ni Host ni Core crean Tick o
+  timers.
 - `FTSNowProvider` es inyectable. Vacío se normaliza a
   `FTSEventQueueClock::now()`.
 - Cada operación pública captura `Now` como máximo una vez y reutiliza esa instantánea
@@ -414,6 +450,7 @@ reordenarse por ID, flujo o prioridad.
   InFlight”, no “primera emisión histórica”.
 - CancelInFlight no realiza Auto Pump automáticamente.
 - El core es single-threaded. Adaptador/host debe serializar llamadas al hilo propietario.
+- El Host es work-conserving: los settings de Auto Pump no prohíben su Pump explícito.
 
 ## 6. Settings actuales
 
@@ -575,8 +612,11 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, primera familia Chat y
-  coordinador de admisión/despacho; publica `Pipeline/Public` y enlaza públicamente sólo
-  con Core.
+  coordinador de admisión, despacho y finalización; publica `Pipeline/Public` y enlaza
+  públicamente sólo con Core.
+- `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe y ciclo propietario de Chat;
+  publica `Host/Public`, enlaza públicamente con Pipeline y privadamente con
+  `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): enlaza con Core; actualmente placeholder, sin
   WebSocket ni JSON.
@@ -586,6 +626,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   en CTest mediante `add_test`.
 - `TikStudioEventPipelineTests` (executable): enlaza únicamente con Pipeline y está
   registrado en CTest mediante `add_test`.
+- `TikStudioEventHostTests` (executable): enlaza únicamente con Host y está registrado
+  en CTest mediante `add_test`.
 
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
@@ -625,11 +667,17 @@ preservación del primer ready ante un segundo `NotRequested`, copia propietaria
 independiente y consumo único. En `20ca6e2`, los resultados manuales fueron Core
 10 PASS / 0 FAIL y Pipeline 18 PASS / 0 FAIL.
 
-La ampliación local de 4B.8 añade diez escenarios para finalización exitosa, captura del
-siguiente ready, orden Confirmed → expiración, Cancelled, Failed terminal, rechazo de
-un binding todavía `Bound`, Pump explícito tras Cancel, Busy sin perder ready y
-expiraciones Discard/Consolidate con reloj controlado. Estas pruebas nuevas no fueron
-compiladas ni ejecutadas por el agente.
+La cobertura publicada de 4B.8 añade diez escenarios para finalización exitosa, captura
+del siguiente ready, orden Confirmed → expiración, Cancelled, Failed terminal, rechazo
+de un binding todavía `Bound`, Pump explícito tras Cancel, Busy sin perder ready y
+expiraciones Discard/Consolidate con reloj controlado. En `2bce321`, los resultados
+manuales fueron Core 10 PASS / 0 FAIL y Pipeline 28 PASS / 0 FAIL.
+
+`Tests/TikStudioEventHostTests.cpp` añade localmente nueve escenarios sin framework:
+Host vacío, publicaciones desde worker, FIFO y procesamiento asíncrono, completion desde
+worker, avance tras Cancel, preservación de comandos posteriores a un fallo, expiración
+durante procesamiento, rechazo del hilo incorrecto y Pump explícito con Auto Pump
+desactivado. Este tercer runner todavía no fue compilado ni ejecutado por el agente.
 
 ## 10. Historial de tareas y commits
 
@@ -940,14 +988,34 @@ compiladas ni ejecutadas por el agente.
   exponer el core.
 - Confirm captura el siguiente ready después de limpiar terminales; Cancel requiere Pump
   explícito. Discard y Consolidate limpian Chat sin acumulación semántica.
-- Añadió diez escenarios deterministas. No fueron compilados ni ejecutados por el agente.
-- Cambios locales actuales; commit sugerido:
+- Añadió diez escenarios deterministas. La fase fue compilada correctamente. Resultados
+  manuales: Core 10 PASS / 0 FAIL y Pipeline 28 PASS / 0 FAIL.
+- Commit `2bce321` —
   `feat(pipeline): complete chat processing lifecycle`.
+
+### Fase 4C.1 — Host portable de ejecución Chat
+
+- Añadió `TikStudioEventHost` como biblioteca separada sobre Pipeline, con PImpl y
+  dependencia privada de `Threads::Threads`.
+- Añadió una bandeja thread-safe para publicar inputs y finalizaciones desde cualquier
+  hilo; el mutex serializa el orden efectivo de inserción FIFO.
+- Fijó el hilo propietario durante la construcción y restringió a éste todas las llamadas
+  al coordinador mediante `RunOneCycle`.
+- Cada ciclo consume como máximo un comando, procesa expiraciones, intenta un ready,
+  ejecuta Pump explícito si hace falta y devuelve como máximo un despacho propietario.
+- Documentó y cubrió la política work-conserving: Auto Pump desactivado no prohíbe el
+  Pump explícito del Host.
+- Añadió un tercer runner con nueve escenarios. No fue compilado ni ejecutado por el
+  agente.
+- Simulator, TikFinity y Console permanecen desconectados; no existen threads, timers,
+  callbacks o procesadores internos.
+- Cambios locales actuales; commit sugerido:
+  `feat(host): add portable chat execution host`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `20ca6e2`.
+  `2bce321`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -963,6 +1031,8 @@ compiladas ni ejecutadas por el agente.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El flujo portable interno mínimo de Chat queda completo localmente en 4B.8. No añadir
-  automáticamente procesadores de efectos externos, adaptadores reales, integración de
-  host, las otras seis familias ni UE5 sin una especificación separada.
+- El vertical slice portable interno de Chat quedó publicado en 4B.8 y el Host portable
+  está implementado localmente en 4C.1. La siguiente fase prevista es 4C.2: conversión
+  determinista de mensajes TikFinity Chat a `FTSChatInput`, todavía sin WebSocket real.
+- No añadir automáticamente JSON real, red, Simulator, Console, procesadores concretos,
+  efectos, las otras seis familias ni UE5 sin una especificación separada.

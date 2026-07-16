@@ -17,6 +17,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
 
+find_package(Threads REQUIRED)
+
 add_library(TikStudioEventCore STATIC
   Core/Private/EventQueueSystem/TikStudioEventQueueSystem.cpp
   Core/Private/EventQueueSystem/TSEventQueueSystemSettings.cpp
@@ -48,6 +50,22 @@ target_include_directories(TikStudioEventPipeline
 target_link_libraries(TikStudioEventPipeline
   PUBLIC
     TikStudioEventCore
+)
+
+add_library(TikStudioEventHost STATIC
+  Host/Private/EventHost/TSChatExecutionHost.cpp
+)
+
+target_include_directories(TikStudioEventHost
+  PUBLIC
+    Host/Public
+)
+
+target_link_libraries(TikStudioEventHost
+  PUBLIC
+    TikStudioEventPipeline
+  PRIVATE
+    Threads::Threads
 )
 
 add_library(TikStudioEventSimulator STATIC
@@ -115,4 +133,18 @@ target_link_libraries(TikStudioEventPipelineTests
 add_test(
   NAME TikStudioEventPipelineTests
   COMMAND TikStudioEventPipelineTests
+)
+
+add_executable(TikStudioEventHostTests
+  Tests/TikStudioEventHostTests.cpp
+)
+
+target_link_libraries(TikStudioEventHostTests
+  PRIVATE
+    TikStudioEventHost
+)
+
+add_test(
+  NAME TikStudioEventHostTests
+  COMMAND TikStudioEventHostTests
 )
