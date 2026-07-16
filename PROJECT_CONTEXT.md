@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `2ff496e`
-(`feat(pipeline): coordinate chat admission`). Los cambios de la Fase 4B.7 permanecen
-locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `20ca6e2`
+(`feat(pipeline): authorize chat processing dispatch`). Los cambios de la Fase 4B.8
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -104,10 +104,10 @@ RoomUser → RoomUser | RoomUserMilestone | RoomUserTop1Change
 Share    → Share | ShareMilestone
 ```
 
-Son “flujos sintéticos” porque representan una decisión semántica futura de la familia.
-Todavía no existe código que lea un evento concreto y produzca esos flujos. Los siete
-archivos de `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y
-no contienen implementación.
+Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat ya
+produce su flujo directo; todavía no existe lógica para los flujos derivados ni para las
+otras seis familias. Los siete archivos de `Core/Private/EventQueueSystem/Events/` sólo
+incluyen el header central y no contienen implementación.
 
 El pipeline previsto y el punto exacto alcanzado son:
 
@@ -138,8 +138,13 @@ Fuente externa                                      [futuro]
 → host recibe despacho tipado propietario              [implementado para Chat]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
+→ Succeeded coordina Confirm                            [implementado para Chat]
+→ Cancelled / Failed coordinan CancelInFlight           [implementado para Chat]
+→ lifecycle terminal limpia binding y payload           [implementado para Chat]
+→ Confirm captura el siguiente ready de Auto Pump       [implementado para Chat]
+→ Pump y expiración se exponen por el coordinador       [implementado para Chat]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ coordinador procesa Confirm / Cancel                 [no implementado]
+→ procesadores de efectos externos y otras familias    [no implementados]
 ```
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
@@ -149,8 +154,10 @@ repositorio tipado fue publicado y compilado en `bb7fdbd`, y el registro externo
 bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicado y
 compilado en `2923fb5`; su runner manual terminó con 8 PASS y 0 FAIL. La Fase 4B.6 fue
 publicada y compilada en `2ff496e`: Core terminó con 10 PASS y 0 FAIL, y Pipeline con
-13 PASS y 0 FAIL. La Fase 4B.7 implementa localmente el primer despacho Chat autorizado
-por una notificación ready observada directamente desde el core.
+13 PASS y 0 FAIL. La Fase 4B.7 fue publicada y compilada en `20ca6e2`: Core terminó
+con 10 PASS y 0 FAIL, y Pipeline con 18 PASS y 0 FAIL. La Fase 4B.8 implementa
+localmente la finalización y el lifecycle completo de Chat; sus pruebas nuevas todavía
+no fueron compiladas ni ejecutadas por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -302,7 +309,30 @@ Las comprobaciones estáticas exigen que despacho y resultado puedan moverse sin
 Si cualquier copia o validación falla antes de la transición, binding, payload y ready
 permanecen intactos y la operación puede reintentarse. Después de una transición
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
-almacenados hasta la Fase 4B.8.
+almacenados mientras la emisión permanece `Processing`.
+
+### Finalización y lifecycle completo de Chat
+
+`CompleteChatProcessing(EmissionId, ProcessingResult)` sólo acepta el binding Chat que
+ya está en `Processing` y conserva su payload. Valida identidad, familia, flujo, handle,
+estado y existencia del payload antes de solicitar una transición terminal al core.
+`Succeeded` llama exclusivamente a `Confirm`; `Cancelled` y `Failed` llaman a
+`CancelInFlight`. En este MVP, `Failed` es terminal y no implica retry.
+
+El resultado portable conserva el `ETSProcessingResult` comunicado por el procesador y
+expone exactamente uno de los resultados del core: `ConfirmResult` para `Succeeded` o
+`CancelResult` para `Cancelled`/`Failed`. El lifecycle se valida en dos pasadas: primero
+se comprueba la forma completa del lote y todas sus referencias externas sin mutación;
+después se aplica, en el orden autoritativo del core, la transición a
+`TerminalPendingHandling` y la eliminación del payload y binding. `Confirmed` y
+`Cancelled` exigen estado `Processing`; expiración y evicción exigen `Bound`.
+
+Tras un Confirm exitoso, el coordinador procesa primero todos los terminales y después
+captura el posible siguiente `EmissionReady` del Auto Pump. Cancel no ejecuta Auto Pump;
+el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()`,
+`ProcessDueExpirations()` y `GetNextWakeTime()` se exponen sin entregar una referencia
+al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
+Chat de la misma forma; la consolidación semántica continúa fuera de alcance.
 
 ### Metadatos
 
@@ -590,9 +620,16 @@ Auto Pump, segunda admisión ocupada con `NotRequested`, rechazo por flujo desha
 rechazo por capacidad sin dañar la emisión previa e inspección de ID desconocido. El
 resultado manual publicado fue Core 10 PASS / 0 FAIL y Pipeline 13 PASS / 0 FAIL.
 
-La ampliación local de 4B.7 cubre ausencia de ready, despacho autorizado, preservación
-del primer ready ante un segundo `NotRequested`, copia propietaria independiente y
-consumo único. Estas pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
+La cobertura publicada de 4B.7 añade ausencia de ready, despacho autorizado,
+preservación del primer ready ante un segundo `NotRequested`, copia propietaria
+independiente y consumo único. En `20ca6e2`, los resultados manuales fueron Core
+10 PASS / 0 FAIL y Pipeline 18 PASS / 0 FAIL.
+
+La ampliación local de 4B.8 añade diez escenarios para finalización exitosa, captura del
+siguiente ready, orden Confirmed → expiración, Cancelled, Failed terminal, rechazo de
+un binding todavía `Bound`, Pump explícito tras Cancel, Busy sin perder ready y
+expiraciones Discard/Consolidate con reloj controlado. Estas pruebas nuevas no fueron
+compiladas ni ejecutadas por el agente.
 
 ## 10. Historial de tareas y commits
 
@@ -886,13 +923,31 @@ consumo único. Estas pruebas nuevas no fueron compiladas ni ejecutadas por el a
 - Mantiene el payload original almacenado e independiente de la copia entregada al host.
 - Añadió cinco escenarios de despacho; no añadió `Confirm`, `CancelInFlight`, limpieza
   terminal, retries, timers, otras familias ni interfaces universales.
-- Cambios locales actuales; commit sugerido:
+- La fase fue compilada correctamente. Resultados manuales: Core 10 PASS / 0 FAIL y
+  Pipeline 18 PASS / 0 FAIL.
+- Commit `20ca6e2` —
   `feat(pipeline): authorize chat processing dispatch`.
+
+### Fase 4B.8 — Finalización y lifecycle completo de Chat
+
+- Añadió `FTSChatProcessingCompletionResult` con invariantes exclusivas para el resultado
+  de Confirm o Cancel.
+- Conectó `Succeeded → Confirm` y `Cancelled/Failed → CancelInFlight`, validando primero
+  que binding y payload pertenecen a la emisión Chat en `Processing`.
+- Generalizó el lifecycle terminal a los cinco motivos mediante validación completa en
+  dos pasadas y limpieza ordenada de binding y payload.
+- Expuso `Pump`, `ProcessDueExpirations` y `GetNextWakeTime` a través del coordinador, sin
+  exponer el core.
+- Confirm captura el siguiente ready después de limpiar terminales; Cancel requiere Pump
+  explícito. Discard y Consolidate limpian Chat sin acumulación semántica.
+- Añadió diez escenarios deterministas. No fueron compilados ni ejecutados por el agente.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): complete chat processing lifecycle`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `2ff496e`.
+  `20ca6e2`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -908,6 +963,6 @@ consumo único. Estas pruebas nuevas no fueron compiladas ni ejecutadas por el a
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- La Fase 4B.8 será la última fase mínima de Chat. Debe definir `Confirm`, `Cancel` y
-  limpieza terminal coordinados mediante una especificación separada; no debe
-  implementarse automáticamente.
+- El flujo portable interno mínimo de Chat queda completo localmente en 4B.8. No añadir
+  automáticamente procesadores de efectos externos, adaptadores reales, integración de
+  host, las otras seis familias ni UE5 sin una especificación separada.

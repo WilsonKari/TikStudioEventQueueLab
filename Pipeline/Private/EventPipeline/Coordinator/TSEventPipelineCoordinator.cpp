@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 static_assert(
     std::is_nothrow_move_constructible_v<FTSChatProcessingDispatch>
@@ -12,6 +13,19 @@ static_assert(
 
 static_assert(
     std::is_nothrow_move_constructible_v<FTSChatDispatchResult>
+);
+
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSChatProcessingCompletionResult>
+);
+
+static_assert(std::is_nothrow_move_constructible_v<FTSConfirmResult>);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSCancelInFlightResult>
+);
+static_assert(std::is_nothrow_move_constructible_v<FTSPumpResult>);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSProcessDueExpirationsResult>
 );
 
 namespace
@@ -92,14 +106,271 @@ namespace
             Status == ETSEnqueueStatus::AcceptedWithEviction;
     }
 
+    enum class EChatLifecycleBatchKind : std::uint8_t
+    {
+        PendingOnly,
+        Confirm,
+        Cancel
+    };
+
+    struct FValidatedChatLifecycleEntry
+    {
+        FTSEmissionId EmissionId = 0;
+        FTSPayloadHandle PayloadHandle{};
+        ETSExternalEmissionState ExpectedState =
+            ETSExternalEmissionState::Bound;
+    };
+
     [[nodiscard]]
-    constexpr bool IsSupportedEnqueueTerminalReason(
+    constexpr bool IsPendingTerminalReason(
         ETSEmissionTerminalReason Reason
     ) noexcept
     {
         return Reason == ETSEmissionTerminalReason::ExpiredDiscard ||
             Reason == ETSEmissionTerminalReason::ExpiredConsolidate ||
             Reason == ETSEmissionTerminalReason::Evicted;
+    }
+
+    [[nodiscard]]
+    ETSExternalEmissionState GetExpectedExternalState(
+        ETSEmissionTerminalReason Reason
+    )
+    {
+        switch (Reason)
+        {
+        case ETSEmissionTerminalReason::Confirmed:
+        case ETSEmissionTerminalReason::Cancelled:
+            return ETSExternalEmissionState::Processing;
+
+        case ETSEmissionTerminalReason::ExpiredDiscard:
+        case ETSEmissionTerminalReason::ExpiredConsolidate:
+        case ETSEmissionTerminalReason::Evicted:
+            return ETSExternalEmissionState::Bound;
+        }
+
+        throw std::logic_error("Unsupported Chat lifecycle reason");
+    }
+
+    void ValidateChatLifecycleBatchShape(
+        const FTSEmissionLifecycleEvents& LifecycleEvents,
+        EChatLifecycleBatchKind BatchKind,
+        FTSEmissionId RequestedEmissionId
+    )
+    {
+        if (BatchKind == EChatLifecycleBatchKind::Confirm)
+        {
+            if (LifecycleEvents.empty() ||
+                LifecycleEvents.front().Envelope.EmissionId !=
+                    RequestedEmissionId ||
+                LifecycleEvents.front().Reason !=
+                    ETSEmissionTerminalReason::Confirmed)
+            {
+                throw std::logic_error(
+                    "Chat Confirm lifecycle has an invalid leading event"
+                );
+            }
+
+            for (std::size_t Index = 1;
+                 Index < LifecycleEvents.size();
+                 ++Index)
+            {
+                if (!IsPendingTerminalReason(LifecycleEvents[Index].Reason))
+                {
+                    throw std::logic_error(
+                        "Chat Confirm lifecycle has an invalid trailing event"
+                    );
+                }
+            }
+
+            return;
+        }
+
+        if (BatchKind == EChatLifecycleBatchKind::Cancel)
+        {
+            if (LifecycleEvents.size() != 1 ||
+                LifecycleEvents.front().Envelope.EmissionId !=
+                    RequestedEmissionId ||
+                LifecycleEvents.front().Reason !=
+                    ETSEmissionTerminalReason::Cancelled)
+            {
+                throw std::logic_error("Chat Cancel lifecycle is invalid");
+            }
+
+            return;
+        }
+
+        for (const FTSEmissionLifecycleEvent& LifecycleEvent : LifecycleEvents)
+        {
+            if (!IsPendingTerminalReason(LifecycleEvent.Reason))
+            {
+                throw std::logic_error(
+                    "Pending Chat lifecycle has a non-pending terminal reason"
+                );
+            }
+        }
+    }
+
+    void ValidateAndApplyChatLifecycleBatch(
+        FTSEmissionBindingRegistry& BindingRegistry,
+        FTSChatPayloadRepository& ChatPayloadRepository,
+        const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
+        const FTSEmissionLifecycleEvents& LifecycleEvents,
+        EChatLifecycleBatchKind BatchKind,
+        FTSEmissionId RequestedEmissionId
+    )
+    {
+        ValidateChatLifecycleBatchShape(
+            LifecycleEvents,
+            BatchKind,
+            RequestedEmissionId
+        );
+
+        // Toda la tanda se valida antes de cambiar una autoridad externa.
+        std::vector<FValidatedChatLifecycleEntry> ValidatedEntries;
+        ValidatedEntries.reserve(LifecycleEvents.size());
+
+        for (const FTSEmissionLifecycleEvent& LifecycleEvent : LifecycleEvents)
+        {
+            const FTSEmissionId EmissionId =
+                LifecycleEvent.Envelope.EmissionId;
+
+            if (EmissionId == 0)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle references an invalid identity"
+                );
+            }
+
+            if (LifecycleEvent.Envelope.Flow != ETSEventFlow::Chat)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle references a non-Chat flow"
+                );
+            }
+
+            for (const FValidatedChatLifecycleEntry& Entry : ValidatedEntries)
+            {
+                if (Entry.EmissionId == EmissionId)
+                {
+                    throw std::logic_error(
+                        "Chat lifecycle contains a duplicate identity"
+                    );
+                }
+            }
+
+            if (PendingReadyEmission.has_value() &&
+                PendingReadyEmission->EmissionId == EmissionId)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle targets a pending ready notification"
+                );
+            }
+
+            const ETSExternalEmissionState ExpectedState =
+                GetExpectedExternalState(LifecycleEvent.Reason);
+            FTSEmissionBinding Binding;
+            const bool bFoundBinding = BindingRegistry.Visit(
+                EmissionId,
+                [&](const FTSEmissionBinding& StoredBinding)
+                {
+                    Binding = StoredBinding;
+                }
+            );
+
+            if (!bFoundBinding)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle references a missing binding"
+                );
+            }
+
+            if (Binding.EmissionId != EmissionId)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding identity mismatch"
+                );
+            }
+
+            if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle references a non-Chat binding"
+                );
+            }
+
+            if (Binding.ExpectedFlow != ETSEventFlow::Chat ||
+                Binding.ExpectedFlow != LifecycleEvent.Envelope.Flow)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding flow mismatch"
+                );
+            }
+
+            if (Binding.PayloadHandle.Value == 0)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding has an invalid payload handle"
+                );
+            }
+
+            if (Binding.ExternalState != ExpectedState)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding state mismatch"
+                );
+            }
+
+            const bool bFoundPayload = ChatPayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [](const FTSChatPayload&)
+                {
+                }
+            );
+
+            if (!bFoundPayload)
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding references a missing payload"
+                );
+            }
+
+            ValidatedEntries.push_back(
+                FValidatedChatLifecycleEntry{
+                    EmissionId,
+                    Binding.PayloadHandle,
+                    ExpectedState
+                }
+            );
+        }
+
+        // La aplicación conserva exactamente el orden comunicado por el core.
+        for (const FValidatedChatLifecycleEntry& Entry : ValidatedEntries)
+        {
+            if (!BindingRegistry.TransitionState(
+                    Entry.EmissionId,
+                    Entry.ExpectedState,
+                    ETSExternalEmissionState::TerminalPendingHandling
+                ))
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding transition failed"
+                );
+            }
+
+            if (!ChatPayloadRepository.Erase(Entry.PayloadHandle))
+            {
+                throw std::logic_error(
+                    "Chat lifecycle payload disappeared before cleanup"
+                );
+            }
+
+            if (!BindingRegistry.Erase(Entry.EmissionId))
+            {
+                throw std::logic_error(
+                    "Chat lifecycle binding disappeared before cleanup"
+                );
+            }
+        }
     }
 }
 
@@ -144,7 +415,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
 
     if (!IsAcceptedStatus(CoreResult.Status))
     {
-        ProcessEnqueueLifecycleEvents(CoreResult.LifecycleEvents);
+        ProcessPendingLifecycleEvents(CoreResult.LifecycleEvents);
         ProvisionalGuard.RollbackNow();
 
         Result.Status = ETSPipelineAdmissionStatus::RejectedByCore;
@@ -177,7 +448,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
         throw std::logic_error("Accepted Chat emission could not be bound");
     }
 
-    ProcessEnqueueLifecycleEvents(CoreResult.LifecycleEvents);
+    ProcessPendingLifecycleEvents(CoreResult.LifecycleEvents);
     CaptureCorePumpOutcome(CoreResult.AutoPumpOutcome);
 
     Result.Status = ETSPipelineAdmissionStatus::Accepted;
@@ -272,6 +543,151 @@ FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
     return Result;
 }
 
+FTSChatProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteChatProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    FTSChatProcessingCompletionResult Result;
+    Result.EmissionId = EmissionId;
+    Result.ProcessingResult = ProcessingResult;
+
+    if (EmissionId == 0)
+    {
+        throw std::logic_error(
+            "Chat completion references an invalid identity"
+        );
+    }
+
+    if (PendingReadyEmission.has_value())
+    {
+        throw std::logic_error(
+            "Chat completion cannot coexist with a pending ready notification"
+        );
+    }
+
+    switch (ProcessingResult)
+    {
+    case ETSProcessingResult::Succeeded:
+    case ETSProcessingResult::Cancelled:
+    case ETSProcessingResult::Failed:
+        break;
+
+    default:
+        throw std::logic_error("Chat completion result is invalid");
+    }
+
+    // Las autoridades externas se comprueban antes de pedir al core una
+    // transición terminal que no puede deshacerse.
+    FTSEmissionBinding Binding;
+    const bool bFoundBinding = BindingRegistry.Visit(
+        EmissionId,
+        [&](const FTSEmissionBinding& StoredBinding)
+        {
+            Binding = StoredBinding;
+        }
+    );
+
+    if (!bFoundBinding)
+    {
+        throw std::logic_error("Chat completion has no binding");
+    }
+
+    if (Binding.EmissionId != EmissionId)
+    {
+        throw std::logic_error("Chat completion binding identity mismatch");
+    }
+
+    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+    {
+        throw std::logic_error("Chat completion binding family mismatch");
+    }
+
+    if (Binding.ExpectedFlow != ETSEventFlow::Chat)
+    {
+        throw std::logic_error("Chat completion binding flow mismatch");
+    }
+
+    if (Binding.ExternalState != ETSExternalEmissionState::Processing)
+    {
+        throw std::logic_error("Chat completion binding is not Processing");
+    }
+
+    if (Binding.PayloadHandle.Value == 0)
+    {
+        throw std::logic_error(
+            "Chat completion binding has an invalid payload handle"
+        );
+    }
+
+    const bool bFoundPayload = ChatPayloadRepository.Visit(
+        Binding.PayloadHandle,
+        [](const FTSChatPayload&)
+        {
+        }
+    );
+
+    if (!bFoundPayload)
+    {
+        throw std::logic_error("Chat completion binding has no payload");
+    }
+
+    if (ProcessingResult == ETSProcessingResult::Succeeded)
+    {
+        FTSConfirmResult CoreResult = Core.Confirm(EmissionId);
+
+        if (CoreResult.Status != ETSConfirmStatus::Confirmed)
+        {
+            throw std::logic_error("Core rejected a valid Chat confirmation");
+        }
+
+        ProcessConfirmLifecycleEvents(
+            EmissionId,
+            CoreResult.LifecycleEvents
+        );
+        CaptureCorePumpOutcome(CoreResult.AutoPumpOutcome);
+        Result.ConfirmResult.emplace(std::move(CoreResult));
+        return Result;
+    }
+
+    // Failed también es terminal en este MVP; no existe retry implícito.
+    FTSCancelInFlightResult CoreResult = Core.CancelInFlight(EmissionId);
+
+    if (CoreResult.Status != ETSCancelInFlightStatus::Cancelled)
+    {
+        throw std::logic_error("Core rejected a valid Chat cancellation");
+    }
+
+    ProcessCancelLifecycleEvents(
+        EmissionId,
+        CoreResult.LifecycleEvents
+    );
+    Result.CancelResult.emplace(std::move(CoreResult));
+    return Result;
+}
+
+FTSPumpResult FTSEventPipelineCoordinator::Pump()
+{
+    FTSPumpResult Result = Core.Pump();
+    ProcessPendingLifecycleEvents(Result.LifecycleEvents);
+    CaptureCorePumpOutcome(Result.Outcome);
+    return Result;
+}
+
+FTSProcessDueExpirationsResult
+FTSEventPipelineCoordinator::ProcessDueExpirations()
+{
+    FTSProcessDueExpirationsResult Result = Core.ProcessDueExpirations();
+    ProcessPendingLifecycleEvents(Result.LifecycleEvents);
+    return Result;
+}
+
+FTSNextWakeTimeResult FTSEventPipelineCoordinator::GetNextWakeTime()
+{
+    return Core.GetNextWakeTime();
+}
+
 std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
 {
     return BindingRegistry.Size();
@@ -345,63 +761,46 @@ void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
     PendingReadyEmission = ReadyEmission;
 }
 
-void FTSEventPipelineCoordinator::ProcessEnqueueLifecycleEvents(
+void FTSEventPipelineCoordinator::ProcessPendingLifecycleEvents(
     const FTSEmissionLifecycleEvents& LifecycleEvents
 )
 {
-    for (const FTSEmissionLifecycleEvent& LifecycleEvent : LifecycleEvents)
-    {
-        if (!IsSupportedEnqueueTerminalReason(LifecycleEvent.Reason))
-        {
-            throw std::logic_error("Unsupported lifecycle reason during Chat admission");
-        }
+    ValidateAndApplyChatLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        PendingReadyEmission,
+        LifecycleEvents,
+        EChatLifecycleBatchKind::PendingOnly,
+        0
+    );
+}
 
-        FTSEmissionBinding Binding;
-        const bool bFoundBinding = BindingRegistry.Visit(
-            LifecycleEvent.Envelope.EmissionId,
-            [&](const FTSEmissionBinding& StoredBinding)
-            {
-                Binding = StoredBinding;
-            }
-        );
+void FTSEventPipelineCoordinator::ProcessConfirmLifecycleEvents(
+    FTSEmissionId EmissionId,
+    const FTSEmissionLifecycleEvents& LifecycleEvents
+)
+{
+    ValidateAndApplyChatLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        PendingReadyEmission,
+        LifecycleEvents,
+        EChatLifecycleBatchKind::Confirm,
+        EmissionId
+    );
+}
 
-        if (!bFoundBinding)
-        {
-            throw std::logic_error("Lifecycle event references a missing binding");
-        }
-
-        if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
-        {
-            throw std::logic_error("Lifecycle event references a non-Chat binding");
-        }
-
-        if (Binding.ExpectedFlow != LifecycleEvent.Envelope.Flow)
-        {
-            throw std::logic_error("Lifecycle event flow does not match its binding");
-        }
-
-        if (Binding.ExternalState != ETSExternalEmissionState::Bound)
-        {
-            throw std::logic_error("Lifecycle event binding is not Bound");
-        }
-
-        if (!BindingRegistry.TransitionState(
-                Binding.EmissionId,
-                ETSExternalEmissionState::Bound,
-                ETSExternalEmissionState::TerminalPendingHandling
-            ))
-        {
-            throw std::logic_error("Lifecycle binding transition failed");
-        }
-
-        if (!ChatPayloadRepository.Erase(Binding.PayloadHandle))
-        {
-            throw std::logic_error("Lifecycle binding references a missing Chat payload");
-        }
-
-        if (!BindingRegistry.Erase(Binding.EmissionId))
-        {
-            throw std::logic_error("Lifecycle binding disappeared before cleanup");
-        }
-    }
+void FTSEventPipelineCoordinator::ProcessCancelLifecycleEvents(
+    FTSEmissionId EmissionId,
+    const FTSEmissionLifecycleEvents& LifecycleEvents
+)
+{
+    ValidateAndApplyChatLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        PendingReadyEmission,
+        LifecycleEvents,
+        EChatLifecycleBatchKind::Cancel,
+        EmissionId
+    );
 }

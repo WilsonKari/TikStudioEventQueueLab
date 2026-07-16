@@ -3,6 +3,7 @@
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 static_assert(!std::is_copy_constructible_v<FTSChatPayloadRepository>);
@@ -30,6 +32,30 @@ static_assert(!std::is_move_assignable_v<FTSEventPipelineCoordinator>);
 
 namespace
 {
+    using namespace std::chrono_literals;
+
+    struct FControlledClock
+    {
+        FTSEventQueueTimePoint Now{};
+
+        [[nodiscard]]
+        FTSNowProvider MakeProvider()
+        {
+            return [this]()
+            {
+                return Now;
+            };
+        }
+
+        template <typename Rep, typename Period>
+        void Advance(std::chrono::duration<Rep, Period> Delta)
+        {
+            Now += std::chrono::duration_cast<FTSEventQueueClock::duration>(
+                Delta
+            );
+        }
+    };
+
     void Require(bool bCondition, const std::string& Message)
     {
         if (!bCondition)
@@ -140,6 +166,63 @@ namespace
         ChatSettings->bEnabled = bEnabled;
         ChatSettings->MaxSlots = MaxSlots;
         return Settings;
+    }
+
+    [[nodiscard]]
+    FTSEventQueueSettings MakeOperationalChatSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = 8s,
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(true, 10);
+        FTSFlowQueueSettings* ChatSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Chat);
+        Require(ChatSettings != nullptr, "Chat settings must be available");
+        ChatSettings->TTL = TTL;
+        ChatSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    FTSEmissionId SubmitAcceptedChat(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& Comment
+    )
+    {
+        FTSChatInput Input = MakeCompleteInput();
+        Input.Comment = Comment;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Chat admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Chat admission must have a valid identity"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
+    FTSEmissionId BeginReadyChat(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSChatDispatchResult Dispatch =
+            Coordinator.BeginChatProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Chat must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
     }
 
     void TestChatCandidateAndAdmissionDefaults()
@@ -1174,6 +1257,491 @@ namespace
         );
     }
 
+    void TestSuccessfulChatCompletionCleansTerminalState()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Successful completion");
+        Require(
+            BeginReadyChat(Coordinator) == EmissionId,
+            "Successful completion must begin the admitted Chat"
+        );
+
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                EmissionId,
+                ETSProcessingResult::Succeeded
+            );
+
+        Require(
+            Completion.EmissionId == EmissionId &&
+                Completion.ProcessingResult == ETSProcessingResult::Succeeded,
+            "Successful completion metadata mismatch"
+        );
+        Require(
+            Completion.ConfirmResult.has_value() &&
+                !Completion.CancelResult.has_value(),
+            "Succeeded must expose only ConfirmResult"
+        );
+        Require(
+            Completion.ConfirmResult->Status == ETSConfirmStatus::Confirmed,
+            "Succeeded must be confirmed by the core"
+        );
+        Require(
+            !Completion.ConfirmResult->LifecycleEvents.empty() &&
+                Completion.ConfirmResult->LifecycleEvents.front()
+                        .Envelope.EmissionId == EmissionId &&
+                Completion.ConfirmResult->LifecycleEvents.front().Reason ==
+                    ETSEmissionTerminalReason::Confirmed,
+            "Succeeded lifecycle must start with its Confirmed event"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Successful terminal handling must clean binding and payload"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Successful cleanup must not leave a ready notification"
+        );
+    }
+
+    void TestSuccessfulChatCompletionCapturesNextReady()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId FirstId =
+            SubmitAcceptedChat(Coordinator, "First successful Chat");
+        const FTSEmissionId SecondId =
+            SubmitAcceptedChat(Coordinator, "Second successful Chat");
+        Require(
+            BeginReadyChat(Coordinator) == FirstId,
+            "The first Chat must enter Processing"
+        );
+
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                FirstId,
+                ETSProcessingResult::Succeeded
+            );
+
+        Require(
+            Completion.ConfirmResult.has_value() &&
+                Completion.ConfirmResult->AutoPumpOutcome.Status ==
+                    ETSPumpStatus::EmissionReady &&
+                Completion.ConfirmResult->AutoPumpOutcome.ReadyEmission
+                        .EmissionId == SecondId,
+            "Confirm Auto Pump must authorize the second Chat"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 1,
+            "Only the second Chat must remain stored"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                SecondId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState ==
+                            ETSExternalEmissionState::Bound,
+                        "Auto Pump ready binding must remain Bound"
+                    );
+                }
+            ),
+            "Second Chat binding must remain available"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                SecondId,
+                [](const FTSChatPayload&)
+                {
+                }
+            ),
+            "Second Chat payload must remain available"
+        );
+        Require(
+            BeginReadyChat(Coordinator) == SecondId,
+            "Captured Confirm Auto Pump ready must dispatch once"
+        );
+    }
+
+    void TestConfirmProcessesTrailingExpirationInCoreOrder()
+    {
+        FControlledClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeOperationalChatSettings(
+                true,
+                true,
+                5s,
+                ETSEventExpirePolicy::Discard
+            ),
+            Clock.MakeProvider()
+        );
+        const FTSEmissionId FirstId =
+            SubmitAcceptedChat(Coordinator, "InFlight before expiration");
+        const FTSEmissionId SecondId =
+            SubmitAcceptedChat(Coordinator, "Pending expiration");
+        Require(
+            BeginReadyChat(Coordinator) == FirstId,
+            "First Chat must enter Processing before the TTL boundary"
+        );
+
+        Clock.Advance(5s);
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                FirstId,
+                ETSProcessingResult::Succeeded
+            );
+
+        Require(
+            Completion.ConfirmResult.has_value(),
+            "Confirm expiration scenario must expose ConfirmResult"
+        );
+        const FTSConfirmResult& ConfirmResult = *Completion.ConfirmResult;
+        Require(
+            ConfirmResult.LifecycleEvents.size() == 2,
+            "Confirm must report its terminal followed by pending expiration"
+        );
+        Require(
+            ConfirmResult.LifecycleEvents[0].Envelope.EmissionId == FirstId &&
+                ConfirmResult.LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::Confirmed,
+            "Confirm lifecycle must begin with the InFlight terminal"
+        );
+        Require(
+            ConfirmResult.LifecycleEvents[1].Envelope.EmissionId == SecondId &&
+                ConfirmResult.LifecycleEvents[1].Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard,
+            "Confirm lifecycle must preserve the trailing expiration"
+        );
+        Require(
+            ConfirmResult.AutoPumpOutcome.Status ==
+                ETSPumpStatus::QueueEmpty,
+            "Expired pending Chat must leave Confirm Auto Pump empty"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Confirmed and expired Chats must both be cleaned"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Expiration during Confirm must not leave a ready notification"
+        );
+    }
+
+    void TestCancelledChatCompletionCleansTerminalState()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Cancelled completion");
+        Require(
+            BeginReadyChat(Coordinator) == EmissionId,
+            "Cancelled completion must begin the admitted Chat"
+        );
+
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                EmissionId,
+                ETSProcessingResult::Cancelled
+            );
+
+        Require(
+            Completion.ProcessingResult == ETSProcessingResult::Cancelled &&
+                !Completion.ConfirmResult.has_value() &&
+                Completion.CancelResult.has_value(),
+            "Cancelled must expose only CancelResult"
+        );
+        Require(
+            Completion.CancelResult->Status ==
+                ETSCancelInFlightStatus::Cancelled &&
+                Completion.CancelResult->LifecycleEvents.size() == 1 &&
+                Completion.CancelResult->LifecycleEvents[0]
+                        .Envelope.EmissionId == EmissionId &&
+                Completion.CancelResult->LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::Cancelled,
+            "Cancelled must report exactly its core terminal"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Cancelled terminal handling must clean binding and payload"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Cancel must not produce an automatic ready"
+        );
+    }
+
+    void TestFailedChatCompletionUsesCancellationTerminal()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Failed completion");
+        Require(
+            BeginReadyChat(Coordinator) == EmissionId,
+            "Failed completion must begin the admitted Chat"
+        );
+
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                EmissionId,
+                ETSProcessingResult::Failed
+            );
+
+        Require(
+            Completion.ProcessingResult == ETSProcessingResult::Failed &&
+                !Completion.ConfirmResult.has_value() &&
+                Completion.CancelResult.has_value(),
+            "Failed must preserve Failed and expose only CancelResult"
+        );
+        Require(
+            Completion.CancelResult->Status ==
+                ETSCancelInFlightStatus::Cancelled &&
+                Completion.CancelResult->LifecycleEvents.size() == 1 &&
+                Completion.CancelResult->LifecycleEvents[0]
+                        .Envelope.EmissionId == EmissionId &&
+                Completion.CancelResult->LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::Cancelled,
+            "Failed must use the same terminal core cancellation"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Failed terminal handling must clean binding and payload"
+        );
+    }
+
+    void TestCompletingBoundChatFailsBeforeCoreMutation()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId FirstId =
+            SubmitAcceptedChat(Coordinator, "Processing Chat");
+        const FTSEmissionId SecondId =
+            SubmitAcceptedChat(Coordinator, "Still Bound Chat");
+        Require(
+            BeginReadyChat(Coordinator) == FirstId,
+            "First Chat must enter Processing"
+        );
+
+        bool bThrew = false;
+        try
+        {
+            (void)Coordinator.CompleteChatProcessing(
+                SecondId,
+                ETSProcessingResult::Succeeded
+            );
+        }
+        catch (const std::logic_error&)
+        {
+            bThrew = true;
+        }
+
+        Require(bThrew, "Completing a Bound Chat must throw logic_error");
+        Require(
+            Coordinator.GetBindingCount() == 2 &&
+                Coordinator.GetChatPayloadCount() == 2,
+            "Rejected completion must preserve both external authorities"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                FirstId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState ==
+                            ETSExternalEmissionState::Processing,
+                        "Rejected completion must preserve Processing"
+                    );
+                }
+            ),
+            "Processing binding must remain available"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                SecondId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Bound,
+                        "Rejected completion must preserve Bound"
+                    );
+                }
+            ),
+            "Bound binding must remain available"
+        );
+
+        const FTSChatProcessingCompletionResult FirstCompletion =
+            Coordinator.CompleteChatProcessing(
+                FirstId,
+                ETSProcessingResult::Succeeded
+            );
+        Require(
+            FirstCompletion.ConfirmResult.has_value() &&
+                FirstCompletion.ConfirmResult->Status ==
+                    ETSConfirmStatus::Confirmed,
+            "Original InFlight Chat must remain confirmable"
+        );
+    }
+
+    void TestCancelRequiresExplicitPumpForNextChat()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId FirstId =
+            SubmitAcceptedChat(Coordinator, "Cancelled first Chat");
+        const FTSEmissionId SecondId =
+            SubmitAcceptedChat(Coordinator, "Pending second Chat");
+        Require(
+            BeginReadyChat(Coordinator) == FirstId,
+            "First Chat must enter Processing"
+        );
+
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                FirstId,
+                ETSProcessingResult::Cancelled
+            );
+        Require(
+            Completion.CancelResult.has_value(),
+            "Cancelled first Chat must expose CancelResult"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Cancel must not Auto Pump the pending Chat"
+        );
+
+        const FTSPumpResult PumpResult = Coordinator.Pump();
+        Require(
+            PumpResult.Outcome.Status == ETSPumpStatus::EmissionReady &&
+                PumpResult.Outcome.ReadyEmission.EmissionId == SecondId,
+            "Explicit Pump must authorize the pending Chat"
+        );
+        Require(
+            BeginReadyChat(Coordinator) == SecondId,
+            "Explicitly pumped Chat must dispatch"
+        );
+    }
+
+    void TestBusyPumpPreservesPendingReadyNotification()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Ready before busy Pump");
+
+        const FTSPumpResult PumpResult = Coordinator.Pump();
+        Require(
+            PumpResult.Outcome.Status == ETSPumpStatus::Busy &&
+                PumpResult.LifecycleEvents.empty(),
+            "Pump must report Busy while the ready emission is InFlight"
+        );
+        Require(
+            BeginReadyChat(Coordinator) == EmissionId,
+            "Busy Pump must preserve the pending ready notification"
+        );
+    }
+
+    void TestDiscardExpirationThroughCoordinator()
+    {
+        FControlledClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeOperationalChatSettings(
+                false,
+                true,
+                5s,
+                ETSEventExpirePolicy::Discard
+            ),
+            Clock.MakeProvider()
+        );
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Discard at TTL");
+
+        const FTSNextWakeTimeResult Wake = Coordinator.GetNextWakeTime();
+        Require(
+            Wake.Status == ETSNextWakeStatus::WakeScheduled &&
+                Wake.WakeTime == Clock.Now + 5s,
+            "Coordinator must expose the exact Chat wake time"
+        );
+
+        Clock.Advance(5s);
+        const FTSProcessDueExpirationsResult Expirations =
+            Coordinator.ProcessDueExpirations();
+        Require(
+            Expirations.LifecycleEvents.size() == 1 &&
+                Expirations.LifecycleEvents[0].Envelope.EmissionId ==
+                    EmissionId &&
+                Expirations.LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard,
+            "Discard expiration must be forwarded intact"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Discard expiration must clean binding and payload"
+        );
+        Require(
+            Coordinator.GetNextWakeTime().Status ==
+                ETSNextWakeStatus::NoWakeScheduled,
+            "Discard cleanup must remove the wake schedule"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Discard expiration must not create a ready notification"
+        );
+    }
+
+    void TestConsolidateExpirationCleansChatWithoutAccumulation()
+    {
+        FControlledClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeOperationalChatSettings(
+                false,
+                true,
+                5s,
+                ETSEventExpirePolicy::Consolidate
+            ),
+            Clock.MakeProvider()
+        );
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedChat(Coordinator, "Consolidate at TTL");
+
+        Clock.Advance(5s);
+        const FTSProcessDueExpirationsResult Expirations =
+            Coordinator.ProcessDueExpirations();
+        Require(
+            Expirations.LifecycleEvents.size() == 1 &&
+                Expirations.LifecycleEvents[0].Envelope.EmissionId ==
+                    EmissionId &&
+                Expirations.LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::ExpiredConsolidate,
+            "Consolidate expiration must be forwarded intact"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Consolidate currently cleans Chat like discard"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady,
+            "Consolidate expiration must not create a ready notification"
+        );
+
+        const FTSProcessDueExpirationsResult Repeated =
+            Coordinator.ProcessDueExpirations();
+        Require(
+            Repeated.LifecycleEvents.empty() &&
+                Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Consolidate must not accumulate or repeat terminal state"
+        );
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -1203,7 +1771,17 @@ int main()
         {"Authorized Chat ready produces owned dispatch", &TestAuthorizedChatReadyProducesOwnedDispatch},
         {"Pending Chat cannot replace authorized ready", &TestPendingChatCannotReplaceAuthorizedReady},
         {"Chat dispatch payload is an independent copy", &TestChatDispatchPayloadIsIndependentCopy},
-        {"Chat ready dispatch is consumed once", &TestChatReadyDispatchIsConsumedOnce}
+        {"Chat ready dispatch is consumed once", &TestChatReadyDispatchIsConsumedOnce},
+        {"Successful Chat completion cleans terminal state", &TestSuccessfulChatCompletionCleansTerminalState},
+        {"Successful Chat completion captures next ready", &TestSuccessfulChatCompletionCapturesNextReady},
+        {"Confirm processes trailing expiration in core order", &TestConfirmProcessesTrailingExpirationInCoreOrder},
+        {"Cancelled Chat completion cleans terminal state", &TestCancelledChatCompletionCleansTerminalState},
+        {"Failed Chat completion uses cancellation terminal", &TestFailedChatCompletionUsesCancellationTerminal},
+        {"Completing Bound Chat fails before core mutation", &TestCompletingBoundChatFailsBeforeCoreMutation},
+        {"Cancel requires explicit Pump for next Chat", &TestCancelRequiresExplicitPumpForNextChat},
+        {"Busy Pump preserves pending ready notification", &TestBusyPumpPreservesPendingReadyNotification},
+        {"Discard expiration through coordinator", &TestDiscardExpirationThroughCoordinator},
+        {"Consolidate expiration cleans without accumulation", &TestConsolidateExpirationCleansChatWithoutAccumulation}
     };
 
     std::size_t PassedCount = 0;

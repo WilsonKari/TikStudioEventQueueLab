@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EventPipeline/Bindings/TSEmissionBindingRegistry.h"
+#include "EventPipeline/Processing/TSChatProcessingCompletion.h"
 #include "EventPipeline/Processing/TSChatProcessingDispatch.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
@@ -67,6 +68,21 @@ public:
     [[nodiscard]]
     FTSChatDispatchResult BeginChatProcessing();
 
+    [[nodiscard]]
+    FTSChatProcessingCompletionResult CompleteChatProcessing(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    FTSPumpResult Pump();
+
+    [[nodiscard]]
+    FTSProcessDueExpirationsResult ProcessDueExpirations();
+
+    [[nodiscard]]
+    FTSNextWakeTimeResult GetNextWakeTime();
+
     template <typename TCallback>
     [[nodiscard]]
     bool VisitEmissionBinding(
@@ -129,7 +145,17 @@ public:
 private:
     void CaptureCorePumpOutcome(const FTSPumpOutcome& PumpOutcome);
 
-    void ProcessEnqueueLifecycleEvents(
+    void ProcessPendingLifecycleEvents(
+        const FTSEmissionLifecycleEvents& LifecycleEvents
+    );
+
+    void ProcessConfirmLifecycleEvents(
+        FTSEmissionId EmissionId,
+        const FTSEmissionLifecycleEvents& LifecycleEvents
+    );
+
+    void ProcessCancelLifecycleEvents(
+        FTSEmissionId EmissionId,
         const FTSEmissionLifecycleEvents& LifecycleEvents
     );
 
