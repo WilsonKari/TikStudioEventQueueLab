@@ -8,7 +8,18 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
+
+static_assert(!std::is_copy_constructible_v<FTSChatPayloadRepository>);
+static_assert(!std::is_copy_assignable_v<FTSChatPayloadRepository>);
+static_assert(!std::is_move_constructible_v<FTSChatPayloadRepository>);
+static_assert(!std::is_move_assignable_v<FTSChatPayloadRepository>);
+
+static_assert(!std::is_copy_constructible_v<FTSEmissionBindingRegistry>);
+static_assert(!std::is_copy_assignable_v<FTSEmissionBindingRegistry>);
+static_assert(!std::is_move_constructible_v<FTSEmissionBindingRegistry>);
+static_assert(!std::is_move_assignable_v<FTSEmissionBindingRegistry>);
 
 namespace
 {

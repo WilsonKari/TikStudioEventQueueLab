@@ -2,8 +2,8 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `bb7fdbd`
-(`feat(pipeline): add typed payload repository`). Los cambios de la Fase 4B.5
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `ca936b6`
+(`feat(pipeline): add emission binding registry`). Los cambios de la Fase 4B.5a
 permanecen locales y sin commit.
 
 ## 1. Objetivo general
@@ -140,9 +140,10 @@ Fuente externa                                      [futuro]
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
 10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
 compilados en `62d8491`, la familia Chat fue publicada y compilada en `b9c3998`, y el
-repositorio tipado fue publicado y compilado en `bb7fdbd`. El registro externo de
-bindings está implementado localmente, pero Chat continúa sin conectarse al repositorio,
-al registro ni a `Enqueue`; tampoco existe coordinador.
+repositorio tipado fue publicado y compilado en `bb7fdbd`, y el registro externo de
+bindings fue publicado en `ca936b6`. El endurecimiento de ownership está implementado
+localmente, pero Chat continúa sin conectarse al repositorio, al registro ni a
+`Enqueue`; tampoco existe coordinador.
 
 ## 4. Contratos públicos actuales
 
@@ -195,7 +196,29 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 `FTSChatPayloadRepository` es el alias tipado para `FTSChatPayload`. El repositorio no
 conoce identidades de emisión, flujos, familias semánticas, bindings, lifecycle events
 ni procesadores. El handle sólo identifica una entrada dentro de su propia instancia.
-Todavía no existe conexión entre `FTSChatFamily` y este repositorio.
+El repositorio es la autoridad estable de sus handles: no puede copiarse, asignarse ni
+moverse. Todavía no existe conexión entre `FTSChatFamily` y este repositorio.
+
+`Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
+condición que sólo existe desde la perspectiva de la coordinación externa durante este
+recorrido:
+
+```text
+coordinador inserta payload
+→ todavía no existe binding: uso provisional
+
+admisión aceptada
+→ crea binding EmissionId → PayloadHandle
+→ el payload permanece en la misma entrada
+
+admisión rechazada
+→ elimina la entrada provisional
+
+terminal manejado correctamente
+→ elimina binding y payload
+```
+
+El repositorio no conoce `Enqueue`, lifecycle ni ninguna de estas etapas.
 
 ### Registro externo de bindings
 
@@ -208,7 +231,8 @@ Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, tran
 condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
 registro no almacena payloads, no conoce repositorios o familias concretas y no replica
 los estados internos `Pending`/`InFlight` del core. Todavía no está conectado a un
-coordinador ni a `Enqueue`.
+coordinador ni a `Enqueue`. Como autoridad estable de los bindings por `EmissionId`, no
+puede copiarse, asignarse ni moverse.
 
 ### Metadatos
 
@@ -486,8 +510,9 @@ de usuario, y no modifica el input original recibido por copia. La cobertura pub
 de 4B.4 también comprueba handles no cero y distintos, snapshots independientes,
 `Visit`, handles inválidos, `Erase`, `Size`, `Empty` y no reutilización. La ampliación
 local de 4B.5 cubre inserción y consulta de bindings, validaciones, duplicados,
-transiciones condicionales, eliminación única y tamaño/vacío; estas pruebas de 4B.5
-todavía no fueron compiladas ni ejecutadas.
+transiciones condicionales, eliminación única y tamaño/vacío. La Fase 4B.5a añade
+comprobaciones estáticas de que repositorio y registro no son copiables ni movibles;
+estas comprobaciones nuevas todavía no fueron compiladas ni ejecutadas.
 
 ## 10. Historial de tareas y commits
 
@@ -733,13 +758,28 @@ todavía no fueron compiladas ni ejecutadas.
   ni familias concretas.
 - Amplió las pruebas del Pipeline para cubrir las invariantes del registro, sin conectar
   todavía Chat con `Enqueue`.
-- Cambios locales actuales; commit sugerido:
+- Commit `ca936b6` —
   `feat(pipeline): add emission binding registry`.
+
+### Fase 4B.5a — Endurecimiento de ownership
+
+- Declaró explícitamente que `TTSPayloadRepository<TPayload>` y
+  `FTSEmissionBindingRegistry` no pueden copiarse, asignarse ni moverse para preservar
+  una única autoridad estable sobre handles y bindings.
+- Aclaró que las referencias entregadas por `Visit` sólo viven durante el callback, no
+  deben conservarse ni usarse para mutar reentrantemente la misma instancia.
+- Documentó que el uso provisional del payload pertenece a la coordinación externa y
+  no es un estado almacenado por el repositorio.
+- Añadió comprobaciones estáticas de las garantías de ownership sin cambiar el
+  comportamiento de las pruebas existentes.
+- Chat continúa sin conectarse a `Enqueue`.
+- Cambios locales actuales; commit sugerido:
+  `fix(pipeline): harden payload and binding ownership`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `b9c3998`.
+  `ca936b6`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -755,6 +795,6 @@ todavía no fueron compiladas ni ejecutadas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del candidato Chat, el repositorio y el registro de
-  bindings todavía desconectados. El coordinador y las demás familias requieren
-  especificaciones separadas; no deben implementarse automáticamente.
+- El siguiente paso previsto es la primera coordinación vertical de Chat, partiendo del
+  candidato, el repositorio y el registro de bindings todavía desconectados. Requiere
+  una especificación separada y no debe implementarse automáticamente.

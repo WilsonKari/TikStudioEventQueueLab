@@ -15,6 +15,14 @@ template <typename TPayload>
 class TTSPayloadRepository final
 {
 public:
+    TTSPayloadRepository() = default;
+
+    TTSPayloadRepository(const TTSPayloadRepository&) = delete;
+    TTSPayloadRepository& operator=(const TTSPayloadRepository&) = delete;
+
+    TTSPayloadRepository(TTSPayloadRepository&&) = delete;
+    TTSPayloadRepository& operator=(TTSPayloadRepository&&) = delete;
+
     [[nodiscard]]
     std::optional<FTSPayloadHandle> Insert(TPayload Payload)
     {
@@ -67,8 +75,8 @@ public:
             return false;
         }
 
-        // La referencia es válida sólo durante el callback; el repositorio nunca
-        // expone punteros o referencias que sobrevivan a futuras mutaciones.
+        // La referencia sólo es válida durante el callback: no debe conservarse fuera
+        // de la llamada ni usarse para modificar reentrantemente esta instancia.
         std::invoke(
             std::forward<TCallback>(Callback),
             static_cast<const TPayload&>(PayloadIt->second)
@@ -101,5 +109,7 @@ public:
 
 private:
     std::uint64_t NextHandleValue = 1;
+    // El repositorio desconoce si la coordinación considera estos payloads
+    // provisionales, vinculados o terminales.
     std::unordered_map<std::uint64_t, TPayload> Payloads;
 };

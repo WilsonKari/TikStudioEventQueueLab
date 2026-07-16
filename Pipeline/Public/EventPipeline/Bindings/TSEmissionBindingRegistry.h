@@ -11,6 +11,14 @@
 class FTSEmissionBindingRegistry final
 {
 public:
+    FTSEmissionBindingRegistry() = default;
+
+    FTSEmissionBindingRegistry(const FTSEmissionBindingRegistry&) = delete;
+    FTSEmissionBindingRegistry& operator=(const FTSEmissionBindingRegistry&) = delete;
+
+    FTSEmissionBindingRegistry(FTSEmissionBindingRegistry&&) = delete;
+    FTSEmissionBindingRegistry& operator=(FTSEmissionBindingRegistry&&) = delete;
+
     [[nodiscard]] bool Insert(FTSEmissionBinding Binding)
     {
         if (Binding.EmissionId == 0 || Binding.PayloadHandle.Value == 0 ||
@@ -31,7 +39,8 @@ public:
             return false;
         }
 
-        // The binding remains registry-owned; callers receive a read-only view only for this call.
+        // The reference is valid only during this callback; it must not be retained or
+        // used to mutate this registry reentrantly.
         std::invoke(
             std::forward<TCallback>(Callback),
             static_cast<const FTSEmissionBinding&>(Iterator->second));
