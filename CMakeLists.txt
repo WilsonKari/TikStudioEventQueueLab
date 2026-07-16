@@ -84,10 +84,13 @@ target_link_libraries(TikStudioEventSimulator
 
 add_library(TikStudioTikFinityAdapter STATIC
   Adapters/TikFinity/TikStudioTikFinityClient.cpp
+  Adapters/TikFinity/Private/TikFinity/TSTikFinityChatConverter.cpp
 )
 
 target_include_directories(TikStudioTikFinityAdapter
   PUBLIC
+    Adapters/TikFinity/Public
+  PRIVATE
     Adapters/TikFinity
 )
 
@@ -147,4 +150,18 @@ target_link_libraries(TikStudioEventHostTests
 add_test(
   NAME TikStudioEventHostTests
   COMMAND TikStudioEventHostTests
+)
+
+add_executable(TikStudioTikFinityAdapterTests
+  Tests/TikStudioTikFinityAdapterTests.cpp
+)
+
+target_link_libraries(TikStudioTikFinityAdapterTests
+  PRIVATE
+    TikStudioTikFinityAdapter
+)
+
+add_test(
+  NAME TikStudioTikFinityAdapterTests
+  COMMAND TikStudioTikFinityAdapterTests
 )
