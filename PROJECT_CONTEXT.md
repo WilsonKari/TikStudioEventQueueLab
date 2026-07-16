@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `0755199`
-(`fix(pipeline): harden payload and binding ownership`). Los ajustes documentales de la
-Fase 4B.5a permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `2923fb5`
+(`fix(pipeline): harden payload and binding ownership`). Los cambios de la Fase 4B.6
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -117,9 +117,9 @@ Fuente externa                                      [futuro]
 → FTS*Input portable                                [contratos listos]
 → familia interpreta payload y elige flujo          [implementado sólo para Chat]
 → decisión familiar / candidato de admisión tipado  [Chat implementado]
-→ repositorio tipado de payloads                     [implementado; no conectado]
-→ registro externo de bindings por EmissionId        [implementado; no conectado]
-→ FTSEnqueueRequest                                  [contrato listo]
+→ coordinador inserta payload provisional            [implementado para Chat]
+→ repositorio tipado de payloads                     [Chat conectado]
+→ FTSEnqueueRequest                                  [Chat llama Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -127,23 +127,26 @@ Fuente externa                                      [futuro]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
+→ binding externo EmissionId → PayloadHandle          [Chat conectado]
+→ lifecycle de Enqueue libera binding y payload       [implementado; prueba aplazada]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
+──────────────────────── PUNTO ACTUAL ────────────────────────
 → host despacha payload tipado                         [no implementado]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-──────────────────────── PUNTO ACTUAL ────────────────────────
-→ lifecycle event libera o consolida payload         [contrato listo; lógica pendiente]
+→ coordinador procesa Confirm / Cancel                 [no implementado]
 ```
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
 10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
 compilados en `62d8491`, la familia Chat fue publicada y compilada en `b9c3998`, y el
 repositorio tipado fue publicado y compilado en `bb7fdbd`, y el registro externo de
-bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicado en
-`0755199`, pero Chat continúa sin conectarse al repositorio, al registro ni a `Enqueue`;
-tampoco existe coordinador.
+bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicado y
+compilado en `2923fb5`; su runner manual terminó con 8 PASS y 0 FAIL. La Fase 4B.6
+conecta localmente Chat con el repositorio, el registro y `Core.Enqueue` mediante el
+primer coordinador portable.
 
 ## 4. Contratos públicos actuales
 
@@ -197,7 +200,8 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 conoce identidades de emisión, flujos, familias semánticas, bindings, lifecycle events
 ni procesadores. El handle sólo identifica una entrada dentro de su propia instancia.
 El repositorio es la autoridad estable de sus handles: no puede copiarse, asignarse ni
-moverse. Todavía no existe conexión entre `FTSChatFamily` y este repositorio.
+moverse. `FTSEventPipelineCoordinator` ya conecta la decisión de `FTSChatFamily` con
+este repositorio sin trasladarle responsabilidades de orquestación.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
 condición que sólo existe desde la perspectiva de la coordinación externa durante este
@@ -230,9 +234,46 @@ original.
 Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, transición
 condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
 registro no almacena payloads, no conoce repositorios o familias concretas y no replica
-los estados internos `Pending`/`InFlight` del core. Todavía no está conectado a un
-coordinador ni a `Enqueue`. Como autoridad estable de los bindings por `EmissionId`, no
-puede copiarse, asignarse ni moverse.
+los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa para crear
+el binding Chat después de una admisión aceptada. Como autoridad estable de los bindings
+por `EmissionId`, no puede copiarse, asignarse ni moverse.
+
+### Coordinador de admisión Chat
+
+`FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, el repositorio
+Chat y el registro de bindings. Es no copiable y no movible, y no expone referencias
+mutables a ninguna autoridad.
+
+`SubmitChat` implementa este orden:
+
+```text
+FTSChatFamily::Decide
+→ insertar payload provisional con guarda RAII
+→ Core.Enqueue
+→ rechazo: procesar lifecycle y eliminar payload provisional
+→ aceptación: liberar la guarda sin borrar
+→ validar envelope e insertar binding
+→ procesar lifecycle en orden
+→ devolver el FTSEnqueueResult completo
+```
+
+`ETSPipelineAdmissionStatus` distingue `NoEmission`, agotamiento de identidad del
+repositorio, rechazo del core y aceptación. `FTSPipelineAdmissionResult::EnqueueResult`
+sólo contiene valor si el coordinador llegó a llamar al core.
+
+Ante aceptación, el payload permanece en la misma entrada y el binding existe antes de
+que `SubmitChat` exponga un posible `AutoPumpOutcome`. Un fallo posterior se trata como
+invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
+
+El handler privado de lifecycle de `Enqueue` soporta `ExpiredDiscard`,
+`ExpiredConsolidate` y `Evicted`. Copia primero el binding fuera de `Visit`, valida
+familia, flujo y estado `Bound`, transiciona a `TerminalPendingHandling` y elimina
+payload y binding. Para Chat, `ExpiredConsolidate` sólo libera el payload. Esta ruta aún
+no tiene cobertura por expiración porque no existe otra operación coordinada que pueda
+producirla de forma controlada.
+
+La inspección pública permite visitar bindings y payloads Chat mediante `EmissionId`,
+además de consultar sus conteos, sin exponer ownership ni referencias mutables.
 
 ### Metadatos
 
@@ -474,8 +515,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
-- `TikStudioEventPipeline` (STATIC): contratos portables y primera familia Chat;
-  publica `Pipeline/Public` y enlaza públicamente sólo con Core.
+- `TikStudioEventPipeline` (STATIC): contratos portables, primera familia Chat y
+  coordinador de admisión; publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): enlaza con Core; actualmente placeholder, sin
   WebSocket ni JSON.
@@ -510,9 +551,14 @@ de usuario, y no modifica el input original recibido por copia. La cobertura pub
 de 4B.4 también comprueba handles no cero y distintos, snapshots independientes,
 `Visit`, handles inválidos, `Erase`, `Size`, `Empty` y no reutilización. La cobertura
 publicada de 4B.5 comprueba inserción y consulta de bindings, validaciones, duplicados,
-transiciones condicionales, eliminación única y tamaño/vacío. La Fase 4B.5a añade
-comprobaciones estáticas de que repositorio y registro no son copiables ni movibles; no
-se registra aquí un resultado manual de compilación o ejecución para esta fase.
+transiciones condicionales, eliminación única y tamaño/vacío. La Fase 4B.5a añadió
+comprobaciones estáticas de que repositorio y registro no son copiables ni movibles; su
+resultado manual publicado fue 8 PASS y 0 FAIL.
+
+La ampliación local de 4B.6 añade cinco escenarios públicos: primera admisión con Auto
+Pump, segunda admisión ocupada con `NotRequested`, rechazo por flujo deshabilitado,
+rechazo por capacidad sin dañar la emisión previa e inspección de ID desconocido. Estas
+pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
 
 ## 10. Historial de tareas y commits
 
@@ -773,13 +819,29 @@ se registra aquí un resultado manual de compilación o ejecución para esta fas
 - Añadió comprobaciones estáticas de las garantías de ownership sin cambiar el
   comportamiento de las pruebas existentes.
 - Chat continúa sin conectarse a `Enqueue`.
-- Commit `0755199` —
+- La fase fue compilada correctamente y su runner manual terminó con 8 PASS y 0 FAIL.
+- Commit `2923fb5` —
   `fix(pipeline): harden payload and binding ownership`.
+
+### Fase 4B.6 — Coordinador de admisión Chat
+
+- Añadió `FTSEventPipelineCoordinator` como propietario exclusivo del core, repositorio
+  Chat y registro de bindings, sin copia ni movimiento.
+- Conectó decisión Chat, payload provisional, `Core.Enqueue` y binding por `EmissionId`.
+- Implementó rollback RAII sólo antes del compromiso del core y preservación del payload
+  ante fallos posteriores a una aceptación.
+- Añadió manejo ordenado de lifecycle de `Enqueue` para expiración y evicción, cuya
+  cobertura por expiración queda aplazada.
+- Expuso inspección controlada por `EmissionId` y conteos sin referencias mutables.
+- Añadió cinco escenarios de admisión e inspección; no añadió despacho, procesamiento,
+  `Confirm` ni `Cancel` coordinados.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): coordinate chat admission`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `0755199`.
+  `2923fb5`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -795,6 +857,6 @@ se registra aquí un resultado manual de compilación o ejecución para esta fas
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El siguiente paso previsto es el coordinador de admisión Chat, partiendo del
-  candidato, el repositorio y el registro de bindings todavía desconectados. Requiere
-  una especificación separada y no debe implementarse automáticamente.
+- El siguiente paso previsto es el despacho coordinado de `EmissionReady`. No existen
+  todavía procesamiento, `Confirm` ni `Cancel` coordinados; requieren especificaciones
+  separadas y no deben implementarse automáticamente.

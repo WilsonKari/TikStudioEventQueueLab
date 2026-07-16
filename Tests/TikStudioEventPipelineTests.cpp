@@ -1,8 +1,10 @@
 #include "EventPipeline/Bindings/TSEmissionBindingRegistry.h"
+#include "EventPipeline/Coordinator/TSEventPipelineCoordinator.h"
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <optional>
@@ -20,6 +22,11 @@ static_assert(!std::is_copy_constructible_v<FTSEmissionBindingRegistry>);
 static_assert(!std::is_copy_assignable_v<FTSEmissionBindingRegistry>);
 static_assert(!std::is_move_constructible_v<FTSEmissionBindingRegistry>);
 static_assert(!std::is_move_assignable_v<FTSEmissionBindingRegistry>);
+
+static_assert(!std::is_copy_constructible_v<FTSEventPipelineCoordinator>);
+static_assert(!std::is_copy_assignable_v<FTSEventPipelineCoordinator>);
+static_assert(!std::is_move_constructible_v<FTSEventPipelineCoordinator>);
+static_assert(!std::is_move_assignable_v<FTSEventPipelineCoordinator>);
 
 namespace
 {
@@ -118,6 +125,21 @@ namespace
         Input.User.GifterLevel = 11;
         Input.User.TeamMemberLevel = 13;
         return Input;
+    }
+
+    [[nodiscard]]
+    FTSEventQueueSettings MakeChatSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* ChatSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Chat);
+        Require(ChatSettings != nullptr, "Chat settings must be available");
+        ChatSettings->bEnabled = bEnabled;
+        ChatSettings->MaxSlots = MaxSlots;
+        return Settings;
     }
 
     void TestChatCandidateAndAdmissionDefaults()
@@ -568,6 +590,288 @@ namespace
         Require(Registry.Size() == 0, "Empty registry size must return to zero");
     }
 
+    void TestChatCoordinatorFirstAdmissionAutoPumps()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSChatInput Input = MakeCompleteInput();
+
+        const FTSPipelineAdmissionResult Result = Coordinator.SubmitChat(Input);
+        Require(
+            Result.Status == ETSPipelineAdmissionStatus::Accepted,
+            "First Chat admission must be accepted by the coordinator"
+        );
+        Require(Result.EnqueueResult.has_value(), "Accepted admission must expose core result");
+
+        const FTSEnqueueResult& CoreResult = *Result.EnqueueResult;
+        Require(
+            CoreResult.Status == ETSEnqueueStatus::Accepted,
+            "First Chat admission must be accepted by the core"
+        );
+        Require(
+            CoreResult.AutoPumpOutcome.Status == ETSPumpStatus::EmissionReady,
+            "First Chat admission must Auto Pump while idle"
+        );
+        Require(
+            CoreResult.AutoPumpOutcome.ReadyEmission.EmissionId
+                == CoreResult.AdmittedEmission.EmissionId,
+            "Auto Pump ready identity must match the admitted identity"
+        );
+
+        bool bVisitedBinding = false;
+        Require(
+            Coordinator.VisitEmissionBinding(
+                CoreResult.AdmittedEmission.EmissionId,
+                [&](const FTSEmissionBinding& Binding)
+                {
+                    bVisitedBinding = true;
+                    Require(
+                        Binding.FamilyKind == ETSEventFamilyKind::Chat,
+                        "Accepted binding must belong to Chat"
+                    );
+                    Require(
+                        Binding.ExpectedFlow == ETSEventFlow::Chat,
+                        "Accepted binding must expect the Chat flow"
+                    );
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Bound,
+                        "Accepted binding must start Bound"
+                    );
+                    Require(
+                        Binding.PayloadHandle.Value != 0,
+                        "Accepted binding must reference a valid payload handle"
+                    );
+                }
+            ),
+            "Accepted Chat binding must be visitable"
+        );
+        Require(bVisitedBinding, "Binding callback must run for an accepted Chat");
+
+        bool bVisitedPayload = false;
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                CoreResult.AdmittedEmission.EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    bVisitedPayload = true;
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        Input,
+                        "First coordinated Chat payload"
+                    );
+                }
+            ),
+            "Accepted Chat payload must be resolvable by EmissionId"
+        );
+        Require(bVisitedPayload, "Payload callback must run for an accepted Chat");
+        Require(Coordinator.GetBindingCount() == 1, "First admission must create one binding");
+        Require(
+            Coordinator.GetChatPayloadCount() == 1,
+            "First admission must retain one Chat payload"
+        );
+    }
+
+    void TestChatCoordinatorSecondAdmissionWhileBusy()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        FTSChatInput FirstInput = MakeCompleteInput();
+        FirstInput.Comment = "First coordinated Chat";
+        FTSChatInput SecondInput = MakeCompleteInput();
+        SecondInput.Comment = "Second coordinated Chat";
+
+        const FTSPipelineAdmissionResult First =
+            Coordinator.SubmitChat(FirstInput);
+        const FTSPipelineAdmissionResult Second =
+            Coordinator.SubmitChat(SecondInput);
+
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                First.EnqueueResult.has_value(),
+            "First busy-path setup admission must succeed"
+        );
+        Require(
+            Second.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Second.EnqueueResult.has_value(),
+            "Second Chat must still be admitted while the core is busy"
+        );
+        Require(
+            First.EnqueueResult->AutoPumpOutcome.Status
+                == ETSPumpStatus::EmissionReady,
+            "First Chat must become InFlight"
+        );
+        Require(
+            Second.EnqueueResult->AutoPumpOutcome.Status
+                == ETSPumpStatus::NotRequested,
+            "Second busy admission must report Auto Pump NotRequested"
+        );
+        Require(
+            First.EnqueueResult->AdmittedEmission.EmissionId
+                != Second.EnqueueResult->AdmittedEmission.EmissionId,
+            "Two coordinated admissions must receive distinct identities"
+        );
+        Require(Coordinator.GetBindingCount() == 2, "Busy admission must retain two bindings");
+        Require(
+            Coordinator.GetChatPayloadCount() == 2,
+            "Busy admission must retain two Chat payloads"
+        );
+
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                First.EnqueueResult->AdmittedEmission.EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        FirstInput,
+                        "First busy-path payload"
+                    );
+                }
+            ),
+            "First busy-path payload must remain resolvable"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                Second.EnqueueResult->AdmittedEmission.EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        SecondInput,
+                        "Second busy-path payload"
+                    );
+                }
+            ),
+            "Second busy-path payload must be resolvable"
+        );
+    }
+
+    void TestChatCoordinatorRejectsDisabledFlow()
+    {
+        FTSEventPipelineCoordinator Coordinator(MakeChatSettings(false, 30));
+
+        const FTSPipelineAdmissionResult Result =
+            Coordinator.SubmitChat(MakeCompleteInput());
+
+        Require(
+            Result.Status == ETSPipelineAdmissionStatus::RejectedByCore,
+            "Disabled Chat must be classified as rejected by core"
+        );
+        Require(Result.EnqueueResult.has_value(), "Core rejection must retain its result");
+        Require(
+            Result.EnqueueResult->Status == ETSEnqueueStatus::RejectedDisabled,
+            "Disabled Chat must preserve RejectedDisabled"
+        );
+        Require(Coordinator.GetBindingCount() == 0, "Disabled Chat must not create a binding");
+        Require(
+            Coordinator.GetChatPayloadCount() == 0,
+            "Disabled Chat must roll back its provisional payload"
+        );
+    }
+
+    void TestChatCoordinatorCapacityRejectionPreservesPriorAdmission()
+    {
+        FTSEventPipelineCoordinator Coordinator(MakeChatSettings(true, 1));
+        FTSChatInput FirstInput = MakeCompleteInput();
+        FirstInput.Comment = "Capacity owner";
+        FTSChatInput RejectedInput = MakeCompleteInput();
+        RejectedInput.Comment = "Rejected at capacity";
+
+        const FTSPipelineAdmissionResult First =
+            Coordinator.SubmitChat(FirstInput);
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                First.EnqueueResult.has_value(),
+            "First capacity admission must succeed"
+        );
+
+        const FTSEmissionId FirstEmissionId =
+            First.EnqueueResult->AdmittedEmission.EmissionId;
+        const FTSPipelineAdmissionResult Rejected =
+            Coordinator.SubmitChat(RejectedInput);
+
+        Require(
+            Rejected.Status == ETSPipelineAdmissionStatus::RejectedByCore,
+            "Second capacity admission must be rejected by core"
+        );
+        Require(Rejected.EnqueueResult.has_value(), "Capacity rejection must retain core result");
+        Require(
+            Rejected.EnqueueResult->Status == ETSEnqueueStatus::RejectedAtCapacity,
+            "Second capacity admission must preserve RejectedAtCapacity"
+        );
+        Require(Coordinator.GetBindingCount() == 1, "Capacity rejection must keep one binding");
+        Require(
+            Coordinator.GetChatPayloadCount() == 1,
+            "Capacity rejection must remove only its provisional payload"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                FirstEmissionId,
+                [](const FTSEmissionBinding&) {}
+            ),
+            "Capacity rejection must preserve the first binding"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                FirstEmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        FirstInput,
+                        "Capacity-preserved payload"
+                    );
+                }
+            ),
+            "Capacity rejection must preserve the first payload"
+        );
+    }
+
+    void TestChatCoordinatorUnknownEmissionInspection()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSPipelineAdmissionResult Accepted =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Accepted.Status == ETSPipelineAdmissionStatus::Accepted,
+            "Unknown inspection setup admission must succeed"
+        );
+
+        const std::size_t BindingCount = Coordinator.GetBindingCount();
+        const std::size_t PayloadCount = Coordinator.GetChatPayloadCount();
+        bool bBindingCallbackCalled = false;
+        bool bPayloadCallbackCalled = false;
+
+        Require(
+            !Coordinator.VisitEmissionBinding(
+                9999,
+                [&](const FTSEmissionBinding&)
+                {
+                    bBindingCallbackCalled = true;
+                }
+            ),
+            "Unknown binding inspection must return false"
+        );
+        Require(
+            !Coordinator.VisitChatPayloadForEmission(
+                9999,
+                [&](const FTSChatPayload&)
+                {
+                    bPayloadCallbackCalled = true;
+                }
+            ),
+            "Unknown payload inspection must return false"
+        );
+        Require(!bBindingCallbackCalled, "Unknown binding must not invoke its callback");
+        Require(!bPayloadCallbackCalled, "Unknown payload must not invoke its callback");
+        Require(
+            Coordinator.GetBindingCount() == BindingCount,
+            "Unknown inspection must not change binding count"
+        );
+        Require(
+            Coordinator.GetChatPayloadCount() == PayloadCount,
+            "Unknown inspection must not change payload count"
+        );
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -587,7 +891,12 @@ int main()
         {"Binding registry insert, visit and duplicate protection", &TestBindingRegistryInsertVisitAndDuplicateProtection},
         {"Binding registry rejects invalid bindings", &TestBindingRegistryRejectsInvalidBindings},
         {"Binding registry conditional transitions", &TestBindingRegistryConditionalTransitions},
-        {"Binding registry erase and size", &TestBindingRegistryEraseAndSize}
+        {"Binding registry erase and size", &TestBindingRegistryEraseAndSize},
+        {"Chat coordinator first admission Auto Pumps", &TestChatCoordinatorFirstAdmissionAutoPumps},
+        {"Chat coordinator second admission while busy", &TestChatCoordinatorSecondAdmissionWhileBusy},
+        {"Chat coordinator rejects disabled flow", &TestChatCoordinatorRejectsDisabledFlow},
+        {"Chat coordinator capacity rejection preserves prior admission", &TestChatCoordinatorCapacityRejectionPreservesPriorAdmission},
+        {"Chat coordinator unknown emission inspection", &TestChatCoordinatorUnknownEmissionInspection}
     };
 
     std::size_t PassedCount = 0;

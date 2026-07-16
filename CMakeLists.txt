@@ -36,6 +36,7 @@ target_include_directories(TikStudioEventCore
 
 add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
+  Pipeline/Private/EventPipeline/Coordinator/TSEventPipelineCoordinator.cpp
   Pipeline/Private/EventPipeline/Families/TSChatFamily.cpp
 )
 
