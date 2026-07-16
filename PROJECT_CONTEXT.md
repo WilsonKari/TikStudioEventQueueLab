@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-15.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `62d8491`
-(`feat(pipeline): add portable pipeline contracts`). Los cambios de la Fase 4B.3
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `b9c3998`
+(`feat(pipeline): add chat family candidate`). Los cambios de la Fase 4B.4 permanecen
+locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -117,6 +117,7 @@ Fuente externa                                      [futuro]
 → FTS*Input portable                                [contratos listos]
 → familia interpreta payload y elige flujo          [implementado sólo para Chat]
 → decisión familiar / candidato de admisión tipado  [Chat implementado]
+→ repositorio tipado de payloads                     [implementado; no conectado]
 → FTSEnqueueRequest                                  [contrato listo]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
@@ -137,8 +138,9 @@ Fuente externa                                      [futuro]
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
 10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
-compilados en `62d8491`. Chat ya produce localmente un candidato tipado, pero todavía
-no existe repositorio, binding operativo, coordinador ni llamada a `Enqueue`.
+compilados en `62d8491`, y la familia Chat fue publicada y compilada en `b9c3998`. Ya
+existe localmente un repositorio tipado reutilizable, pero todavía no está conectado a
+Chat y no existen binding operativo, coordinador ni llamada a `Enqueue`.
 
 ## 4. Contratos públicos actuales
 
@@ -176,6 +178,22 @@ repositorios, procesamiento ni coordinación.
 
 La familia sólo produce datos. No llama al core, no asigna `EmissionId`, no almacena el
 payload y no conoce repositorios, bindings ni procesadores.
+
+### Repositorios tipados de payloads
+
+`TTSPayloadRepository<TPayload>` es un contenedor header-only reutilizable. Cada
+instancia posee exclusivamente payloads de su tipo y asigna `FTSPayloadHandle` no cero
+de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API ofrece:
+
+- `Insert(TPayload)` por valor, con resultado opcional ante agotamiento;
+- `Visit(Handle, Callback)` con acceso `const` limitado a la llamada;
+- `Erase(Handle)`, que sólo tiene éxito una vez por entrada;
+- `Size()` y `Empty()`.
+
+`FTSChatPayloadRepository` es el alias tipado para `FTSChatPayload`. El repositorio no
+conoce identidades de emisión, flujos, familias semánticas, bindings, lifecycle events
+ni procesadores. El handle sólo identifica una entrada dentro de su propia instancia.
+Todavía no existe conexión entre `FTSChatFamily` y este repositorio.
 
 ### Metadatos
 
@@ -449,8 +467,10 @@ publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
 
 `Tests/TikStudioEventPipelineTests.cpp` comprueba mediante API pública que Chat produce
 un candidato con los defaults esperados, conserva íntegramente Comment, emotes y datos
-de usuario, y no modifica el input original recibido por copia. Estas pruebas locales
-de 4B.3 todavía no fueron compiladas ni ejecutadas.
+de usuario, y no modifica el input original recibido por copia. La ampliación local de
+4B.4 también cubre handles no cero y distintos, snapshots independientes, Visit,
+handles inválidos, Erase, Size, Empty y no reutilización. Estas pruebas nuevas todavía
+no fueron compiladas ni ejecutadas.
 
 ## 10. Historial de tareas y commits
 
@@ -667,13 +687,28 @@ de 4B.3 todavía no fueron compiladas ni ejecutadas.
   candidato, defaults, snapshot completo y preservación del input original.
 - No añadió repositorios, coordinador, Enqueue real, bindings operativos, procesadores,
   otras familias ni flujos derivados.
-- Cambios locales actuales; commit sugerido:
+- La fase fue compilada correctamente.
+- Commit `b9c3998` —
   `feat(pipeline): add chat family candidate`.
+
+### Fase 4B.4 — Repositorio tipado de payloads
+
+- Añadió `TTSPayloadRepository<TPayload>` como contenedor header-only con ownership
+  tipado, identidad monotónica no reutilizable y agotamiento explícito.
+- Añadió acceso controlado mediante `Visit`, eliminación única mediante `Erase` y
+  consultas `Size`/`Empty`, sin exponer punteros o referencias persistentes.
+- Añadió `FTSChatPayloadRepository` como alias específico de `FTSChatPayload`.
+- Amplió las pruebas del Pipeline para cubrir inserción, unicidad, snapshot, handles
+  inválidos, borrado, tamaño, vacío y no reutilización.
+- No conectó el repositorio con Chat ni añadió bindings, coordinador o llamada a
+  `Enqueue`.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): add typed payload repository`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `62d8491`.
+  `b9c3998`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -689,6 +724,6 @@ de 4B.3 todavía no fueron compiladas ni ejecutadas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del candidato Chat no operativo de 4B.3. Repositorios,
-  coordinador y las demás familias requieren especificaciones separadas; no deben
-  implementarse automáticamente.
+- El próximo trabajo debe partir del candidato Chat y el repositorio todavía
+  desconectados de 4B.4. Bindings, coordinador y demás familias requieren
+  especificaciones separadas; no deben implementarse automáticamente.
