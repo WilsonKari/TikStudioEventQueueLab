@@ -1,10 +1,10 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-15.
+Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `b9c3998`
-(`feat(pipeline): add chat family candidate`). Los cambios de la Fase 4B.4 permanecen
-locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `bb7fdbd`
+(`feat(pipeline): add typed payload repository`). Los cambios de la Fase 4B.5
+permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -118,6 +118,7 @@ Fuente externa                                      [futuro]
 → familia interpreta payload y elige flujo          [implementado sólo para Chat]
 → decisión familiar / candidato de admisión tipado  [Chat implementado]
 → repositorio tipado de payloads                     [implementado; no conectado]
+→ registro externo de bindings por EmissionId        [implementado; no conectado]
 → FTSEnqueueRequest                                  [contrato listo]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
@@ -138,9 +139,10 @@ Fuente externa                                      [futuro]
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
 10 pruebas aprobadas y 0 fallos. Los contratos mínimos de 4B.2 fueron publicados y
-compilados en `62d8491`, y la familia Chat fue publicada y compilada en `b9c3998`. Ya
-existe localmente un repositorio tipado reutilizable, pero todavía no está conectado a
-Chat y no existen binding operativo, coordinador ni llamada a `Enqueue`.
+compilados en `62d8491`, la familia Chat fue publicada y compilada en `b9c3998`, y el
+repositorio tipado fue publicado y compilado en `bb7fdbd`. El registro externo de
+bindings está implementado localmente, pero Chat continúa sin conectarse al repositorio,
+al registro ni a `Enqueue`; tampoco existe coordinador.
 
 ## 4. Contratos públicos actuales
 
@@ -194,6 +196,19 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 conoce identidades de emisión, flujos, familias semánticas, bindings, lifecycle events
 ni procesadores. El handle sólo identifica una entrada dentro de su propia instancia.
 Todavía no existe conexión entre `FTSChatFamily` y este repositorio.
+
+### Registro externo de bindings
+
+`FTSEmissionBindingRegistry` es un componente header-only que posee exclusivamente los
+metadatos externos asociados a cada `EmissionId`. Usa `EmissionId` como única clave y
+rechaza IDs cero, handles cero, flujos inválidos y duplicados sin sobrescribir el binding
+original.
+
+Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, transición
+condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
+registro no almacena payloads, no conoce repositorios o familias concretas y no replica
+los estados internos `Pending`/`InFlight` del core. Todavía no está conectado a un
+coordinador ni a `Enqueue`.
 
 ### Metadatos
 
@@ -467,10 +482,12 @@ publicada de 4B.1 fue correcta y el runner terminó con 10 PASS y 0 FAIL.
 
 `Tests/TikStudioEventPipelineTests.cpp` comprueba mediante API pública que Chat produce
 un candidato con los defaults esperados, conserva íntegramente Comment, emotes y datos
-de usuario, y no modifica el input original recibido por copia. La ampliación local de
-4B.4 también cubre handles no cero y distintos, snapshots independientes, Visit,
-handles inválidos, Erase, Size, Empty y no reutilización. Estas pruebas nuevas todavía
-no fueron compiladas ni ejecutadas.
+de usuario, y no modifica el input original recibido por copia. La cobertura publicada
+de 4B.4 también comprueba handles no cero y distintos, snapshots independientes,
+`Visit`, handles inválidos, `Erase`, `Size`, `Empty` y no reutilización. La ampliación
+local de 4B.5 cubre inserción y consulta de bindings, validaciones, duplicados,
+transiciones condicionales, eliminación única y tamaño/vacío; estas pruebas de 4B.5
+todavía no fueron compiladas ni ejecutadas.
 
 ## 10. Historial de tareas y commits
 
@@ -702,8 +719,22 @@ no fueron compiladas ni ejecutadas.
   inválidos, borrado, tamaño, vacío y no reutilización.
 - No conectó el repositorio con Chat ni añadió bindings, coordinador o llamada a
   `Enqueue`.
-- Cambios locales actuales; commit sugerido:
+- La fase fue compilada correctamente.
+- Commit `bb7fdbd` —
   `feat(pipeline): add typed payload repository`.
+
+### Fase 4B.5 — Registro autoritativo de bindings
+
+- Añadió `FTSEmissionBindingRegistry` como registro header-only indexado únicamente por
+  `EmissionId`.
+- Valida identidad, handle y flujo; rechaza duplicados; ofrece consulta acotada,
+  transiciones condicionales, eliminación única y tamaño/vacío.
+- No almacena payloads, no replica estados operativos del core y no conoce repositorios
+  ni familias concretas.
+- Amplió las pruebas del Pipeline para cubrir las invariantes del registro, sin conectar
+  todavía Chat con `Enqueue`.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): add emission binding registry`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
@@ -724,6 +755,6 @@ no fueron compiladas ni ejecutadas.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El próximo trabajo debe partir del candidato Chat y el repositorio todavía
-  desconectados de 4B.4. Bindings, coordinador y demás familias requieren
+- El próximo trabajo debe partir del candidato Chat, el repositorio y el registro de
+  bindings todavía desconectados. El coordinador y las demás familias requieren
   especificaciones separadas; no deben implementarse automáticamente.

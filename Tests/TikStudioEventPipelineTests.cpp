@@ -1,3 +1,4 @@
+#include "EventPipeline/Bindings/TSEmissionBindingRegistry.h"
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 
@@ -297,6 +298,265 @@ namespace
         Require(Repository.Size() == 0, "Empty repository size must return to zero");
     }
 
+    [[nodiscard]]
+    FTSEmissionBinding MakeBinding(
+        FTSEmissionId EmissionId,
+        FTSPayloadHandle PayloadHandle,
+        ETSEventFlow ExpectedFlow = ETSEventFlow::Chat,
+        ETSExternalEmissionState ExternalState = ETSExternalEmissionState::Bound
+    )
+    {
+        FTSEmissionBinding Binding;
+        Binding.EmissionId = EmissionId;
+        Binding.FamilyKind = ETSEventFamilyKind::Chat;
+        Binding.ExpectedFlow = ExpectedFlow;
+        Binding.PayloadHandle = PayloadHandle;
+        Binding.ExternalState = ExternalState;
+        return Binding;
+    }
+
+    void TestBindingRegistryInsertVisitAndDuplicateProtection()
+    {
+        FTSEmissionBindingRegistry Registry;
+        Require(Registry.Empty(), "A new binding registry must be empty");
+        Require(Registry.Size() == 0, "A new binding registry size must be zero");
+
+        const FTSEmissionBinding Original = MakeBinding(
+            101,
+            FTSPayloadHandle{11}
+        );
+        Require(Registry.Insert(Original), "Valid binding insertion failed");
+        Require(!Registry.Empty(), "Inserted binding must make the registry non-empty");
+        Require(Registry.Size() == 1, "Registry must contain the inserted binding");
+
+        bool bVisited = false;
+        Require(
+            Registry.Visit(
+                101,
+                [&](const FTSEmissionBinding& Stored)
+                {
+                    bVisited = true;
+                    Require(
+                        Stored.EmissionId == Original.EmissionId,
+                        "Stored EmissionId mismatch"
+                    );
+                    Require(
+                        Stored.FamilyKind == Original.FamilyKind,
+                        "Stored FamilyKind mismatch"
+                    );
+                    Require(
+                        Stored.ExpectedFlow == Original.ExpectedFlow,
+                        "Stored ExpectedFlow mismatch"
+                    );
+                    Require(
+                        Stored.PayloadHandle.Value == Original.PayloadHandle.Value,
+                        "Stored PayloadHandle mismatch"
+                    );
+                    Require(
+                        Stored.ExternalState == Original.ExternalState,
+                        "Stored ExternalState mismatch"
+                    );
+                }
+            ),
+            "Visit must find an inserted binding"
+        );
+        Require(bVisited, "Visit must invoke the callback for an inserted binding");
+
+        FTSEmissionBinding Duplicate = MakeBinding(
+            101,
+            FTSPayloadHandle{99},
+            ETSEventFlow::Gift,
+            ETSExternalEmissionState::Processing
+        );
+        Duplicate.FamilyKind = ETSEventFamilyKind::Gift;
+        Require(!Registry.Insert(Duplicate), "Duplicate EmissionId must be rejected");
+        Require(Registry.Size() == 1, "Rejected duplicate must not change registry size");
+
+        Require(
+            Registry.Visit(
+                101,
+                [](const FTSEmissionBinding& Stored)
+                {
+                    Require(
+                        Stored.FamilyKind == ETSEventFamilyKind::Chat,
+                        "Duplicate must not replace the original family"
+                    );
+                    Require(
+                        Stored.ExpectedFlow == ETSEventFlow::Chat,
+                        "Duplicate must not replace the original flow"
+                    );
+                    Require(
+                        Stored.PayloadHandle.Value == 11,
+                        "Duplicate must not replace the original payload handle"
+                    );
+                    Require(
+                        Stored.ExternalState == ETSExternalEmissionState::Bound,
+                        "Duplicate must not replace the original external state"
+                    );
+                }
+            ),
+            "Original binding must remain queryable after duplicate rejection"
+        );
+    }
+
+    void TestBindingRegistryRejectsInvalidBindings()
+    {
+        FTSEmissionBindingRegistry Registry;
+
+        Require(
+            !Registry.Insert(MakeBinding(0, FTSPayloadHandle{1})),
+            "EmissionId zero must be rejected"
+        );
+        Require(
+            !Registry.Insert(MakeBinding(1, FTSPayloadHandle{})),
+            "PayloadHandle zero must be rejected"
+        );
+        Require(
+            !Registry.Insert(MakeBinding(
+                2,
+                FTSPayloadHandle{2},
+                ETSEventFlow::Count
+            )),
+            "Invalid ExpectedFlow must be rejected"
+        );
+        Require(Registry.Empty(), "Invalid bindings must not change the registry");
+        Require(Registry.Size() == 0, "Invalid bindings must keep registry size at zero");
+
+        bool bCallbackCalled = false;
+        Require(
+            !Registry.Visit(
+                0,
+                [&](const FTSEmissionBinding&)
+                {
+                    bCallbackCalled = true;
+                }
+            ),
+            "EmissionId zero must not resolve a binding"
+        );
+        Require(
+            !Registry.Visit(
+                999,
+                [&](const FTSEmissionBinding&)
+                {
+                    bCallbackCalled = true;
+                }
+            ),
+            "Unknown EmissionId must not resolve a binding"
+        );
+        Require(!bCallbackCalled, "Missing bindings must not invoke Visit callbacks");
+    }
+
+    void TestBindingRegistryConditionalTransitions()
+    {
+        FTSEmissionBindingRegistry Registry;
+        Require(
+            Registry.Insert(MakeBinding(201, FTSPayloadHandle{21})),
+            "First transition binding insertion failed"
+        );
+        Require(
+            Registry.Insert(MakeBinding(202, FTSPayloadHandle{22})),
+            "Second transition binding insertion failed"
+        );
+
+        Require(
+            !Registry.TransitionState(
+                201,
+                ETSExternalEmissionState::Processing,
+                ETSExternalEmissionState::TerminalPendingHandling
+            ),
+            "Transition with the wrong expected state must fail"
+        );
+        Require(
+            Registry.TransitionState(
+                201,
+                ETSExternalEmissionState::Bound,
+                ETSExternalEmissionState::Processing
+            ),
+            "Bound must transition to Processing"
+        );
+        Require(
+            Registry.TransitionState(
+                201,
+                ETSExternalEmissionState::Processing,
+                ETSExternalEmissionState::TerminalPendingHandling
+            ),
+            "Processing must transition to TerminalPendingHandling"
+        );
+        Require(
+            Registry.TransitionState(
+                202,
+                ETSExternalEmissionState::Bound,
+                ETSExternalEmissionState::TerminalPendingHandling
+            ),
+            "Bound must transition directly to TerminalPendingHandling"
+        );
+        Require(
+            !Registry.TransitionState(
+                999,
+                ETSExternalEmissionState::Bound,
+                ETSExternalEmissionState::Processing
+            ),
+            "Unknown EmissionId must not transition"
+        );
+
+        Require(
+            Registry.Visit(
+                201,
+                [](const FTSEmissionBinding& Stored)
+                {
+                    Require(
+                        Stored.ExternalState
+                            == ETSExternalEmissionState::TerminalPendingHandling,
+                        "Processing path must end in TerminalPendingHandling"
+                    );
+                }
+            ),
+            "First transitioned binding must remain queryable"
+        );
+        Require(
+            Registry.Visit(
+                202,
+                [](const FTSEmissionBinding& Stored)
+                {
+                    Require(
+                        Stored.ExternalState
+                            == ETSExternalEmissionState::TerminalPendingHandling,
+                        "Direct Bound path must end in TerminalPendingHandling"
+                    );
+                }
+            ),
+            "Second transitioned binding must remain queryable"
+        );
+    }
+
+    void TestBindingRegistryEraseAndSize()
+    {
+        FTSEmissionBindingRegistry Registry;
+        Require(
+            Registry.Insert(MakeBinding(301, FTSPayloadHandle{31})),
+            "First erase binding insertion failed"
+        );
+        Require(
+            Registry.Insert(MakeBinding(302, FTSPayloadHandle{32})),
+            "Second erase binding insertion failed"
+        );
+        Require(Registry.Size() == 2, "Registry size must reflect both bindings");
+
+        Require(!Registry.Erase(0), "EmissionId zero must not erase a binding");
+        Require(!Registry.Erase(999), "Unknown EmissionId must not erase a binding");
+        Require(Registry.Erase(301), "Existing binding must erase once");
+        Require(!Registry.Erase(301), "Erased binding must not erase twice");
+        Require(Registry.Size() == 1, "Erase must remove exactly one binding");
+        Require(
+            !Registry.Visit(301, [](const FTSEmissionBinding&) {}),
+            "Erased binding must no longer be queryable"
+        );
+
+        Require(Registry.Erase(302), "Remaining binding erase failed");
+        Require(Registry.Empty(), "Registry must be empty after all erases");
+        Require(Registry.Size() == 0, "Empty registry size must return to zero");
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -312,7 +572,11 @@ int main()
         {"Chat candidate and admission defaults", &TestChatCandidateAndAdmissionDefaults},
         {"Chat payload snapshot and input preservation", &TestChatPayloadSnapshotAndInputPreservation},
         {"Typed repository stores independent snapshots", &TestTypedRepositoryStoresIndependentSnapshots},
-        {"Typed repository erase and handle invariants", &TestTypedRepositoryEraseAndHandleInvariants}
+        {"Typed repository erase and handle invariants", &TestTypedRepositoryEraseAndHandleInvariants},
+        {"Binding registry insert, visit and duplicate protection", &TestBindingRegistryInsertVisitAndDuplicateProtection},
+        {"Binding registry rejects invalid bindings", &TestBindingRegistryRejectsInvalidBindings},
+        {"Binding registry conditional transitions", &TestBindingRegistryConditionalTransitions},
+        {"Binding registry erase and size", &TestBindingRegistryEraseAndSize}
     };
 
     std::size_t PassedCount = 0;
