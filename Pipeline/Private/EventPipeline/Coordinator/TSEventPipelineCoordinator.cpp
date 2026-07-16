@@ -3,7 +3,16 @@
 #include "EventPipeline/Families/TSChatFamily.h"
 
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
+
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSChatProcessingDispatch>
+);
+
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSChatDispatchResult>
+);
 
 namespace
 {
@@ -169,9 +178,97 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
     }
 
     ProcessEnqueueLifecycleEvents(CoreResult.LifecycleEvents);
+    CaptureCorePumpOutcome(CoreResult.AutoPumpOutcome);
 
     Result.Status = ETSPipelineAdmissionStatus::Accepted;
     Result.EnqueueResult = std::move(CoreResult);
+    return Result;
+}
+
+FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
+{
+    FTSChatDispatchResult Result;
+
+    if (!PendingReadyEmission.has_value())
+    {
+        return Result;
+    }
+
+    const FTSEmissionEnvelope ReadyEmission = *PendingReadyEmission;
+
+    if (ReadyEmission.EmissionId == 0)
+    {
+        throw std::logic_error("Pending Chat ready has an invalid identity");
+    }
+
+    if (ReadyEmission.Flow != ETSEventFlow::Chat)
+    {
+        throw std::logic_error("Pending ready is not a Chat emission");
+    }
+
+    FTSEmissionBinding Binding;
+    const bool bFoundBinding = BindingRegistry.Visit(
+        ReadyEmission.EmissionId,
+        [&](const FTSEmissionBinding& StoredBinding)
+        {
+            Binding = StoredBinding;
+        }
+    );
+
+    if (!bFoundBinding)
+    {
+        throw std::logic_error("Pending Chat ready has no binding");
+    }
+
+    if (Binding.EmissionId != ReadyEmission.EmissionId)
+    {
+        throw std::logic_error("Pending Chat ready binding identity mismatch");
+    }
+
+    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+    {
+        throw std::logic_error("Pending Chat ready binding family mismatch");
+    }
+
+    if (Binding.ExpectedFlow != ReadyEmission.Flow)
+    {
+        throw std::logic_error("Pending Chat ready binding flow mismatch");
+    }
+
+    if (Binding.ExternalState != ETSExternalEmissionState::Bound)
+    {
+        throw std::logic_error("Pending Chat ready binding is not Bound");
+    }
+
+    FTSChatPayload Payload;
+    const bool bFoundPayload = ChatPayloadRepository.Visit(
+        Binding.PayloadHandle,
+        [&](const FTSChatPayload& StoredPayload)
+        {
+            Payload = StoredPayload;
+        }
+    );
+
+    if (!bFoundPayload)
+    {
+        throw std::logic_error("Pending Chat ready binding has no payload");
+    }
+
+    FTSChatProcessingDispatch Dispatch{ReadyEmission, Payload};
+    Result.Status = ETSPipelineDispatchStatus::Dispatched;
+    Result.Dispatch.emplace(std::move(Dispatch));
+
+    // Toda copia potencialmente lanzable terminó; desde aquí sólo hay compromiso.
+    if (!BindingRegistry.TransitionState(
+            Binding.EmissionId,
+            ETSExternalEmissionState::Bound,
+            ETSExternalEmissionState::Processing
+        ))
+    {
+        throw std::logic_error("Pending Chat ready could not enter Processing");
+    }
+
+    PendingReadyEmission.reset();
     return Result;
 }
 
@@ -183,6 +280,69 @@ std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
 std::size_t FTSEventPipelineCoordinator::GetChatPayloadCount() const noexcept
 {
     return ChatPayloadRepository.Size();
+}
+
+void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
+    const FTSPumpOutcome& PumpOutcome
+)
+{
+    if (PumpOutcome.Status != ETSPumpStatus::EmissionReady)
+    {
+        return;
+    }
+
+    const FTSEmissionEnvelope& ReadyEmission = PumpOutcome.ReadyEmission;
+
+    if (ReadyEmission.EmissionId == 0)
+    {
+        throw std::logic_error("Core produced a Chat ready with an invalid identity");
+    }
+
+    if (ReadyEmission.Flow != ETSEventFlow::Chat)
+    {
+        throw std::logic_error("Core produced a non-Chat ready during Chat admission");
+    }
+
+    FTSEmissionBinding Binding;
+    const bool bFoundBinding = BindingRegistry.Visit(
+        ReadyEmission.EmissionId,
+        [&](const FTSEmissionBinding& StoredBinding)
+        {
+            Binding = StoredBinding;
+        }
+    );
+
+    if (!bFoundBinding)
+    {
+        throw std::logic_error("Core Chat ready has no binding");
+    }
+
+    if (Binding.EmissionId != ReadyEmission.EmissionId)
+    {
+        throw std::logic_error("Core Chat ready binding identity mismatch");
+    }
+
+    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+    {
+        throw std::logic_error("Core Chat ready binding family mismatch");
+    }
+
+    if (Binding.ExpectedFlow != ReadyEmission.Flow)
+    {
+        throw std::logic_error("Core Chat ready binding flow mismatch");
+    }
+
+    if (Binding.ExternalState != ETSExternalEmissionState::Bound)
+    {
+        throw std::logic_error("Core Chat ready binding is not Bound");
+    }
+
+    if (PendingReadyEmission.has_value())
+    {
+        throw std::logic_error("A Chat ready notification is already pending");
+    }
+
+    PendingReadyEmission = ReadyEmission;
 }
 
 void FTSEventPipelineCoordinator::ProcessEnqueueLifecycleEvents(

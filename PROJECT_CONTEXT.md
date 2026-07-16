@@ -2,9 +2,9 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `2923fb5`
-(`fix(pipeline): harden payload and binding ownership`). Los cambios de la Fase 4B.6
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `2ff496e`
+(`feat(pipeline): coordinate chat admission`). Los cambios de la Fase 4B.7 permanecen
+locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -132,10 +132,13 @@ Fuente externa                                      [futuro]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-──────────────────────── PUNTO ACTUAL ────────────────────────
-→ host despacha payload tipado                         [no implementado]
+→ coordinador captura ready interno de un solo uso     [implementado para Chat]
+→ BeginChatProcessing produce copia propietaria        [implementado para Chat]
+→ binding externo Bound → Processing                    [implementado para Chat]
+→ host recibe despacho tipado propietario              [implementado para Chat]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
+──────────────────────── PUNTO ACTUAL ────────────────────────
 → coordinador procesa Confirm / Cancel                 [no implementado]
 ```
 
@@ -144,9 +147,10 @@ El MVP del core quedó compilado correctamente en 4B.1 y su runner portable term
 compilados en `62d8491`, la familia Chat fue publicada y compilada en `b9c3998`, y el
 repositorio tipado fue publicado y compilado en `bb7fdbd`, y el registro externo de
 bindings fue publicado en `ca936b6`. El endurecimiento de ownership fue publicado y
-compilado en `2923fb5`; su runner manual terminó con 8 PASS y 0 FAIL. La Fase 4B.6
-conecta localmente Chat con el repositorio, el registro y `Core.Enqueue` mediante el
-primer coordinador portable.
+compilado en `2923fb5`; su runner manual terminó con 8 PASS y 0 FAIL. La Fase 4B.6 fue
+publicada y compilada en `2ff496e`: Core terminó con 10 PASS y 0 FAIL, y Pipeline con
+13 PASS y 0 FAIL. La Fase 4B.7 implementa localmente el primer despacho Chat autorizado
+por una notificación ready observada directamente desde el core.
 
 ## 4. Contratos públicos actuales
 
@@ -274,6 +278,31 @@ producirla de forma controlada.
 
 La inspección pública permite visitar bindings y payloads Chat mediante `EmissionId`,
 además de consultar sus conteos, sin exponer ownership ni referencias mutables.
+
+### Despacho autorizado de Chat
+
+El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
+`PendingReadyEmission`. Esta copia no replica el estado `InFlight` autoritativo del core:
+es únicamente una notificación de despacho pendiente, escrita después de observar un
+`EmissionReady` obtenido directamente de una llamada propia al core.
+
+`CaptureCorePumpOutcome` ignora `NotRequested`, `QueueEmpty` y `Busy` sin eliminar una
+notificación previa. Para `EmissionReady`, valida identidad, flujo, binding Chat y estado
+`Bound`; nunca sobrescribe silenciosamente otro ready pendiente. El
+`AutoPumpOutcome` que permanece dentro de `FTSEnqueueResult` es diagnóstico y no autoriza
+un despacho creado por código externo.
+
+`BeginChatProcessing()` no recibe outcome, envelope ni `EmissionId`. Consume sólo la
+notificación interna, copia fuera de `Visit` el binding y el payload, y construye un
+`FTSChatProcessingDispatch` propietario con envelope y payload completos. Sólo después
+de que `FTSChatDispatchResult` y su `std::optional` existen completamente transiciona el
+binding `Bound → Processing` y consume el ready.
+
+Las comprobaciones estáticas exigen que despacho y resultado puedan moverse sin lanzar.
+Si cualquier copia o validación falla antes de la transición, binding, payload y ready
+permanecen intactos y la operación puede reintentarse. Después de una transición
+exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
+almacenados hasta la Fase 4B.8.
 
 ### Metadatos
 
@@ -516,7 +545,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, primera familia Chat y
-  coordinador de admisión; publica `Pipeline/Public` y enlaza públicamente sólo con Core.
+  coordinador de admisión/despacho; publica `Pipeline/Public` y enlaza públicamente sólo
+  con Core.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): enlaza con Core; actualmente placeholder, sin
   WebSocket ni JSON.
@@ -555,10 +585,14 @@ transiciones condicionales, eliminación única y tamaño/vacío. La Fase 4B.5a 
 comprobaciones estáticas de que repositorio y registro no son copiables ni movibles; su
 resultado manual publicado fue 8 PASS y 0 FAIL.
 
-La ampliación local de 4B.6 añade cinco escenarios públicos: primera admisión con Auto
-Pump, segunda admisión ocupada con `NotRequested`, rechazo por flujo deshabilitado,
-rechazo por capacidad sin dañar la emisión previa e inspección de ID desconocido. Estas
-pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
+La cobertura publicada de 4B.6 añade cinco escenarios públicos: primera admisión con
+Auto Pump, segunda admisión ocupada con `NotRequested`, rechazo por flujo deshabilitado,
+rechazo por capacidad sin dañar la emisión previa e inspección de ID desconocido. El
+resultado manual publicado fue Core 10 PASS / 0 FAIL y Pipeline 13 PASS / 0 FAIL.
+
+La ampliación local de 4B.7 cubre ausencia de ready, despacho autorizado, preservación
+del primer ready ante un segundo `NotRequested`, copia propietaria independiente y
+consumo único. Estas pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
 
 ## 10. Historial de tareas y commits
 
@@ -835,13 +869,30 @@ pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
 - Expuso inspección controlada por `EmissionId` y conteos sin referencias mutables.
 - Añadió cinco escenarios de admisión e inspección; no añadió despacho, procesamiento,
   `Confirm` ni `Cancel` coordinados.
-- Cambios locales actuales; commit sugerido:
+- La fase fue compilada correctamente. Resultados manuales: Core 10 PASS / 0 FAIL y
+  Pipeline 13 PASS / 0 FAIL.
+- Commit `2ff496e` —
   `feat(pipeline): coordinate chat admission`.
+
+### Fase 4B.7 — Despacho autorizado de Chat InFlight
+
+- Añadió `FTSChatProcessingDispatch` como copia propietaria del envelope y payload Chat.
+- Conserva una única notificación ready privada, escrita sólo desde outcomes obtenidos
+  directamente por el coordinador y consumida una sola vez.
+- Añadió `BeginChatProcessing()` sin parámetros; outcomes públicos permanecen sólo como
+  información diagnóstica.
+- Construye el resultado completo antes de `Bound → Processing`, preservando ready,
+  binding y payload si falla cualquier operación previa.
+- Mantiene el payload original almacenado e independiente de la copia entregada al host.
+- Añadió cinco escenarios de despacho; no añadió `Confirm`, `CancelInFlight`, limpieza
+  terminal, retries, timers, otras familias ni interfaces universales.
+- Cambios locales actuales; commit sugerido:
+  `feat(pipeline): authorize chat processing dispatch`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `2923fb5`.
+  `2ff496e`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -857,6 +908,6 @@ pruebas nuevas no fueron compiladas ni ejecutadas por el agente.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El siguiente paso previsto es el despacho coordinado de `EmissionReady`. No existen
-  todavía procesamiento, `Confirm` ni `Cancel` coordinados; requieren especificaciones
-  separadas y no deben implementarse automáticamente.
+- La Fase 4B.8 será la última fase mínima de Chat. Debe definir `Confirm`, `Cancel` y
+  limpieza terminal coordinados mediante una especificación separada; no debe
+  implementarse automáticamente.

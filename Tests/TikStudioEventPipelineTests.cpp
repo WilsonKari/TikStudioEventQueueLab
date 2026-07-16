@@ -872,6 +872,308 @@ namespace
         );
     }
 
+    void TestChatDispatchWithoutPendingReady()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+
+        const FTSChatDispatchResult Result =
+            Coordinator.BeginChatProcessing();
+
+        Require(
+            Result.Status == ETSPipelineDispatchStatus::NoEmissionReady,
+            "A new coordinator must not have an authorized ready"
+        );
+        Require(!Result.Dispatch.has_value(), "No ready must not produce a dispatch");
+        Require(Coordinator.GetBindingCount() == 0, "No ready must not create bindings");
+        Require(
+            Coordinator.GetChatPayloadCount() == 0,
+            "No ready must not create Chat payloads"
+        );
+    }
+
+    void TestAuthorizedChatReadyProducesOwnedDispatch()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSChatInput Input = MakeCompleteInput();
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(Input);
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Authorized dispatch setup admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AutoPumpOutcome.Status
+                == ETSPumpStatus::EmissionReady,
+            "Authorized dispatch must originate from a core EmissionReady"
+        );
+
+        const FTSChatDispatchResult Result =
+            Coordinator.BeginChatProcessing();
+        Require(
+            Result.Status == ETSPipelineDispatchStatus::Dispatched,
+            "Authorized Chat ready must produce a dispatch"
+        );
+        Require(Result.Dispatch.has_value(), "Dispatched result must own a dispatch");
+        Require(
+            Result.Dispatch->Emission.EmissionId
+                == Admission.EnqueueResult->AdmittedEmission.EmissionId,
+            "Dispatch identity must match the admitted emission"
+        );
+        Require(
+            Result.Dispatch->Emission.Flow == ETSEventFlow::Chat,
+            "Chat dispatch must preserve the Chat flow"
+        );
+        RequireChatInputEqual(
+            Result.Dispatch->Payload.Input,
+            Input,
+            "Owned Chat processing dispatch"
+        );
+
+        Require(
+            Coordinator.VisitEmissionBinding(
+                Result.Dispatch->Emission.EmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Processing,
+                        "Dispatched Chat binding must enter Processing"
+                    );
+                }
+            ),
+            "Dispatched Chat binding must remain stored"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                Result.Dispatch->Emission.EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        Input,
+                        "Stored payload after authorized dispatch"
+                    );
+                }
+            ),
+            "Dispatched Chat payload must remain stored"
+        );
+        Require(Coordinator.GetBindingCount() == 1, "Dispatch must retain one binding");
+        Require(
+            Coordinator.GetChatPayloadCount() == 1,
+            "Dispatch must retain one Chat payload"
+        );
+    }
+
+    void TestPendingChatCannotReplaceAuthorizedReady()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        FTSChatInput FirstInput = MakeCompleteInput();
+        FirstInput.Comment = "Authorized InFlight Chat";
+        FTSChatInput SecondInput = MakeCompleteInput();
+        SecondInput.Comment = "Pending Chat without ready";
+
+        const FTSPipelineAdmissionResult First =
+            Coordinator.SubmitChat(FirstInput);
+        const FTSPipelineAdmissionResult Second =
+            Coordinator.SubmitChat(SecondInput);
+
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                First.EnqueueResult.has_value(),
+            "First ready-retention admission must succeed"
+        );
+        Require(
+            Second.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Second.EnqueueResult.has_value(),
+            "Second pending admission must succeed"
+        );
+        Require(
+            First.EnqueueResult->AutoPumpOutcome.Status
+                == ETSPumpStatus::EmissionReady,
+            "First admission must authorize a ready"
+        );
+        Require(
+            Second.EnqueueResult->AutoPumpOutcome.Status
+                == ETSPumpStatus::NotRequested,
+            "Second admission must not replace the pending ready"
+        );
+
+        const FTSEmissionId FirstEmissionId =
+            First.EnqueueResult->AdmittedEmission.EmissionId;
+        const FTSEmissionId SecondEmissionId =
+            Second.EnqueueResult->AdmittedEmission.EmissionId;
+        const FTSChatDispatchResult Dispatch =
+            Coordinator.BeginChatProcessing();
+
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "The retained ready must still dispatch"
+        );
+        Require(
+            Dispatch.Dispatch->Emission.EmissionId == FirstEmissionId,
+            "NotRequested must preserve authorization for the first emission"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                FirstEmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Processing,
+                        "Authorized first binding must enter Processing"
+                    );
+                }
+            ),
+            "First binding must remain available after dispatch"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                SecondEmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Bound,
+                        "Pending second binding must remain Bound"
+                    );
+                }
+            ),
+            "Second binding must remain available"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                SecondEmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        SecondInput,
+                        "Pending second Chat payload"
+                    );
+                }
+            ),
+            "Pending second payload must remain intact"
+        );
+        Require(Coordinator.GetBindingCount() == 2, "Both bindings must remain stored");
+        Require(
+            Coordinator.GetChatPayloadCount() == 2,
+            "Both Chat payloads must remain stored"
+        );
+    }
+
+    void TestChatDispatchPayloadIsIndependentCopy()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSChatInput Input = MakeCompleteInput();
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(Input);
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Independent dispatch setup admission must succeed"
+        );
+
+        FTSChatDispatchResult Dispatch = Coordinator.BeginChatProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "Independent copy test requires a dispatch"
+        );
+
+        Dispatch.Dispatch->Payload.Input.Comment = "Mutated dispatch comment";
+        Dispatch.Dispatch->Payload.Input.Emotes.clear();
+        Dispatch.Dispatch->Payload.Input.User.Nickname = "Mutated dispatch user";
+        Dispatch.Dispatch->Payload.Input.User.UniqueId = "mutated-user-id";
+
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                Admission.EnqueueResult->AdmittedEmission.EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        Input,
+                        "Stored payload after dispatch mutation"
+                    );
+                }
+            ),
+            "Stored payload must remain available after dispatch mutation"
+        );
+    }
+
+    void TestChatReadyDispatchIsConsumedOnce()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSChatInput Input = MakeCompleteInput();
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(Input);
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Single-consumption setup admission must succeed"
+        );
+
+        const FTSEmissionId EmissionId =
+            Admission.EnqueueResult->AdmittedEmission.EmissionId;
+        const FTSChatDispatchResult FirstDispatch =
+            Coordinator.BeginChatProcessing();
+        Require(
+            FirstDispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                FirstDispatch.Dispatch.has_value(),
+            "First BeginChatProcessing must dispatch"
+        );
+
+        const std::size_t BindingCount = Coordinator.GetBindingCount();
+        const std::size_t PayloadCount = Coordinator.GetChatPayloadCount();
+        const FTSChatDispatchResult SecondDispatch =
+            Coordinator.BeginChatProcessing();
+
+        Require(
+            SecondDispatch.Status == ETSPipelineDispatchStatus::NoEmissionReady,
+            "Consumed ready must not dispatch twice"
+        );
+        Require(
+            !SecondDispatch.Dispatch.has_value(),
+            "Second BeginChatProcessing must not contain a dispatch"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                EmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Processing,
+                        "Consumed ready binding must remain Processing"
+                    );
+                }
+            ),
+            "Consumed ready binding must remain stored"
+        );
+        Require(
+            Coordinator.VisitChatPayloadForEmission(
+                EmissionId,
+                [&](const FTSChatPayload& Payload)
+                {
+                    RequireChatInputEqual(
+                        Payload.Input,
+                        Input,
+                        "Payload after single ready consumption"
+                    );
+                }
+            ),
+            "Consumed ready payload must remain stored"
+        );
+        Require(
+            Coordinator.GetBindingCount() == BindingCount,
+            "Second dispatch attempt must not change binding count"
+        );
+        Require(
+            Coordinator.GetChatPayloadCount() == PayloadCount,
+            "Second dispatch attempt must not change payload count"
+        );
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -896,7 +1198,12 @@ int main()
         {"Chat coordinator second admission while busy", &TestChatCoordinatorSecondAdmissionWhileBusy},
         {"Chat coordinator rejects disabled flow", &TestChatCoordinatorRejectsDisabledFlow},
         {"Chat coordinator capacity rejection preserves prior admission", &TestChatCoordinatorCapacityRejectionPreservesPriorAdmission},
-        {"Chat coordinator unknown emission inspection", &TestChatCoordinatorUnknownEmissionInspection}
+        {"Chat coordinator unknown emission inspection", &TestChatCoordinatorUnknownEmissionInspection},
+        {"Chat dispatch without pending ready", &TestChatDispatchWithoutPendingReady},
+        {"Authorized Chat ready produces owned dispatch", &TestAuthorizedChatReadyProducesOwnedDispatch},
+        {"Pending Chat cannot replace authorized ready", &TestPendingChatCannotReplaceAuthorizedReady},
+        {"Chat dispatch payload is an independent copy", &TestChatDispatchPayloadIsIndependentCopy},
+        {"Chat ready dispatch is consumed once", &TestChatReadyDispatchIsConsumedOnce}
     };
 
     std::size_t PassedCount = 0;

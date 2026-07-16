@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EventPipeline/Bindings/TSEmissionBindingRegistry.h"
+#include "EventPipeline/Processing/TSChatProcessingDispatch.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
 
@@ -27,6 +28,20 @@ struct FTSPipelineAdmissionResult
     std::optional<FTSEnqueueResult> EnqueueResult;
 };
 
+enum class ETSPipelineDispatchStatus : std::uint8_t
+{
+    NoEmissionReady,
+    Dispatched
+};
+
+struct FTSChatDispatchResult
+{
+    ETSPipelineDispatchStatus Status =
+        ETSPipelineDispatchStatus::NoEmissionReady;
+
+    std::optional<FTSChatProcessingDispatch> Dispatch;
+};
+
 // Orquesta autoridades independientes sin asumir la semántica ni el ownership de ellas.
 class FTSEventPipelineCoordinator final
 {
@@ -48,6 +63,9 @@ public:
 
     [[nodiscard]]
     FTSPipelineAdmissionResult SubmitChat(FTSChatInput Input);
+
+    [[nodiscard]]
+    FTSChatDispatchResult BeginChatProcessing();
 
     template <typename TCallback>
     [[nodiscard]]
@@ -109,6 +127,8 @@ public:
     std::size_t GetChatPayloadCount() const noexcept;
 
 private:
+    void CaptureCorePumpOutcome(const FTSPumpOutcome& PumpOutcome);
+
     void ProcessEnqueueLifecycleEvents(
         const FTSEmissionLifecycleEvents& LifecycleEvents
     );
@@ -116,4 +136,6 @@ private:
     TikStudioEventQueueSystem Core;
     FTSChatPayloadRepository ChatPayloadRepository;
     FTSEmissionBindingRegistry BindingRegistry;
+    // Notificación de despacho de un solo uso; el core conserva el estado autoritativo.
+    std::optional<FTSEmissionEnvelope> PendingReadyEmission;
 };
