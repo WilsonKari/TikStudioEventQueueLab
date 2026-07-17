@@ -2,4 +2,4 @@
 
 #include "EventPipeline/Processing/TSProcessingCompletion.h"
 
-using FTSChatProcessingCompletionResult = FTSProcessingCompletionResult;
+using FTSFollowProcessingCompletionResult = FTSProcessingCompletionResult;

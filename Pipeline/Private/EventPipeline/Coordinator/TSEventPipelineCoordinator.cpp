@@ -1,6 +1,7 @@
 #include "EventPipeline/Coordinator/TSEventPipelineCoordinator.h"
 
 #include "EventPipeline/Families/TSChatFamily.h"
+#include "EventPipeline/Families/TSFollowFamily.h"
 
 #include <stdexcept>
 #include <type_traits>
@@ -10,15 +11,14 @@
 static_assert(
     std::is_nothrow_move_constructible_v<FTSChatProcessingDispatch>
 );
-
 static_assert(
-    std::is_nothrow_move_constructible_v<FTSChatDispatchResult>
+    std::is_nothrow_move_constructible_v<FTSFollowProcessingDispatch>
 );
-
+static_assert(std::is_nothrow_move_constructible_v<FTSChatDispatchResult>);
+static_assert(std::is_nothrow_move_constructible_v<FTSFollowDispatchResult>);
 static_assert(
-    std::is_nothrow_move_constructible_v<FTSChatProcessingCompletionResult>
+    std::is_nothrow_move_constructible_v<FTSProcessingCompletionResult>
 );
-
 static_assert(std::is_nothrow_move_constructible_v<FTSConfirmResult>);
 static_assert(
     std::is_nothrow_move_constructible_v<FTSCancelInFlightResult>
@@ -30,11 +30,12 @@ static_assert(
 
 namespace
 {
-    class FProvisionalChatPayloadGuard final
+    template <typename TRepository>
+    class TProvisionalPayloadGuard final
     {
     public:
-        FProvisionalChatPayloadGuard(
-            FTSChatPayloadRepository& Repository,
+        TProvisionalPayloadGuard(
+            TRepository& Repository,
             FTSPayloadHandle PayloadHandle
         ) noexcept
             : Repository(Repository)
@@ -42,7 +43,7 @@ namespace
         {
         }
 
-        ~FProvisionalChatPayloadGuard() noexcept
+        ~TProvisionalPayloadGuard() noexcept
         {
             if (!bActive)
             {
@@ -56,19 +57,19 @@ namespace
             }
             catch (...)
             {
-                // A cleanup guard must never replace the exception already in flight.
+                // La guarda no debe sustituir una excepción que ya está propagándose.
             }
         }
 
-        FProvisionalChatPayloadGuard(
-            const FProvisionalChatPayloadGuard&
+        TProvisionalPayloadGuard(
+            const TProvisionalPayloadGuard&
         ) = delete;
-        FProvisionalChatPayloadGuard& operator=(
-            const FProvisionalChatPayloadGuard&
+        TProvisionalPayloadGuard& operator=(
+            const TProvisionalPayloadGuard&
         ) = delete;
-        FProvisionalChatPayloadGuard(FProvisionalChatPayloadGuard&&) = delete;
-        FProvisionalChatPayloadGuard& operator=(
-            FProvisionalChatPayloadGuard&&
+        TProvisionalPayloadGuard(TProvisionalPayloadGuard&&) = delete;
+        TProvisionalPayloadGuard& operator=(
+            TProvisionalPayloadGuard&&
         ) = delete;
 
         void RollbackNow()
@@ -81,7 +82,7 @@ namespace
             if (!Repository.Erase(PayloadHandle))
             {
                 throw std::logic_error(
-                    "Provisional Chat payload is missing during rollback"
+                    "Provisional payload is missing during rollback"
                 );
             }
 
@@ -94,7 +95,7 @@ namespace
         }
 
     private:
-        FTSChatPayloadRepository& Repository;
+        TRepository& Repository;
         FTSPayloadHandle PayloadHandle{};
         bool bActive = true;
     };
@@ -106,16 +107,43 @@ namespace
             Status == ETSEnqueueStatus::AcceptedWithEviction;
     }
 
-    enum class EChatLifecycleBatchKind : std::uint8_t
+    [[nodiscard]]
+    constexpr bool IsSupportedFamilyFlowPair(
+        ETSEventFamilyKind FamilyKind,
+        ETSEventFlow Flow
+    ) noexcept
+    {
+        return
+            (FamilyKind == ETSEventFamilyKind::Chat &&
+                Flow == ETSEventFlow::Chat) ||
+            (FamilyKind == ETSEventFamilyKind::Follow &&
+                Flow == ETSEventFlow::Follow);
+    }
+
+    void ValidateSupportedFamilyFlowPair(
+        ETSEventFamilyKind FamilyKind,
+        ETSEventFlow Flow
+    )
+    {
+        if (!IsSupportedFamilyFlowPair(FamilyKind, Flow))
+        {
+            throw std::logic_error(
+                "Pipeline binding has an unsupported family and flow pair"
+            );
+        }
+    }
+
+    enum class ELifecycleBatchKind : std::uint8_t
     {
         PendingOnly,
         Confirm,
         Cancel
     };
 
-    struct FValidatedChatLifecycleEntry
+    struct FValidatedLifecycleEntry
     {
         FTSEmissionId EmissionId = 0;
+        ETSEventFamilyKind FamilyKind = ETSEventFamilyKind::Chat;
         FTSPayloadHandle PayloadHandle{};
         ETSExternalEmissionState ExpectedState =
             ETSExternalEmissionState::Bound;
@@ -148,16 +176,16 @@ namespace
             return ETSExternalEmissionState::Bound;
         }
 
-        throw std::logic_error("Unsupported Chat lifecycle reason");
+        throw std::logic_error("Unsupported lifecycle reason");
     }
 
-    void ValidateChatLifecycleBatchShape(
+    void ValidateLifecycleBatchShape(
         const FTSEmissionLifecycleEvents& LifecycleEvents,
-        EChatLifecycleBatchKind BatchKind,
+        ELifecycleBatchKind BatchKind,
         FTSEmissionId RequestedEmissionId
     )
     {
-        if (BatchKind == EChatLifecycleBatchKind::Confirm)
+        if (BatchKind == ELifecycleBatchKind::Confirm)
         {
             if (LifecycleEvents.empty() ||
                 LifecycleEvents.front().Envelope.EmissionId !=
@@ -166,7 +194,7 @@ namespace
                     ETSEmissionTerminalReason::Confirmed)
             {
                 throw std::logic_error(
-                    "Chat Confirm lifecycle has an invalid leading event"
+                    "Confirm lifecycle has an invalid leading event"
                 );
             }
 
@@ -177,7 +205,7 @@ namespace
                 if (!IsPendingTerminalReason(LifecycleEvents[Index].Reason))
                 {
                     throw std::logic_error(
-                        "Chat Confirm lifecycle has an invalid trailing event"
+                        "Confirm lifecycle has an invalid trailing event"
                     );
                 }
             }
@@ -185,7 +213,7 @@ namespace
             return;
         }
 
-        if (BatchKind == EChatLifecycleBatchKind::Cancel)
+        if (BatchKind == ELifecycleBatchKind::Cancel)
         {
             if (LifecycleEvents.size() != 1 ||
                 LifecycleEvents.front().Envelope.EmissionId !=
@@ -193,7 +221,7 @@ namespace
                 LifecycleEvents.front().Reason !=
                     ETSEmissionTerminalReason::Cancelled)
             {
-                throw std::logic_error("Chat Cancel lifecycle is invalid");
+                throw std::logic_error("Cancel lifecycle is invalid");
             }
 
             return;
@@ -204,29 +232,84 @@ namespace
             if (!IsPendingTerminalReason(LifecycleEvent.Reason))
             {
                 throw std::logic_error(
-                    "Pending Chat lifecycle has a non-pending terminal reason"
+                    "Pending lifecycle has a non-pending terminal reason"
                 );
             }
         }
     }
 
-    void ValidateAndApplyChatLifecycleBatch(
+    [[nodiscard]]
+    bool HasPayloadForBinding(
+        const FTSEmissionBinding& Binding,
+        const FTSChatPayloadRepository& ChatPayloadRepository,
+        const FTSFollowPayloadRepository& FollowPayloadRepository
+    )
+    {
+        switch (Binding.FamilyKind)
+        {
+        case ETSEventFamilyKind::Chat:
+            return ChatPayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [](const FTSChatPayload&)
+                {
+                }
+            );
+
+        case ETSEventFamilyKind::Follow:
+            return FollowPayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [](const FTSFollowPayload&)
+                {
+                }
+            );
+
+        default:
+            throw std::logic_error(
+                "Lifecycle references an unsupported payload family"
+            );
+        }
+    }
+
+    [[nodiscard]]
+    bool ErasePayloadForBinding(
+        const FValidatedLifecycleEntry& Entry,
+        FTSChatPayloadRepository& ChatPayloadRepository,
+        FTSFollowPayloadRepository& FollowPayloadRepository
+    )
+    {
+        switch (Entry.FamilyKind)
+        {
+        case ETSEventFamilyKind::Chat:
+            return ChatPayloadRepository.Erase(Entry.PayloadHandle);
+
+        case ETSEventFamilyKind::Follow:
+            return FollowPayloadRepository.Erase(Entry.PayloadHandle);
+
+        default:
+            throw std::logic_error(
+                "Lifecycle cleanup references an unsupported payload family"
+            );
+        }
+    }
+
+    void ValidateAndApplyLifecycleBatch(
         FTSEmissionBindingRegistry& BindingRegistry,
         FTSChatPayloadRepository& ChatPayloadRepository,
+        FTSFollowPayloadRepository& FollowPayloadRepository,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
         const FTSEmissionLifecycleEvents& LifecycleEvents,
-        EChatLifecycleBatchKind BatchKind,
+        ELifecycleBatchKind BatchKind,
         FTSEmissionId RequestedEmissionId
     )
     {
-        ValidateChatLifecycleBatchShape(
+        ValidateLifecycleBatchShape(
             LifecycleEvents,
             BatchKind,
             RequestedEmissionId
         );
 
-        // Toda la tanda se valida antes de cambiar una autoridad externa.
-        std::vector<FValidatedChatLifecycleEntry> ValidatedEntries;
+        // Toda la tanda se valida antes de cambiar cualquiera de sus autoridades.
+        std::vector<FValidatedLifecycleEntry> ValidatedEntries;
         ValidatedEntries.reserve(LifecycleEvents.size());
 
         for (const FTSEmissionLifecycleEvent& LifecycleEvent : LifecycleEvents)
@@ -237,23 +320,16 @@ namespace
             if (EmissionId == 0)
             {
                 throw std::logic_error(
-                    "Chat lifecycle references an invalid identity"
+                    "Lifecycle references an invalid identity"
                 );
             }
 
-            if (LifecycleEvent.Envelope.Flow != ETSEventFlow::Chat)
-            {
-                throw std::logic_error(
-                    "Chat lifecycle references a non-Chat flow"
-                );
-            }
-
-            for (const FValidatedChatLifecycleEntry& Entry : ValidatedEntries)
+            for (const FValidatedLifecycleEntry& Entry : ValidatedEntries)
             {
                 if (Entry.EmissionId == EmissionId)
                 {
                     throw std::logic_error(
-                        "Chat lifecycle contains a duplicate identity"
+                        "Lifecycle contains a duplicate identity"
                     );
                 }
             }
@@ -262,7 +338,7 @@ namespace
                 PendingReadyEmission->EmissionId == EmissionId)
             {
                 throw std::logic_error(
-                    "Chat lifecycle targets a pending ready notification"
+                    "Lifecycle targets a pending ready notification"
                 );
             }
 
@@ -280,71 +356,62 @@ namespace
             if (!bFoundBinding)
             {
                 throw std::logic_error(
-                    "Chat lifecycle references a missing binding"
+                    "Lifecycle references a missing binding"
                 );
             }
 
             if (Binding.EmissionId != EmissionId)
             {
                 throw std::logic_error(
-                    "Chat lifecycle binding identity mismatch"
+                    "Lifecycle binding identity mismatch"
                 );
             }
 
-            if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+            if (Binding.ExpectedFlow != LifecycleEvent.Envelope.Flow)
             {
-                throw std::logic_error(
-                    "Chat lifecycle references a non-Chat binding"
-                );
+                throw std::logic_error("Lifecycle binding flow mismatch");
             }
 
-            if (Binding.ExpectedFlow != ETSEventFlow::Chat ||
-                Binding.ExpectedFlow != LifecycleEvent.Envelope.Flow)
+            ValidateSupportedFamilyFlowPair(
+                Binding.FamilyKind,
+                Binding.ExpectedFlow
+            );
+
+            if (Binding.ExternalState != ExpectedState)
             {
-                throw std::logic_error(
-                    "Chat lifecycle binding flow mismatch"
-                );
+                throw std::logic_error("Lifecycle binding state mismatch");
             }
 
             if (Binding.PayloadHandle.Value == 0)
             {
                 throw std::logic_error(
-                    "Chat lifecycle binding has an invalid payload handle"
+                    "Lifecycle binding has an invalid payload handle"
                 );
             }
 
-            if (Binding.ExternalState != ExpectedState)
+            if (!HasPayloadForBinding(
+                    Binding,
+                    ChatPayloadRepository,
+                    FollowPayloadRepository
+                ))
             {
                 throw std::logic_error(
-                    "Chat lifecycle binding state mismatch"
-                );
-            }
-
-            const bool bFoundPayload = ChatPayloadRepository.Visit(
-                Binding.PayloadHandle,
-                [](const FTSChatPayload&)
-                {
-                }
-            );
-
-            if (!bFoundPayload)
-            {
-                throw std::logic_error(
-                    "Chat lifecycle binding references a missing payload"
+                    "Lifecycle binding references a missing payload"
                 );
             }
 
             ValidatedEntries.push_back(
-                FValidatedChatLifecycleEntry{
+                FValidatedLifecycleEntry{
                     EmissionId,
+                    Binding.FamilyKind,
                     Binding.PayloadHandle,
                     ExpectedState
                 }
             );
         }
 
-        // La aplicación conserva exactamente el orden comunicado por el core.
-        for (const FValidatedChatLifecycleEntry& Entry : ValidatedEntries)
+        // El enrutamiento por familia conserva el orden comunicado por el core.
+        for (const FValidatedLifecycleEntry& Entry : ValidatedEntries)
         {
             if (!BindingRegistry.TransitionState(
                     Entry.EmissionId,
@@ -353,21 +420,25 @@ namespace
                 ))
             {
                 throw std::logic_error(
-                    "Chat lifecycle binding transition failed"
+                    "Lifecycle binding transition failed"
                 );
             }
 
-            if (!ChatPayloadRepository.Erase(Entry.PayloadHandle))
+            if (!ErasePayloadForBinding(
+                    Entry,
+                    ChatPayloadRepository,
+                    FollowPayloadRepository
+                ))
             {
                 throw std::logic_error(
-                    "Chat lifecycle payload disappeared before cleanup"
+                    "Lifecycle payload disappeared before cleanup"
                 );
             }
 
             if (!BindingRegistry.Erase(Entry.EmissionId))
             {
                 throw std::logic_error(
-                    "Chat lifecycle binding disappeared before cleanup"
+                    "Lifecycle binding disappeared before cleanup"
                 );
             }
         }
@@ -382,23 +453,32 @@ FTSEventPipelineCoordinator::FTSEventPipelineCoordinator(
 {
 }
 
-FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
-    FTSChatInput Input
+template <typename TPayload, typename TRepository>
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
+    TTSFamilyDecision<TPayload> Decision,
+    ETSEventFamilyKind ExpectedFamilyKind,
+    ETSEventFlow ExpectedFlow,
+    TRepository& Repository
 )
 {
     FTSPipelineAdmissionResult Result;
-    TTSFamilyDecision<FTSChatPayload> Decision =
-        FTSChatFamily::Decide(std::move(Input));
 
     if (!Decision.has_value())
     {
         return Result;
     }
 
-    TTSAdmissionCandidate<FTSChatPayload> Candidate =
-        std::move(*Decision);
+    TTSAdmissionCandidate<TPayload> Candidate = std::move(*Decision);
+    if (Candidate.FamilyKind != ExpectedFamilyKind ||
+        Candidate.EnqueueRequest.Flow != ExpectedFlow)
+    {
+        throw std::logic_error(
+            "Family decision does not match its coordinator route"
+        );
+    }
+
     const std::optional<FTSPayloadHandle> PayloadHandle =
-        ChatPayloadRepository.Insert(std::move(Candidate.Payload));
+        Repository.Insert(std::move(Candidate.Payload));
 
     if (!PayloadHandle.has_value())
     {
@@ -407,8 +487,8 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
         return Result;
     }
 
-    FProvisionalChatPayloadGuard ProvisionalGuard(
-        ChatPayloadRepository,
+    TProvisionalPayloadGuard<TRepository> ProvisionalGuard(
+        Repository,
         *PayloadHandle
     );
     FTSEnqueueResult CoreResult = Core.Enqueue(Candidate.EnqueueRequest);
@@ -423,29 +503,33 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
         return Result;
     }
 
-    // El core ya comprometió la emisión; desde aquí ningún fallo debe fingir rollback.
+    // El core ya comprometió la emisión; desde aquí no se simula rollback.
     ProvisionalGuard.Release();
 
     if (CoreResult.AdmittedEmission.EmissionId == 0)
     {
-        throw std::logic_error("Accepted Chat emission has an invalid identity");
+        throw std::logic_error(
+            "Accepted emission has an invalid identity"
+        );
     }
 
-    if (CoreResult.AdmittedEmission.Flow != Candidate.EnqueueRequest.Flow)
+    if (CoreResult.AdmittedEmission.Flow != ExpectedFlow)
     {
-        throw std::logic_error("Accepted Chat emission flow does not match its request");
+        throw std::logic_error(
+            "Accepted emission flow does not match its request"
+        );
     }
 
     FTSEmissionBinding Binding;
     Binding.EmissionId = CoreResult.AdmittedEmission.EmissionId;
-    Binding.FamilyKind = Candidate.FamilyKind;
-    Binding.ExpectedFlow = Candidate.EnqueueRequest.Flow;
+    Binding.FamilyKind = ExpectedFamilyKind;
+    Binding.ExpectedFlow = ExpectedFlow;
     Binding.PayloadHandle = *PayloadHandle;
     Binding.ExternalState = ETSExternalEmissionState::Bound;
 
     if (!BindingRegistry.Insert(std::move(Binding)))
     {
-        throw std::logic_error("Accepted Chat emission could not be bound");
+        throw std::logic_error("Accepted emission could not be bound");
     }
 
     ProcessPendingLifecycleEvents(CoreResult.LifecycleEvents);
@@ -456,25 +540,37 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
     return Result;
 }
 
-FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
+    FTSChatInput Input
+)
 {
-    FTSChatDispatchResult Result;
+    return SubmitDecision(
+        FTSChatFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Chat,
+        ETSEventFlow::Chat,
+        ChatPayloadRepository
+    );
+}
 
-    if (!PendingReadyEmission.has_value())
-    {
-        return Result;
-    }
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitFollow(
+    FTSFollowInput Input
+)
+{
+    return SubmitDecision(
+        FTSFollowFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Follow,
+        ETSEventFlow::Follow,
+        FollowPayloadRepository
+    );
+}
 
-    const FTSEmissionEnvelope ReadyEmission = *PendingReadyEmission;
-
+FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
+    const FTSEmissionEnvelope& ReadyEmission
+) const
+{
     if (ReadyEmission.EmissionId == 0)
     {
-        throw std::logic_error("Pending Chat ready has an invalid identity");
-    }
-
-    if (ReadyEmission.Flow != ETSEventFlow::Chat)
-    {
-        throw std::logic_error("Pending ready is not a Chat emission");
+        throw std::logic_error("Pending ready has an invalid identity");
     }
 
     FTSEmissionBinding Binding;
@@ -488,33 +584,74 @@ FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
 
     if (!bFoundBinding)
     {
-        throw std::logic_error("Pending Chat ready has no binding");
+        throw std::logic_error("Pending ready has no binding");
     }
 
     if (Binding.EmissionId != ReadyEmission.EmissionId)
     {
-        throw std::logic_error("Pending Chat ready binding identity mismatch");
-    }
-
-    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
-    {
-        throw std::logic_error("Pending Chat ready binding family mismatch");
+        throw std::logic_error("Pending ready binding identity mismatch");
     }
 
     if (Binding.ExpectedFlow != ReadyEmission.Flow)
     {
-        throw std::logic_error("Pending Chat ready binding flow mismatch");
+        throw std::logic_error("Pending ready binding flow mismatch");
     }
+
+    ValidateSupportedFamilyFlowPair(
+        Binding.FamilyKind,
+        Binding.ExpectedFlow
+    );
 
     if (Binding.ExternalState != ETSExternalEmissionState::Bound)
     {
-        throw std::logic_error("Pending Chat ready binding is not Bound");
+        throw std::logic_error("Pending ready binding is not Bound");
     }
 
-    FTSChatPayload Payload;
-    const bool bFoundPayload = ChatPayloadRepository.Visit(
+    if (Binding.PayloadHandle.Value == 0)
+    {
+        throw std::logic_error(
+            "Pending ready binding has an invalid payload handle"
+        );
+    }
+
+    return Binding;
+}
+
+template <typename TPayload, typename TDispatch, typename TRepository>
+TTSPipelineDispatchResult<TDispatch>
+FTSEventPipelineCoordinator::BeginProcessing(
+    ETSEventFamilyKind ExpectedFamilyKind,
+    ETSEventFlow ExpectedFlow,
+    TRepository& Repository
+)
+{
+    TTSPipelineDispatchResult<TDispatch> Result;
+
+    if (!PendingReadyEmission.has_value())
+    {
+        return Result;
+    }
+
+    const FTSEmissionEnvelope ReadyEmission = *PendingReadyEmission;
+    const FTSEmissionBinding Binding = ValidateReadyBinding(ReadyEmission);
+
+    // La inspección de otra familia no autoriza ni consume el ready compartido.
+    if (Binding.FamilyKind != ExpectedFamilyKind)
+    {
+        return Result;
+    }
+
+    if (Binding.ExpectedFlow != ExpectedFlow)
+    {
+        throw std::logic_error(
+            "Pending ready does not match the requested processing route"
+        );
+    }
+
+    TPayload Payload;
+    const bool bFoundPayload = Repository.Visit(
         Binding.PayloadHandle,
-        [&](const FTSChatPayload& StoredPayload)
+        [&](const TPayload& StoredPayload)
         {
             Payload = StoredPayload;
         }
@@ -522,48 +659,75 @@ FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
 
     if (!bFoundPayload)
     {
-        throw std::logic_error("Pending Chat ready binding has no payload");
+        throw std::logic_error("Pending ready binding has no payload");
     }
 
-    FTSChatProcessingDispatch Dispatch{ReadyEmission, Payload};
+    TDispatch Dispatch{ReadyEmission, std::move(Payload)};
     Result.Status = ETSPipelineDispatchStatus::Dispatched;
     Result.Dispatch.emplace(std::move(Dispatch));
 
-    // Toda copia potencialmente lanzable terminó; desde aquí sólo hay compromiso.
+    // Toda operación potencialmente lanzable terminó antes del compromiso.
     if (!BindingRegistry.TransitionState(
             Binding.EmissionId,
             ETSExternalEmissionState::Bound,
             ETSExternalEmissionState::Processing
         ))
     {
-        throw std::logic_error("Pending Chat ready could not enter Processing");
+        throw std::logic_error("Pending ready could not enter Processing");
     }
 
     PendingReadyEmission.reset();
     return Result;
 }
 
-FTSChatProcessingCompletionResult
-FTSEventPipelineCoordinator::CompleteChatProcessing(
+FTSChatDispatchResult FTSEventPipelineCoordinator::BeginChatProcessing()
+{
+    return BeginProcessing<
+        FTSChatPayload,
+        FTSChatProcessingDispatch
+    >(
+        ETSEventFamilyKind::Chat,
+        ETSEventFlow::Chat,
+        ChatPayloadRepository
+    );
+}
+
+FTSFollowDispatchResult FTSEventPipelineCoordinator::BeginFollowProcessing()
+{
+    return BeginProcessing<
+        FTSFollowPayload,
+        FTSFollowProcessingDispatch
+    >(
+        ETSEventFamilyKind::Follow,
+        ETSEventFlow::Follow,
+        FollowPayloadRepository
+    );
+}
+
+template <typename TRepository>
+FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
     FTSEmissionId EmissionId,
-    ETSProcessingResult ProcessingResult
+    ETSProcessingResult ProcessingResult,
+    ETSEventFamilyKind ExpectedFamilyKind,
+    ETSEventFlow ExpectedFlow,
+    const TRepository& Repository
 )
 {
-    FTSChatProcessingCompletionResult Result;
+    FTSProcessingCompletionResult Result;
     Result.EmissionId = EmissionId;
     Result.ProcessingResult = ProcessingResult;
 
     if (EmissionId == 0)
     {
         throw std::logic_error(
-            "Chat completion references an invalid identity"
+            "Processing completion references an invalid identity"
         );
     }
 
     if (PendingReadyEmission.has_value())
     {
         throw std::logic_error(
-            "Chat completion cannot coexist with a pending ready notification"
+            "Processing completion cannot coexist with a pending ready"
         );
     }
 
@@ -575,11 +739,10 @@ FTSEventPipelineCoordinator::CompleteChatProcessing(
         break;
 
     default:
-        throw std::logic_error("Chat completion result is invalid");
+        throw std::logic_error("Processing completion result is invalid");
     }
 
-    // Las autoridades externas se comprueban antes de pedir al core una
-    // transición terminal que no puede deshacerse.
+    // Todas las autoridades externas se validan antes de mutar el core.
     FTSEmissionBinding Binding;
     const bool bFoundBinding = BindingRegistry.Visit(
         EmissionId,
@@ -591,46 +754,61 @@ FTSEventPipelineCoordinator::CompleteChatProcessing(
 
     if (!bFoundBinding)
     {
-        throw std::logic_error("Chat completion has no binding");
+        throw std::logic_error("Processing completion has no binding");
     }
 
     if (Binding.EmissionId != EmissionId)
     {
-        throw std::logic_error("Chat completion binding identity mismatch");
+        throw std::logic_error(
+            "Processing completion binding identity mismatch"
+        );
     }
 
-    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
+    if (Binding.FamilyKind != ExpectedFamilyKind)
     {
-        throw std::logic_error("Chat completion binding family mismatch");
+        throw std::logic_error(
+            "Processing completion binding family mismatch"
+        );
     }
 
-    if (Binding.ExpectedFlow != ETSEventFlow::Chat)
+    if (Binding.ExpectedFlow != ExpectedFlow)
     {
-        throw std::logic_error("Chat completion binding flow mismatch");
+        throw std::logic_error(
+            "Processing completion binding flow mismatch"
+        );
     }
+
+    ValidateSupportedFamilyFlowPair(
+        Binding.FamilyKind,
+        Binding.ExpectedFlow
+    );
 
     if (Binding.ExternalState != ETSExternalEmissionState::Processing)
     {
-        throw std::logic_error("Chat completion binding is not Processing");
+        throw std::logic_error(
+            "Processing completion binding is not Processing"
+        );
     }
 
     if (Binding.PayloadHandle.Value == 0)
     {
         throw std::logic_error(
-            "Chat completion binding has an invalid payload handle"
+            "Processing completion binding has an invalid payload handle"
         );
     }
 
-    const bool bFoundPayload = ChatPayloadRepository.Visit(
+    const bool bFoundPayload = Repository.Visit(
         Binding.PayloadHandle,
-        [](const FTSChatPayload&)
+        [](const auto&)
         {
         }
     );
 
     if (!bFoundPayload)
     {
-        throw std::logic_error("Chat completion binding has no payload");
+        throw std::logic_error(
+            "Processing completion binding has no payload"
+        );
     }
 
     if (ProcessingResult == ETSProcessingResult::Succeeded)
@@ -639,7 +817,9 @@ FTSEventPipelineCoordinator::CompleteChatProcessing(
 
         if (CoreResult.Status != ETSConfirmStatus::Confirmed)
         {
-            throw std::logic_error("Core rejected a valid Chat confirmation");
+            throw std::logic_error(
+                "Core rejected a valid processing confirmation"
+            );
         }
 
         ProcessConfirmLifecycleEvents(
@@ -651,12 +831,14 @@ FTSEventPipelineCoordinator::CompleteChatProcessing(
         return Result;
     }
 
-    // Failed también es terminal en este MVP; no existe retry implícito.
+    // Failed también es terminal; el Pipeline no crea retry implícito.
     FTSCancelInFlightResult CoreResult = Core.CancelInFlight(EmissionId);
 
     if (CoreResult.Status != ETSCancelInFlightStatus::Cancelled)
     {
-        throw std::logic_error("Core rejected a valid Chat cancellation");
+        throw std::logic_error(
+            "Core rejected a valid processing cancellation"
+        );
     }
 
     ProcessCancelLifecycleEvents(
@@ -665,6 +847,36 @@ FTSEventPipelineCoordinator::CompleteChatProcessing(
     );
     Result.CancelResult.emplace(std::move(CoreResult));
     return Result;
+}
+
+FTSChatProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteChatProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Chat,
+        ETSEventFlow::Chat,
+        ChatPayloadRepository
+    );
+}
+
+FTSFollowProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteFollowProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Follow,
+        ETSEventFlow::Follow,
+        FollowPayloadRepository
+    );
 }
 
 FTSPumpResult FTSEventPipelineCoordinator::Pump()
@@ -688,6 +900,17 @@ FTSNextWakeTimeResult FTSEventPipelineCoordinator::GetNextWakeTime()
     return Core.GetNextWakeTime();
 }
 
+std::optional<ETSEventFamilyKind>
+FTSEventPipelineCoordinator::PeekPendingReadyFamilyKind() const
+{
+    if (!PendingReadyEmission.has_value())
+    {
+        return std::nullopt;
+    }
+
+    return ValidateReadyBinding(*PendingReadyEmission).FamilyKind;
+}
+
 std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
 {
     return BindingRegistry.Size();
@@ -696,6 +919,11 @@ std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
 std::size_t FTSEventPipelineCoordinator::GetChatPayloadCount() const noexcept
 {
     return ChatPayloadRepository.Size();
+}
+
+std::size_t FTSEventPipelineCoordinator::GetFollowPayloadCount() const noexcept
+{
+    return FollowPayloadRepository.Size();
 }
 
 void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
@@ -708,54 +936,11 @@ void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
     }
 
     const FTSEmissionEnvelope& ReadyEmission = PumpOutcome.ReadyEmission;
-
-    if (ReadyEmission.EmissionId == 0)
-    {
-        throw std::logic_error("Core produced a Chat ready with an invalid identity");
-    }
-
-    if (ReadyEmission.Flow != ETSEventFlow::Chat)
-    {
-        throw std::logic_error("Core produced a non-Chat ready during Chat admission");
-    }
-
-    FTSEmissionBinding Binding;
-    const bool bFoundBinding = BindingRegistry.Visit(
-        ReadyEmission.EmissionId,
-        [&](const FTSEmissionBinding& StoredBinding)
-        {
-            Binding = StoredBinding;
-        }
-    );
-
-    if (!bFoundBinding)
-    {
-        throw std::logic_error("Core Chat ready has no binding");
-    }
-
-    if (Binding.EmissionId != ReadyEmission.EmissionId)
-    {
-        throw std::logic_error("Core Chat ready binding identity mismatch");
-    }
-
-    if (Binding.FamilyKind != ETSEventFamilyKind::Chat)
-    {
-        throw std::logic_error("Core Chat ready binding family mismatch");
-    }
-
-    if (Binding.ExpectedFlow != ReadyEmission.Flow)
-    {
-        throw std::logic_error("Core Chat ready binding flow mismatch");
-    }
-
-    if (Binding.ExternalState != ETSExternalEmissionState::Bound)
-    {
-        throw std::logic_error("Core Chat ready binding is not Bound");
-    }
+    (void)ValidateReadyBinding(ReadyEmission);
 
     if (PendingReadyEmission.has_value())
     {
-        throw std::logic_error("A Chat ready notification is already pending");
+        throw std::logic_error("A ready notification is already pending");
     }
 
     PendingReadyEmission = ReadyEmission;
@@ -765,12 +950,13 @@ void FTSEventPipelineCoordinator::ProcessPendingLifecycleEvents(
     const FTSEmissionLifecycleEvents& LifecycleEvents
 )
 {
-    ValidateAndApplyChatLifecycleBatch(
+    ValidateAndApplyLifecycleBatch(
         BindingRegistry,
         ChatPayloadRepository,
+        FollowPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
-        EChatLifecycleBatchKind::PendingOnly,
+        ELifecycleBatchKind::PendingOnly,
         0
     );
 }
@@ -780,12 +966,13 @@ void FTSEventPipelineCoordinator::ProcessConfirmLifecycleEvents(
     const FTSEmissionLifecycleEvents& LifecycleEvents
 )
 {
-    ValidateAndApplyChatLifecycleBatch(
+    ValidateAndApplyLifecycleBatch(
         BindingRegistry,
         ChatPayloadRepository,
+        FollowPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
-        EChatLifecycleBatchKind::Confirm,
+        ELifecycleBatchKind::Confirm,
         EmissionId
     );
 }
@@ -795,12 +982,13 @@ void FTSEventPipelineCoordinator::ProcessCancelLifecycleEvents(
     const FTSEmissionLifecycleEvents& LifecycleEvents
 )
 {
-    ValidateAndApplyChatLifecycleBatch(
+    ValidateAndApplyLifecycleBatch(
         BindingRegistry,
         ChatPayloadRepository,
+        FollowPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
-        EChatLifecycleBatchKind::Cancel,
+        ELifecycleBatchKind::Cancel,
         EmissionId
     );
 }

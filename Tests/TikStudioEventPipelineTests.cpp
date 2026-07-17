@@ -3,6 +3,7 @@
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Families/TSFollowFamily.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
+#include "EventPipeline/Repositories/TSFollowPayloadRepository.h"
 
 #include <chrono>
 #include <cstddef>
@@ -20,6 +21,11 @@ static_assert(!std::is_copy_constructible_v<FTSChatPayloadRepository>);
 static_assert(!std::is_copy_assignable_v<FTSChatPayloadRepository>);
 static_assert(!std::is_move_constructible_v<FTSChatPayloadRepository>);
 static_assert(!std::is_move_assignable_v<FTSChatPayloadRepository>);
+
+static_assert(!std::is_copy_constructible_v<FTSFollowPayloadRepository>);
+static_assert(!std::is_copy_assignable_v<FTSFollowPayloadRepository>);
+static_assert(!std::is_move_constructible_v<FTSFollowPayloadRepository>);
+static_assert(!std::is_move_assignable_v<FTSFollowPayloadRepository>);
 
 static_assert(!std::is_copy_constructible_v<FTSEmissionBindingRegistry>);
 static_assert(!std::is_copy_assignable_v<FTSEmissionBindingRegistry>);
@@ -132,6 +138,15 @@ namespace
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    void RequireFollowInputEqual(
+        const FTSFollowInput& Actual,
+        const FTSFollowInput& Expected,
+        const std::string& Context
+    )
+    {
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     FTSChatInput MakeCompleteInput()
     {
@@ -199,6 +214,40 @@ namespace
     }
 
     [[nodiscard]]
+    FTSEventQueueSettings MakeFollowSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* FollowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Follow);
+        Require(FollowSettings != nullptr, "Follow settings must be available");
+        FollowSettings->bEnabled = bEnabled;
+        FollowSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    FTSEventQueueSettings MakeOperationalFollowSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = 8s,
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeFollowSettings(true, 10);
+        FTSFlowQueueSettings* FollowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Follow);
+        Require(FollowSettings != nullptr, "Follow settings must be available");
+        FollowSettings->TTL = TTL;
+        FollowSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -222,6 +271,29 @@ namespace
     }
 
     [[nodiscard]]
+    FTSEmissionId SubmitAcceptedFollow(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSFollowInput Input = MakeCompleteFollowInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitFollow(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Follow admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Follow admission must have a valid identity"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -232,6 +304,21 @@ namespace
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready Chat must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    FTSEmissionId BeginReadyFollow(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSFollowDispatchResult Dispatch =
+            Coordinator.BeginFollowProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Follow must produce a dispatch"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }
@@ -1826,6 +1913,598 @@ namespace
         );
     }
 
+    void TestFollowCoordinatorFirstAdmissionAutoPumps()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSFollowInput ExpectedInput = MakeCompleteFollowInput();
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitFollow(ExpectedInput);
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "First Follow admission must be accepted"
+        );
+        const FTSEnqueueResult& CoreResult = *Admission.EnqueueResult;
+        const FTSEmissionId EmissionId =
+            CoreResult.AdmittedEmission.EmissionId;
+        Require(
+            EmissionId != 0 &&
+                CoreResult.AdmittedEmission.Flow == ETSEventFlow::Follow,
+            "First Follow admission envelope mismatch"
+        );
+        Require(
+            CoreResult.AutoPumpOutcome.Status ==
+                ETSPumpStatus::EmissionReady &&
+                CoreResult.AutoPumpOutcome.ReadyEmission.EmissionId ==
+                    EmissionId,
+            "First Follow admission must Auto Pump"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 0 &&
+                Coordinator.GetFollowPayloadCount() == 1,
+            "First Follow admission authority counts mismatch"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                EmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.FamilyKind == ETSEventFamilyKind::Follow &&
+                            Binding.ExpectedFlow == ETSEventFlow::Follow &&
+                            Binding.PayloadHandle.Value != 0 &&
+                            Binding.ExternalState ==
+                                ETSExternalEmissionState::Bound,
+                        "First Follow binding mismatch"
+                    );
+                }
+            ),
+            "First Follow binding must exist"
+        );
+        Require(
+            Coordinator.VisitFollowPayloadForEmission(
+                EmissionId,
+                [&](const FTSFollowPayload& Payload)
+                {
+                    RequireFollowInputEqual(
+                        Payload.Input,
+                        ExpectedInput,
+                        "First Follow payload"
+                    );
+                }
+            ),
+            "First Follow payload must exist"
+        );
+    }
+
+    void TestFollowCoordinatorSecondAdmissionWhileBusy()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSPipelineAdmissionResult First =
+            Coordinator.SubmitFollow(MakeCompleteFollowInput());
+        FTSFollowInput SecondInput = MakeCompleteFollowInput();
+        SecondInput.User.UniqueId = "second-follow-user";
+        const FTSPipelineAdmissionResult Second =
+            Coordinator.SubmitFollow(std::move(SecondInput));
+
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                First.EnqueueResult.has_value() &&
+                Second.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Second.EnqueueResult.has_value(),
+            "Both Follow admissions must be accepted"
+        );
+        Require(
+            First.EnqueueResult->AutoPumpOutcome.Status ==
+                ETSPumpStatus::EmissionReady &&
+                Second.EnqueueResult->AutoPumpOutcome.Status ==
+                    ETSPumpStatus::NotRequested,
+            "Busy Follow admission must not replace the first ready"
+        );
+        Require(
+            First.EnqueueResult->AdmittedEmission.EmissionId !=
+                Second.EnqueueResult->AdmittedEmission.EmissionId &&
+                Coordinator.GetBindingCount() == 2 &&
+                Coordinator.GetFollowPayloadCount() == 2,
+            "Busy Follow admissions must keep distinct authorities"
+        );
+        Require(
+            BeginReadyFollow(Coordinator) ==
+                First.EnqueueResult->AdmittedEmission.EmissionId,
+            "Busy Follow admission must preserve the first ready"
+        );
+    }
+
+    void TestFollowCoordinatorRejectsDisabledFlow()
+    {
+        FTSEventPipelineCoordinator Coordinator(
+            MakeFollowSettings(false, 10)
+        );
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitFollow(MakeCompleteFollowInput());
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::RejectedByCore &&
+                Admission.EnqueueResult.has_value() &&
+                Admission.EnqueueResult->Status ==
+                    ETSEnqueueStatus::RejectedDisabled,
+            "Disabled Follow flow must be rejected by the core"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetFollowPayloadCount() == 0 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Disabled Follow rejection must remove its provisional payload"
+        );
+    }
+
+    void TestFollowCapacityRejectionPreservesPriorAdmission()
+    {
+        FTSEventQueueSettings Settings = MakeFollowSettings(true, 1);
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = false;
+        FTSEventPipelineCoordinator Coordinator(std::move(Settings));
+
+        const FTSFollowInput FirstInput = MakeCompleteFollowInput();
+        const FTSPipelineAdmissionResult First =
+            Coordinator.SubmitFollow(FirstInput);
+        FTSFollowInput RejectedInput = MakeCompleteFollowInput();
+        RejectedInput.User.UniqueId = "rejected-follow-user";
+        const FTSPipelineAdmissionResult Rejected =
+            Coordinator.SubmitFollow(std::move(RejectedInput));
+
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                First.EnqueueResult.has_value(),
+            "First capacity Follow admission must succeed"
+        );
+        Require(
+            Rejected.Status == ETSPipelineAdmissionStatus::RejectedByCore &&
+                Rejected.EnqueueResult.has_value() &&
+                Rejected.EnqueueResult->Status ==
+                    ETSEnqueueStatus::RejectedAtCapacity,
+            "Second Follow admission must reject at capacity"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetFollowPayloadCount() == 1,
+            "Capacity rejection must preserve only the prior Follow"
+        );
+        Require(
+            Coordinator.VisitFollowPayloadForEmission(
+                First.EnqueueResult->AdmittedEmission.EmissionId,
+                [&](const FTSFollowPayload& Payload)
+                {
+                    RequireFollowInputEqual(
+                        Payload.Input,
+                        FirstInput,
+                        "Preserved capacity Follow"
+                    );
+                }
+            ),
+            "Prior Follow payload must remain available"
+        );
+    }
+
+    void TestPendingReadyFamilyInspectionIsNonConsuming()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        Require(
+            !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Empty coordinator must not expose a ready family"
+        );
+
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedFollow(Coordinator, "peek-follow-user");
+        const std::optional<ETSEventFamilyKind> FirstPeek =
+            Coordinator.PeekPendingReadyFamilyKind();
+        const std::optional<ETSEventFamilyKind> SecondPeek =
+            Coordinator.PeekPendingReadyFamilyKind();
+
+        Require(
+            FirstPeek == ETSEventFamilyKind::Follow &&
+                SecondPeek == ETSEventFamilyKind::Follow,
+            "Peek must repeatedly report the pending Follow family"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                EmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState == ETSExternalEmissionState::Bound,
+                        "Peek must not authorize processing"
+                    );
+                }
+            ),
+            "Peeked Follow binding must remain available"
+        );
+        Require(
+            BeginReadyFollow(Coordinator) == EmissionId,
+            "Peek must not consume the Follow ready"
+        );
+    }
+
+    void TestWrongFamilyBeginPreservesPendingReady()
+    {
+        {
+            FTSEventPipelineCoordinator Coordinator;
+            const FTSEmissionId FollowId =
+                SubmitAcceptedFollow(Coordinator, "wrong-chat-route");
+
+            Require(
+                Coordinator.BeginChatProcessing().Status ==
+                    ETSPipelineDispatchStatus::NoEmissionReady,
+                "Chat Begin must not dispatch a Follow ready"
+            );
+            Require(
+                Coordinator.PeekPendingReadyFamilyKind() ==
+                    ETSEventFamilyKind::Follow &&
+                    BeginReadyFollow(Coordinator) == FollowId,
+                "Wrong Chat Begin must preserve the Follow ready"
+            );
+        }
+
+        {
+            FTSEventPipelineCoordinator Coordinator;
+            const FTSEmissionId ChatId =
+                SubmitAcceptedChat(Coordinator, "Wrong Follow route");
+
+            Require(
+                Coordinator.BeginFollowProcessing().Status ==
+                    ETSPipelineDispatchStatus::NoEmissionReady,
+                "Follow Begin must not dispatch a Chat ready"
+            );
+            Require(
+                Coordinator.PeekPendingReadyFamilyKind() ==
+                    ETSEventFamilyKind::Chat &&
+                    BeginReadyChat(Coordinator) == ChatId,
+                "Wrong Follow Begin must preserve the Chat ready"
+            );
+        }
+    }
+
+    void TestAuthorizedFollowReadyProducesOwnedOneShotDispatch()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSFollowInput ExpectedInput = MakeCompleteFollowInput();
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitFollow(ExpectedInput);
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Owned Follow dispatch admission failed"
+        );
+        const FTSEmissionId EmissionId =
+            Admission.EnqueueResult->AdmittedEmission.EmissionId;
+
+        FTSFollowDispatchResult DispatchResult =
+            Coordinator.BeginFollowProcessing();
+        Require(
+            DispatchResult.Status == ETSPipelineDispatchStatus::Dispatched &&
+                DispatchResult.Dispatch.has_value(),
+            "Authorized Follow ready must dispatch"
+        );
+        Require(
+            DispatchResult.Dispatch->Emission.EmissionId == EmissionId &&
+                DispatchResult.Dispatch->Emission.Flow == ETSEventFlow::Follow,
+            "Follow dispatch envelope mismatch"
+        );
+        RequireFollowInputEqual(
+            DispatchResult.Dispatch->Payload.Input,
+            ExpectedInput,
+            "Follow dispatch payload"
+        );
+
+        DispatchResult.Dispatch->Payload.Input.User.Nickname =
+            "Mutated dispatch copy";
+        Require(
+            Coordinator.VisitFollowPayloadForEmission(
+                EmissionId,
+                [&](const FTSFollowPayload& StoredPayload)
+                {
+                    RequireFollowInputEqual(
+                        StoredPayload.Input,
+                        ExpectedInput,
+                        "Stored Follow after dispatch mutation"
+                    );
+                }
+            ),
+            "Stored Follow must remain after dispatch"
+        );
+        Require(
+            Coordinator.BeginFollowProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Follow dispatch must consume its ready exactly once"
+        );
+        Require(
+            Coordinator.VisitEmissionBinding(
+                EmissionId,
+                [](const FTSEmissionBinding& Binding)
+                {
+                    Require(
+                        Binding.ExternalState ==
+                            ETSExternalEmissionState::Processing,
+                        "Follow dispatch must authorize Processing"
+                    );
+                }
+            ),
+            "Dispatched Follow binding must remain available"
+        );
+    }
+
+    void TestSuccessfulFollowCompletionCleansTerminalState()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId EmissionId =
+            SubmitAcceptedFollow(Coordinator, "successful-follow");
+        Require(
+            BeginReadyFollow(Coordinator) == EmissionId,
+            "Successful Follow must enter Processing"
+        );
+
+        const FTSFollowProcessingCompletionResult Completion =
+            Coordinator.CompleteFollowProcessing(
+                EmissionId,
+                ETSProcessingResult::Succeeded
+            );
+
+        Require(
+            Completion.EmissionId == EmissionId &&
+                Completion.ProcessingResult == ETSProcessingResult::Succeeded &&
+                Completion.ConfirmResult.has_value() &&
+                !Completion.CancelResult.has_value(),
+            "Successful Follow completion result mismatch"
+        );
+        Require(
+            Completion.ConfirmResult->Status == ETSConfirmStatus::Confirmed &&
+                !Completion.ConfirmResult->LifecycleEvents.empty() &&
+                Completion.ConfirmResult->LifecycleEvents.front()
+                        .Envelope.EmissionId == EmissionId &&
+                Completion.ConfirmResult->LifecycleEvents.front().Reason ==
+                    ETSEmissionTerminalReason::Confirmed,
+            "Successful Follow completion terminal mismatch"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetFollowPayloadCount() == 0 &&
+                !Coordinator.VisitEmissionBinding(
+                    EmissionId,
+                    [](const FTSEmissionBinding&)
+                    {
+                    }
+                ),
+            "Successful Follow completion must clean binding and payload"
+        );
+    }
+
+    void TestSuccessfulFollowCompletionCapturesChatReady()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSEmissionId FollowId =
+            SubmitAcceptedFollow(Coordinator, "follow-before-chat");
+        const FTSEmissionId ChatId =
+            SubmitAcceptedChat(Coordinator, "Chat after Follow");
+        Require(
+            BeginReadyFollow(Coordinator) == FollowId,
+            "Follow must enter Processing before its completion"
+        );
+
+        const FTSFollowProcessingCompletionResult Completion =
+            Coordinator.CompleteFollowProcessing(
+                FollowId,
+                ETSProcessingResult::Succeeded
+            );
+        Require(
+            Completion.ConfirmResult.has_value() &&
+                Completion.ConfirmResult->AutoPumpOutcome.Status ==
+                    ETSPumpStatus::EmissionReady &&
+                Completion.ConfirmResult->AutoPumpOutcome.ReadyEmission
+                        .EmissionId == ChatId,
+            "Follow Confirm must expose the next Chat ready"
+        );
+        Require(
+            Coordinator.PeekPendingReadyFamilyKind() ==
+                ETSEventFamilyKind::Chat &&
+                Coordinator.GetFollowPayloadCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 1 &&
+                Coordinator.GetBindingCount() == 1,
+            "Follow completion must retain only the ready Chat authorities"
+        );
+        Require(
+            Coordinator.BeginFollowProcessing().Status ==
+                ETSPipelineDispatchStatus::NoEmissionReady &&
+                BeginReadyChat(Coordinator) == ChatId,
+            "Follow Begin must preserve the Chat selected by confirmation"
+        );
+    }
+
+    void TestCancelledAndFailedFollowCompletionUseCancellationTerminal()
+    {
+        const std::vector<ETSProcessingResult> ProcessingResults{
+            ETSProcessingResult::Cancelled,
+            ETSProcessingResult::Failed
+        };
+
+        for (const ETSProcessingResult ProcessingResult : ProcessingResults)
+        {
+            FTSEventPipelineCoordinator Coordinator;
+            const FTSEmissionId EmissionId = SubmitAcceptedFollow(
+                Coordinator,
+                ProcessingResult == ETSProcessingResult::Cancelled
+                    ? "cancelled-follow"
+                    : "failed-follow"
+            );
+            Require(
+                BeginReadyFollow(Coordinator) == EmissionId,
+                "Terminal Follow must enter Processing"
+            );
+
+            const FTSFollowProcessingCompletionResult Completion =
+                Coordinator.CompleteFollowProcessing(
+                    EmissionId,
+                    ProcessingResult
+                );
+            Require(
+                Completion.ProcessingResult == ProcessingResult &&
+                    !Completion.ConfirmResult.has_value() &&
+                    Completion.CancelResult.has_value(),
+                "Cancelled or Failed Follow must expose only CancelResult"
+            );
+            Require(
+                Completion.CancelResult->Status ==
+                    ETSCancelInFlightStatus::Cancelled &&
+                    Completion.CancelResult->LifecycleEvents.size() == 1 &&
+                    Completion.CancelResult->LifecycleEvents.front()
+                            .Envelope.EmissionId == EmissionId &&
+                    Completion.CancelResult->LifecycleEvents.front().Reason ==
+                        ETSEmissionTerminalReason::Cancelled,
+                "Cancelled or Failed Follow must use the cancellation terminal"
+            );
+            Require(
+                Coordinator.GetBindingCount() == 0 &&
+                    Coordinator.GetFollowPayloadCount() == 0,
+                "Cancellation terminal must clean Follow authorities"
+            );
+        }
+    }
+
+    void TestFollowExpirationCleansDiscardAndConsolidatePayloads()
+    {
+        struct FExpirationCase
+        {
+            ETSEventExpirePolicy Policy = ETSEventExpirePolicy::Discard;
+            ETSEmissionTerminalReason Reason =
+                ETSEmissionTerminalReason::ExpiredDiscard;
+        };
+
+        const std::vector<FExpirationCase> Cases{
+            {
+                ETSEventExpirePolicy::Discard,
+                ETSEmissionTerminalReason::ExpiredDiscard
+            },
+            {
+                ETSEventExpirePolicy::Consolidate,
+                ETSEmissionTerminalReason::ExpiredConsolidate
+            }
+        };
+
+        for (const FExpirationCase& Case : Cases)
+        {
+            FControlledClock Clock;
+            FTSEventPipelineCoordinator Coordinator(
+                MakeOperationalFollowSettings(
+                    false,
+                    true,
+                    5s,
+                    Case.Policy
+                ),
+                Clock.MakeProvider()
+            );
+            const FTSEmissionId EmissionId =
+                SubmitAcceptedFollow(Coordinator, "expiring-follow");
+
+            Clock.Advance(5s);
+            const FTSProcessDueExpirationsResult Expirations =
+                Coordinator.ProcessDueExpirations();
+            Require(
+                Expirations.LifecycleEvents.size() == 1 &&
+                    Expirations.LifecycleEvents.front().Envelope.EmissionId ==
+                        EmissionId &&
+                    Expirations.LifecycleEvents.front().Envelope.Flow ==
+                        ETSEventFlow::Follow &&
+                    Expirations.LifecycleEvents.front().Reason == Case.Reason,
+                "Follow expiration lifecycle mismatch"
+            );
+            Require(
+                Coordinator.GetBindingCount() == 0 &&
+                    Coordinator.GetFollowPayloadCount() == 0 &&
+                    !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+                "Follow expiration must clean its binding and payload"
+            );
+        }
+    }
+
+    void TestMixedChatAndFollowLifecyclePreservesCoreOrder()
+    {
+        FControlledClock Clock;
+        FTSEventQueueSettings Settings = MakeOperationalChatSettings(
+            true,
+            true,
+            5s,
+            ETSEventExpirePolicy::Discard
+        );
+        FTSFlowQueueSettings* FollowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Follow);
+        Require(FollowSettings != nullptr, "Mixed Follow settings must exist");
+        FollowSettings->bEnabled = true;
+        FollowSettings->MaxSlots = 10;
+        FollowSettings->TTL = 5s;
+        FollowSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+
+        FTSEventPipelineCoordinator Coordinator(
+            std::move(Settings),
+            Clock.MakeProvider()
+        );
+        const FTSEmissionId ProcessingChatId =
+            SubmitAcceptedChat(Coordinator, "Mixed Processing Chat");
+        Require(
+            BeginReadyChat(Coordinator) == ProcessingChatId,
+            "Mixed Chat must enter Processing"
+        );
+        const FTSEmissionId ExpiringFollowId =
+            SubmitAcceptedFollow(Coordinator, "mixed-expiring-follow");
+        const FTSEmissionId ExpiringChatId =
+            SubmitAcceptedChat(Coordinator, "Mixed expiring Chat");
+
+        Clock.Advance(5s);
+        const FTSChatProcessingCompletionResult Completion =
+            Coordinator.CompleteChatProcessing(
+                ProcessingChatId,
+                ETSProcessingResult::Succeeded
+            );
+        Require(
+            Completion.ConfirmResult.has_value(),
+            "Mixed lifecycle confirmation must succeed"
+        );
+        const FTSEmissionLifecycleEvents& LifecycleEvents =
+            Completion.ConfirmResult->LifecycleEvents;
+        Require(
+            LifecycleEvents.size() == 3,
+            "Mixed lifecycle must contain Confirmed and two expirations"
+        );
+        Require(
+            LifecycleEvents[0].Envelope.EmissionId == ProcessingChatId &&
+                LifecycleEvents[0].Envelope.Flow == ETSEventFlow::Chat &&
+                LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::Confirmed,
+            "Mixed lifecycle first event mismatch"
+        );
+        Require(
+            LifecycleEvents[1].Envelope.EmissionId == ExpiringFollowId &&
+                LifecycleEvents[1].Envelope.Flow == ETSEventFlow::Follow &&
+                LifecycleEvents[1].Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard,
+            "Mixed lifecycle second event must be Follow expiration"
+        );
+        Require(
+            LifecycleEvents[2].Envelope.EmissionId == ExpiringChatId &&
+                LifecycleEvents[2].Envelope.Flow == ETSEventFlow::Chat &&
+                LifecycleEvents[2].Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard,
+            "Mixed lifecycle third event must be Chat expiration"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0 &&
+                Coordinator.GetFollowPayloadCount() == 0 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Mixed lifecycle must clean each typed repository"
+        );
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -1867,7 +2546,19 @@ int main()
         {"Cancel requires explicit Pump for next Chat", &TestCancelRequiresExplicitPumpForNextChat},
         {"Busy Pump preserves pending ready notification", &TestBusyPumpPreservesPendingReadyNotification},
         {"Discard expiration through coordinator", &TestDiscardExpirationThroughCoordinator},
-        {"Consolidate expiration cleans without accumulation", &TestConsolidateExpirationCleansChatWithoutAccumulation}
+        {"Consolidate expiration cleans without accumulation", &TestConsolidateExpirationCleansChatWithoutAccumulation},
+        {"Follow coordinator first admission Auto Pumps", &TestFollowCoordinatorFirstAdmissionAutoPumps},
+        {"Follow coordinator second admission while busy", &TestFollowCoordinatorSecondAdmissionWhileBusy},
+        {"Follow coordinator rejects disabled flow", &TestFollowCoordinatorRejectsDisabledFlow},
+        {"Follow capacity rejection preserves prior admission", &TestFollowCapacityRejectionPreservesPriorAdmission},
+        {"Pending ready family inspection is non-consuming", &TestPendingReadyFamilyInspectionIsNonConsuming},
+        {"Wrong-family Begin preserves pending ready", &TestWrongFamilyBeginPreservesPendingReady},
+        {"Authorized Follow ready produces owned one-shot dispatch", &TestAuthorizedFollowReadyProducesOwnedOneShotDispatch},
+        {"Successful Follow completion cleans terminal state", &TestSuccessfulFollowCompletionCleansTerminalState},
+        {"Successful Follow completion captures Chat ready", &TestSuccessfulFollowCompletionCapturesChatReady},
+        {"Cancelled and Failed Follow completion use cancellation terminal", &TestCancelledAndFailedFollowCompletionUseCancellationTerminal},
+        {"Follow expiration cleans Discard and Consolidate payloads", &TestFollowExpirationCleansDiscardAndConsolidatePayloads},
+        {"Mixed Chat and Follow lifecycle preserves core order", &TestMixedChatAndFollowLifecyclePreservesCoreOrder}
     };
 
     std::size_t PassedCount = 0;

@@ -3,9 +3,8 @@
 Última actualización: 2026-07-17.
 
 Estado de referencia de esta actualización: rama `main`, partiendo de HEAD
-`23dd4d2fbf1cb54fa91c5cad9bc6f2a709bc5ed5`
-(`feat(tikfinity): decode and validate seven mapped events`). Los cambios de la Fase
-4D.1 permanecen locales y sin commit.
+`c0bf886` (`feat(follow): add conversion and family decision`). Los cambios de la Fase
+4D.2 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -97,10 +96,10 @@ Existen contratos portables para siete familias nativas:
 También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteInfo`
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
-Estos contratos describen datos entrantes, pero el core genérico de emisiones todavía
-no los recibe, interpreta ni almacena. Chat dispone del vertical slice interno completo.
-Follow ya convierte su input en un candidato tipado, mientras Gift, Like, Member,
-RoomUser y Share continúan sin implementación semántica.
+Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
+interpreta ni almacena. Chat dispone del vertical slice interno completo y Follow llega
+hasta Pipeline completo y lifecycle. Gift, Like, Member, RoomUser y Share continúan sin
+implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -154,22 +153,22 @@ texto JSON TikFinity                                [implementado en Adapter]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
-→ binding externo EmissionId → PayloadHandle          [Chat conectado]
-→ lifecycle de Enqueue libera binding y payload       [implementado; prueba aplazada]
+→ binding externo EmissionId → PayloadHandle          [Chat y Follow conectados]
+→ lifecycle de Enqueue libera binding y payload       [generalizado Chat/Follow]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-→ coordinador captura ready interno de un solo uso     [implementado para Chat]
-→ BeginChatProcessing produce copia propietaria        [implementado para Chat]
-→ binding externo Bound → Processing                    [implementado para Chat]
-→ coordinador entrega despacho tipado propietario       [implementado para Chat]
+→ coordinador captura ready global de un solo uso       [Chat y Follow]
+→ Begin*Processing produce copia propietaria            [Chat y Follow]
+→ binding externo Bound → Processing                    [Chat y Follow]
+→ coordinador entrega despacho tipado propietario       [Chat y Follow]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-→ Succeeded coordina Confirm                            [implementado para Chat]
-→ Cancelled / Failed coordinan CancelInFlight           [implementado para Chat]
-→ lifecycle terminal limpia binding y payload           [implementado para Chat]
-→ Confirm captura el siguiente ready de Auto Pump       [implementado para Chat]
-→ Pump y expiración se exponen por el coordinador       [implementado para Chat]
+→ Succeeded coordina Confirm                            [Chat y Follow]
+→ Cancelled / Failed coordinan CancelInFlight           [Chat y Follow]
+→ lifecycle terminal enruta y limpia payload tipado     [Chat y Follow]
+→ Confirm captura el siguiente ready multi-familia      [implementado]
+→ Pump y expiración se exponen por el coordinador       [Chat y Follow]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
@@ -180,8 +179,11 @@ texto JSON TikFinity                                [implementado en Adapter]
 → FTSTikFinityFollowConverter                             [implementado en 4D.1]
 → FTSFollowInput portable                                 [conversión implementada]
 → FTSFollowFamily produce candidato Flow Follow           [implementado en 4D.1]
+→ repositorio, binding y admisión Follow                  [implementados en 4D.2]
+→ dispatch y completion Follow                            [implementados en 4D.2]
+→ lifecycle mixto Chat/Follow                             [generalizado en 4D.2]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ repositorio, coordinación y lifecycle Follow            [siguiente fase 4D.2]
+→ Host y certificación vertical Follow                    [siguiente fase 4D.3]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -204,9 +206,10 @@ La Fase 4C.3 fue publicada en `23dd4d2`. La validación manual certificó Core 1
 FAIL, Pipeline 28 PASS / 0 FAIL, Host 9 PASS / 0 FAIL, TikFinity Adapter 10 PASS / 0
 FAIL, JSON Decoder 20 PASS / 0 FAIL y Checklist 10 PASS / 0 FAIL: 87 pruebas aprobadas
 y 0 fallos. El probe manual alcanzó 7/7 eventos con 119 frames conocidos, 1 desconocido
-(`config`), 0 inválidos, 0 errores de transporte y 0 frames binarios. La Fase 4D.1
-añade localmente la conversión y decisión familiar Follow; sus pruebas nuevas no fueron
-compiladas ni ejecutadas por el agente.
+(`config`), 0 inválidos, 0 errores de transporte y 0 frames binarios. La Fase 4D.1 fue
+publicada en `c0bf886` y compilada por el propietario; no se registraron resultados
+exactos de sus runners. La Fase 4D.2 completa localmente el Pipeline Follow, sin
+compilación ni ejecución de pruebas por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -300,9 +303,9 @@ converter, no responsabilidad del helper.
 
 `FTSFollowPayload` posee un snapshot completo de `FTSFollowInput` y
 `FTSFollowFamily::Decide` produce siempre un candidato directo con `FamilyKind = Follow`,
-`Flow = Follow`, prioridad cero, sin override de TTL y sin protección especial. Esta
-fase termina en la decisión familiar: Follow aún no tiene repositorio, binding,
-coordinación, lifecycle, despacho ni integración con Host.
+`Flow = Follow`, prioridad cero, sin override de TTL y sin protección especial. En 4D.2,
+ese candidato ya recorre repositorio tipado, admisión, binding, dispatch, completion y
+lifecycle compartido con Chat. La integración con Host permanece pendiente.
 
 ```text
 Follow decoder          [implementado]
@@ -310,8 +313,12 @@ Follow decoded contract [implementado]
 Follow converter        [implementado en 4D.1]
 FTSFollowInput           [existente]
 Follow family            [implementada en 4D.1]
-Follow Pipeline          [pendiente 4D.2]
-Follow Host              [pendiente 4D.3]
+Follow repository        [implementado en 4D.2]
+Follow admission/binding [implementado en 4D.2]
+Follow dispatch          [implementado en 4D.2]
+Follow completion        [implementado en 4D.2]
+Lifecycle Chat/Follow    [generalizado en 4D.2]
+Follow Host              [siguiente fase 4D.3]
 ```
 
 ### Repositorios tipados de payloads
@@ -325,12 +332,12 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 - `Erase(Handle)`, que sólo tiene éxito una vez por entrada;
 - `Size()` y `Empty()`.
 
-`FTSChatPayloadRepository` es el alias tipado para `FTSChatPayload`. El repositorio no
-conoce identidades de emisión, flujos, familias semánticas, bindings, lifecycle events
-ni procesadores. El handle sólo identifica una entrada dentro de su propia instancia.
-El repositorio es la autoridad estable de sus handles: no puede copiarse, asignarse ni
-moverse. `FTSEventPipelineCoordinator` ya conecta la decisión de `FTSChatFamily` con
-este repositorio sin trasladarle responsabilidades de orquestación.
+`FTSChatPayloadRepository` y `FTSFollowPayloadRepository` son aliases tipados de
+instancias independientes. Ninguno conoce identidades de emisión, flujos, familias,
+bindings, lifecycle events ni procesadores. El handle sólo identifica una entrada de su
+instancia; Chat y Follow pueden asignar el mismo valor numérico porque `FamilyKind`
+enruta el repositorio correcto. Ambos conservan autoridad exclusiva y no pueden copiarse
+ni moverse.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
 condición que sólo existe desde la perspectiva de la coordinación externa durante este
@@ -367,16 +374,17 @@ los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa par
 el binding Chat después de una admisión aceptada. Como autoridad estable de los bindings
 por `EmissionId`, no puede copiarse, asignarse ni moverse.
 
-### Coordinador de admisión Chat
+### Coordinador de admisión Chat y Follow
 
-`FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, el repositorio
-Chat y el registro de bindings. Es no copiable y no movible, y no expone referencias
-mutables a ninguna autoridad.
+`FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, los
+repositorios Chat/Follow y el registro de bindings. Es no copiable y no movible, y no
+expone referencias mutables a ninguna autoridad.
 
-`SubmitChat` implementa este orden:
+`SubmitChat` y `SubmitFollow` conservan este orden mediante una guarda provisional
+templada:
 
 ```text
-FTSChatFamily::Decide
+familia tipada::Decide
 → insertar payload provisional con guarda RAII
 → Core.Enqueue
 → rechazo: procesar lifecycle y eliminar payload provisional
@@ -391,37 +399,35 @@ repositorio, rechazo del core y aceptación. `FTSPipelineAdmissionResult::Enqueu
 sólo contiene valor si el coordinador llegó a llamar al core.
 
 Ante aceptación, el payload permanece en la misma entrada y el binding existe antes de
-que `SubmitChat` exponga un posible `AutoPumpOutcome`. Un fallo posterior se trata como
+exponer un posible `AutoPumpOutcome`. Un fallo posterior se trata como
 invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
 
-El handler privado de lifecycle de `Enqueue` soporta `ExpiredDiscard`,
-`ExpiredConsolidate` y `Evicted`. Copia primero el binding fuera de `Visit`, valida
-familia, flujo y estado `Bound`, transiciona a `TerminalPendingHandling` y elimina
-payload y binding. Para Chat, `ExpiredConsolidate` sólo libera el payload. Esta ruta aún
-no tiene cobertura por expiración porque no existe otra operación coordinada que pueda
-producirla de forma controlada.
+El handler privado de lifecycle acepta tandas mixtas Chat/Follow. Valida primero toda la
+tanda, incluida la pareja familia/flujo y la existencia del payload en su repositorio;
+después aplica en orden `TerminalPendingHandling`, borrado tipado y borrado del binding.
+Una familia todavía no integrada produce `std::logic_error`.
 
-La inspección pública permite visitar bindings y payloads Chat mediante `EmissionId`,
-además de consultar sus conteos, sin exponer ownership ni referencias mutables.
+La inspección pública permite visitar bindings y payloads Chat/Follow mediante
+`EmissionId`, además de consultar sus conteos, sin exponer ownership ni referencias
+mutables.
 
-### Despacho autorizado de Chat
+### Despacho autorizado de Chat y Follow
 
 El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
-`PendingReadyEmission`. Esta copia no replica el estado `InFlight` autoritativo del core:
-es únicamente una notificación de despacho pendiente, escrita después de observar un
-`EmissionReady` obtenido directamente de una llamada propia al core.
+`PendingReadyEmission`, compartida por Chat y Follow porque el core sólo posee un
+`InFlight`. Es una notificación de despacho pendiente, no una réplica del estado
+autoritativo.
 
 `CaptureCorePumpOutcome` ignora `NotRequested`, `QueueEmpty` y `Busy` sin eliminar una
-notificación previa. Para `EmissionReady`, valida identidad, flujo, binding Chat y estado
-`Bound`; nunca sobrescribe silenciosamente otro ready pendiente. El
+notificación previa. Para `EmissionReady`, valida identidad, binding, pareja
+familia/flujo soportada y estado `Bound`; nunca sobrescribe otro ready pendiente. El
 `AutoPumpOutcome` que permanece dentro de `FTSEnqueueResult` es diagnóstico y no autoriza
 un despacho creado por código externo.
 
-`BeginChatProcessing()` no recibe outcome, envelope ni `EmissionId`. Consume sólo la
-notificación interna, copia fuera de `Visit` el binding y el payload, y construye un
-`FTSChatProcessingDispatch` propietario con envelope y payload completos. Sólo después
-de que `FTSChatDispatchResult` y su `std::optional` existen completamente transiciona el
-binding `Bound → Processing` y consume el ready.
+`BeginChatProcessing()` y `BeginFollowProcessing()` sólo autorizan su propia familia. Si
+el ready pertenece a la otra, devuelven `NoEmissionReady` y preservan ready, binding y
+payload. `PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni
+autorizar procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
 
 Las comprobaciones estáticas exigen que despacho y resultado puedan moverse sin lanzar.
 Si cualquier copia o validación falla antes de la transición, binding, payload y ready
@@ -429,13 +435,12 @@ permanecen intactos y la operación puede reintentarse. Después de una transici
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
 almacenados mientras la emisión permanece `Processing`.
 
-### Finalización y lifecycle completo de Chat
+### Finalización y lifecycle completo de Chat y Follow
 
-`CompleteChatProcessing(EmissionId, ProcessingResult)` sólo acepta el binding Chat que
-ya está en `Processing` y conserva su payload. Valida identidad, familia, flujo, handle,
-estado y existencia del payload antes de solicitar una transición terminal al core.
-`Succeeded` llama exclusivamente a `Confirm`; `Cancelled` y `Failed` llaman a
-`CancelInFlight`. En este MVP, `Failed` es terminal y no implica retry.
+`CompleteChatProcessing` y `CompleteFollowProcessing` conservan wrappers públicos
+tipados sobre un helper común. Validan identidad, familia, flujo, handle, estado y
+payload antes de solicitar una transición terminal al core. `Succeeded` llama a
+`Confirm`; `Cancelled` y `Failed` llaman a `CancelInFlight`, sin retry implícito.
 
 El resultado portable conserva el `ETSProcessingResult` comunicado por el procesador y
 expone exactamente uno de los resultados del core: `ConfirmResult` para `Succeeded` o
@@ -450,7 +455,7 @@ captura el posible siguiente `EmissionReady` del Auto Pump. Cancel no ejecuta Au
 el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()`,
 `ProcessDueExpirations()` y `GetNextWakeTime()` se exponen sin entregar una referencia
 al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
-Chat de la misma forma; la consolidación semántica continúa fuera de alcance.
+de su repositorio tipado; la consolidación semántica continúa fuera de alcance.
 
 ### Host portable de ejecución Chat
 
@@ -722,8 +727,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat y Follow, y
-  coordinador Chat de admisión, despacho y finalización; publica `Pipeline/Public` y
-  enlaza públicamente sólo con Core.
+  coordinador Chat/Follow de admisión, despacho y finalización; publica
+  `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe y ciclo propietario de Chat;
   publica `Host/Public`, enlaza públicamente con Pipeline y privadamente con
   `Threads::Threads`.
@@ -802,9 +807,10 @@ En `6f71b20`, los resultados manuales fueron Core 10 PASS / 0 FAIL, Pipeline 28 
 con 10 PASS / 0 FAIL y añade localmente siete casos Follow: conversión completa,
 defaults, evento no Follow, envelope/data/user inválidos, identidad, límites numéricos e
 integración decoder → variante → converter. `Tests/TikStudioEventPipelineTests.cpp`
-añade localmente dos casos para el candidato Follow y su snapshot propietario. Estos
-nueve casos nuevos no fueron compilados ni ejecutados por el agente; al ejecutarlos, los
-runners contendrán respectivamente 17 y 30 casos.
+conserva los 30 casos disponibles en 4D.1 y añade localmente 12 escenarios de admisión,
+ready global, dispatch, completion, expiración y lifecycle mixto Follow. Los cambios de
+4D.2 no fueron compilados ni ejecutados por el agente; el runner Pipeline contiene ahora
+42 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1195,16 +1201,30 @@ runners contendrán respectivamente 17 y 30 casos.
   numéricos antes de construir el snapshot; Chat conserva comportamiento y API.
 - Añade `FTSFollowPayload` propietario y `FTSFollowFamily`, que produce el candidato
   directo `FamilyKind = Follow` y `Flow = Follow` con defaults de admisión.
-- Añade siete casos al runner del adapter y dos al runner del Pipeline; no fueron
-  compilados ni ejecutados por el agente.
+- Añade siete casos al runner del adapter y dos al runner del Pipeline.
 - No añade repositorio, coordinador, bindings, lifecycle, procesamiento ni Host Follow.
-- Implementación local sin commit; commit recomendado:
-  `feat(follow): add conversion and family decision`.
+- Fue publicada en `c0bf886` y compilada por el propietario; no se registraron resultados
+  exactos de los runners.
+- Commit `c0bf886` — `feat(follow): add conversion and family decision`.
+
+### Fase 4D.2 — Follow: Pipeline completo y lifecycle
+
+- Añade repositorio tipado Follow, aliases comunes de dispatch/completion y API pública
+  de admisión, inspección, despacho y finalización Follow.
+- Conserva una sola notificación ready global y permite inspeccionar su familia sin
+  consumirla; un Begin de otra familia preserva todas las autoridades.
+- Generaliza guarda provisional, admisión, dispatch, completion y lifecycle únicamente
+  mediante templates y helpers privados sobre repositorios tipados separados.
+- El lifecycle valida tandas mixtas completas antes de aplicar en orden la transición y
+  limpieza en el repositorio seleccionado por `FamilyKind`.
+- Añade doce escenarios Pipeline; no fueron compilados ni ejecutados por el agente.
+- No modifica Core, Host, Adapter, probe ni CMake. Implementación local sin commit;
+  commit recomendado: `feat(follow): complete pipeline lifecycle`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `23dd4d2`.
+  `c0bf886`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1220,11 +1240,9 @@ runners contendrán respectivamente 17 y 30 casos.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El vertical slice portable interno de Chat, el Host portable, la conversión TikFinity
-  Chat y la Fase 4C.3 están publicados. Follow llega localmente hasta converter y decisión
-  familiar en 4D.1.
-- La siguiente fase prevista es 4D.2: repositorio, coordinación y lifecycle completo de
-  Follow.
+- El vertical slice portable interno de Chat y la Fase 4D.1 están publicados. Follow
+  llega localmente hasta Pipeline completo y lifecycle en 4D.2.
+- La siguiente fase prevista es 4D.3: Host y certificación vertical Follow.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión Adapter → Host, familias, repositorios, bindings,

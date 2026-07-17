@@ -1,10 +1,6 @@
 #pragma once
 
 #include "EventPipeline/Payloads/TSChatPayload.h"
-#include "EventQueueSystem/TSEventQueueSystemTypes.h"
+#include "EventPipeline/Processing/TSProcessingDispatch.h"
 
-struct FTSChatProcessingDispatch
-{
-    FTSEmissionEnvelope Emission{};
-    FTSChatPayload Payload{};
-};
+using FTSChatProcessingDispatch = TTSProcessingDispatch<FTSChatPayload>;
