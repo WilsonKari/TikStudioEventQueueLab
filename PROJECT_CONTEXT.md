@@ -2,8 +2,8 @@
 
 Última actualización: 2026-07-16.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `6f71b20`
-(`feat(host): add portable chat execution host`). Los cambios de la Fase 4C.2
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `6f8c84a`
+(`feat(tikfinity): add chat conversion boundary`). Los cambios de la Fase 4C.3
 permanecen locales y sin commit.
 
 ## 1. Objetivo general
@@ -61,18 +61,21 @@ TikStudioEventCore
 
 El Pipeline no incluye ni enlaza el Host. El Core no incluye ni enlaza Pipeline o Host.
 
-La frontera TikFinity Chat queda separada del transporte y de la ejecución:
+La frontera TikFinity queda separada del transporte y de la ejecución:
 
 ```text
-texto JSON / backend concreto       [futuro]
+frame JSON TikFinity                         [adaptador]
         ↓
-FTSTikFinityDecodedChatMessage      [adaptador]
+decoder tipado de siete eventos              [adaptador]
         ↓
-FTSTikFinityChatConverter           [adaptador]
+FTSTikFinityMappedEvent                      [sólo frontera TikFinity]
         ↓
-FTSChatInput                        [portable]
+Chat → FTSTikFinityChatConverter             [implementado]
+otros seis → converters tipados              [pendientes]
         ↓
-composición externa → Host.PostChat [futuro]
+FTS*Input portable                            [Chat implementado]
+        ↓
+composición externa → Event Host             [futuro]
 ```
 
 El adaptador todavía no depende de Host o Pipeline y no existe conexión entre ambos.
@@ -167,9 +170,12 @@ texto JSON TikFinity                                [futuro 4C.3]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
 → Host devuelve como máximo un despacho propietario     [implementado en Host]
+→ decoder JSON valida siete eventos TikFinity            [implementado en Adapter]
+→ formatter y checklist 0/7 a 7/7                       [implementados]
+→ probe WebSocket manual y opcional                      [implementado; no producción]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ decoder JSON TikFinity Chat                         [siguiente fase 4C.3]
-→ cliente WebSocket TikFinity                         [fase posterior 4C.4]
+→ converters de los otros seis eventos TikFinity         [siguiente fase 4C.4]
+→ puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
 El MVP del core quedó compilado correctamente en 4B.1 y su runner portable terminó con
@@ -184,9 +190,11 @@ con 10 PASS y 0 FAIL, y Pipeline con 18 PASS y 0 FAIL. La Fase 4B.8 fue publicad
 `2bce321`: Core terminó con 10 PASS y 0 FAIL, y Pipeline con 28 PASS y 0 FAIL. Con ello
 queda completo el vertical slice portable interno de Chat. La Fase 4C.1 añade
 la capa Host y fue publicada en `6f71b20`; los resultados manuales fueron Core
-10 PASS / 0 FAIL, Pipeline 28 PASS / 0 FAIL y Host 9 PASS / 0 FAIL. La Fase 4C.2 añade
-localmente los contratos decodificados y la conversión determinista TikFinity Chat; sus
-pruebas todavía no fueron compiladas ni ejecutadas por el agente.
+10 PASS / 0 FAIL, Pipeline 28 PASS / 0 FAIL y Host 9 PASS / 0 FAIL. La Fase 4C.2 fue
+publicada en `6f8c84a`; sus resultados manuales fueron Core 10 PASS / 0 FAIL,
+Pipeline 28 PASS / 0 FAIL, Host 9 PASS / 0 FAIL y TikFinity Adapter 10 PASS / 0 FAIL.
+La Fase 4C.3 añade localmente el decoder JSON, formatter, checklist, dos runners y probe
+manual opcional; estos cambios todavía no fueron compilados ni ejecutados por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -205,8 +213,35 @@ sin trim, inferencias, deduplicación ni validación de red.
 
 Los rechazos normales se comunican mediante `ETSTikFinityChatConversionStatus`; sólo
 `Converted` contiene `Input`. El convertidor termina al producir `FTSChatInput`: no
-conoce Host, Pipeline operativo, cola, scheduling ni lifecycle. Tampoco existe todavía
-parser JSON, biblioteca JSON, WebSocket o conexión Adapter → Host.
+conoce Host, Pipeline operativo, cola, scheduling ni lifecycle. El decoder JSON nuevo
+lo alimenta sin crear una conexión Adapter → Host.
+
+### Decoder y checklist TikFinity de siete eventos
+
+`TikFinityPlugin`, en el commit autoritativo
+`d6af0eb9c6f329f314319e7ed759eea31cc90ccb`, fija los nombres, claves, tipos y rutas
+que reproduce el adaptador portable. La unión cerrada `FTSTikFinityMappedEvent` contiene
+exclusivamente `chat`, `gift`, `like`, `follow`, `share`, `roomUser` y `member`; pertenece
+al adaptador y nunca entra al Host, Pipeline, repositorios o Core.
+
+`FTSTikFinityJsonEventDecoder` valida el envelope y todos los campos presentes. Los
+opcionales ausentes permanecen como `nullopt`; strings, booleanos, enteros, arrays y
+objetos anidados exigen su tipo exacto. Los seis eventos basados en usuario común leen
+los campos directamente desde `data`; `roomUser` conserva la estructura distinta
+`data.topViewers[].user`. El decoder produce directamente el contrato Chat que ya
+consume `FTSTikFinityChatConverter`; todavía no existen converters para las otras seis
+familias.
+
+`FTSTikFinityMappedEventFormatter` genera una representación estable para diagnóstico.
+`FTSTikFinitySevenEventChecklist` cuenta frames válidos e inválidos por evento y mantiene
+progreso monotónico de 0/7 a 7/7. Dos runners nuevos cubren fixtures JSON y checklist sin
+abrir sockets.
+
+`TikStudioTikFinitySevenEventProbe` es un ejecutable manual opcional, desactivado por
+default. IXWebSocket sólo se descarga al habilitarlo y su `main` delega reglas JSON,
+formato y cobertura a las piezas reutilizables. No está conectado al Event Host, no
+admite eventos en la cola y no es un cliente portable de producción. La integración
+definitiva de Unreal continuará usando `TikFinityPlugin` mediante un puente Blueprint/C++.
 
 ### Pipeline portable
 
@@ -657,8 +692,9 @@ Targets explícitos, sin `file(GLOB ...)`:
   publica `Host/Public`, enlaza públicamente con Pipeline y privadamente con
   `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
-- `TikStudioTikFinityAdapter` (STATIC): publica contratos/conversor Chat y enlaza sólo
-  con Core. El cliente de transporte sigue siendo placeholder, sin WebSocket ni JSON.
+- `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
+  checklist y conversor Chat; enlaza públicamente sólo con Core y privadamente con
+  `nlohmann_json::nlohmann_json`. El cliente de transporte sigue siendo placeholder.
 - `TikStudioEventConsole` (executable): enlaza los tres targets; actualmente sólo
   imprime `TikStudioEventQueueLab ready.`.
 - `TikStudioEventCoreTests` (executable): enlaza únicamente con Core y está registrado
@@ -669,6 +705,11 @@ Targets explícitos, sin `file(GLOB ...)`:
   en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
+- `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
+  (executables): enlazan únicamente con el adaptador y se registran en CTest.
+- `TikStudioTikFinitySevenEventProbe` (executable opcional): sólo existe con
+  `TIKSTUDIO_BUILD_TIKFINITY_PROBE=ON` y enlaza Adapter, IXWebSocket y Threads. No se
+  registra como prueba.
 
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
@@ -1072,12 +1113,36 @@ ejecutado por el agente.
 - Preserva comentario, orden y duplicados sin trim, inferencias o conversiones parciales.
 - Actualizó el adaptador manteniendo sólo su enlace público con Core; no depende de
   Pipeline, Host o Threads.
-- Añadió un cuarto runner con diez escenarios. No fue compilado ni ejecutado por el
-  agente.
-- El cliente de transporte continúa como placeholder; no existe parser JSON, WebSocket
-  operativo ni conexión Adapter → Host.
-- Cambios locales actuales; commit sugerido:
+- Añadió un cuarto runner con diez escenarios. La validación manual terminó con Core
+  10 PASS / 0 FAIL, Pipeline 28 PASS / 0 FAIL, Host 9 PASS / 0 FAIL y TikFinity
+  Adapter 10 PASS / 0 FAIL.
+- El cliente de transporte continúa como placeholder y no existe conexión Adapter →
+  Host.
+- Commit `6f8c84a` —
   `feat(tikfinity): add chat conversion boundary`.
+
+### Fase 4C.3 — Decoder JSON y checklist de siete eventos TikFinity
+
+- Usa como referencia autoritativa el mapeo de `TikFinityPlugin` en
+  `d6af0eb9c6f329f314319e7ed759eea31cc90ccb`.
+- Añade contratos decodificados y una variante cerrada del adaptador para `chat`,
+  `gift`, `like`, `follow`, `share`, `roomUser` y `member`.
+- Añade un decoder determinista que valida envelope, tipos exactos, enteros `int64_t`,
+  arrays y objetos anidados; los campos opcionales ausentes permanecen opcionales.
+- Reutiliza directamente los contratos y el converter Chat de 4C.2. No añade converters
+  para las otras seis familias.
+- Añade un formatter estable y un checklist reutilizable con conteos por evento y
+  progreso monotónico de 0/7 a 7/7.
+- Añade dos runners automáticos sin sockets: uno con veinte áreas de decoder/formatter
+  e integración Chat y otro con diez escenarios de checklist.
+- Añade un probe WebSocket manual opcional. El ejecutable no duplica reglas JSON, no se
+  registra en CTest y no se conecta al Host, Pipeline o Core operativo.
+- Fija `nlohmann/json` v3.12.0 como dependencia privada del adapter e IXWebSocket v12.0.1
+  exclusivamente detrás de `TIKSTUDIO_BUILD_TIKFINITY_PROBE=ON`.
+- El cliente portable existente sigue siendo placeholder; el probe no es producción ni
+  sustituye `TikFinityPlugin` en UE5.
+- Implementación local no compilada ni ejecutada; commit recomendado:
+  `feat(tikfinity): decode and validate seven mapped events`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
@@ -1098,10 +1163,12 @@ ejecutado por el agente.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El vertical slice portable interno de Chat y el Host portable están publicados. La
-  conversión TikFinity Chat está implementada localmente en 4C.2.
-- La siguiente fase prevista es 4C.3: decoder JSON TikFinity Chat basado en mensajes
-  reales capturados, todavía sin WebSocket. Después se prevé 4C.4 para el cliente
-  WebSocket TikFinity.
-- No añadir automáticamente JSON, red, conexión Adapter → Host, Simulator, Console,
-  procesadores concretos, efectos, otras familias ni UE5 sin especificación separada.
+- El vertical slice portable interno de Chat, el Host portable y la conversión TikFinity
+  Chat están publicados. El decoder de siete eventos, formatter, checklist y probe
+  manual opcional están implementados localmente en 4C.3.
+- La siguiente fase prevista es 4C.4: converters TikFinity para Gift, Like, Member,
+  RoomUser, Share y Follow.
+- La migración UE5 es trabajo futuro separado:
+  `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
+- No añadir automáticamente conexión Adapter → Host, familias, repositorios, bindings,
+  Simulator, Console, procesadores concretos, efectos ni UE5 sin especificación separada.
