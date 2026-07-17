@@ -2,9 +2,10 @@
 
 Última actualización: 2026-07-17.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD
-`c0bf886` (`feat(follow): add conversion and family decision`). Los cambios de la Fase
-4D.2 permanecen locales y sin commit.
+Estado de referencia: rama `main`, partiendo de HEAD `dc4f574`
+(`feat(follow): complete pipeline lifecycle`).
+
+Los cambios de la Fase 4D.2.1 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -208,8 +209,11 @@ FAIL, JSON Decoder 20 PASS / 0 FAIL y Checklist 10 PASS / 0 FAIL: 87 pruebas apr
 y 0 fallos. El probe manual alcanzó 7/7 eventos con 119 frames conocidos, 1 desconocido
 (`config`), 0 inválidos, 0 errores de transporte y 0 frames binarios. La Fase 4D.1 fue
 publicada en `c0bf886` y compilada por el propietario; no se registraron resultados
-exactos de sus runners. La Fase 4D.2 completa localmente el Pipeline Follow, sin
-compilación ni ejecución de pruebas por el agente.
+exactos de sus runners. La Fase 4D.2 fue publicada en `dc4f574`. La validación manual
+certificó Core 10 PASS / 0 FAIL, Pipeline 42 PASS / 0 FAIL, Host 9 PASS / 0 FAIL,
+Adapter 17 PASS / 0 FAIL, JSON Decoder 20 PASS / 0 FAIL y Checklist 10 PASS / 0 FAIL:
+108 pruebas aprobadas y 0 fallos. El probe WebSocket no fue repetido después de 4D.2;
+esa fase no modificó decoder, transporte ni probe.
 
 ## 4. Contratos públicos actuales
 
@@ -752,6 +756,23 @@ Targets explícitos, sin `file(GLOB ...)`:
   `TIKSTUDIO_BUILD_TIKFINITY_PROBE=ON` y enlaza Adapter, IXWebSocket y Threads. No se
   registra como prueba.
 
+La Fase 4D.2.1 organiza las suites por responsabilidad sin cambiar los seis ejecutables
+automáticos, sus enlaces ni sus registros CTest. `TSTestHarness.h` conserva el contrato
+común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
+global ni dependencia del orden de link. Los runners Pipeline, Host y Adapter contienen
+prácticamente sólo `main` y registran respectivamente 42, 9 y 17 casos.
+
+La estructura familiar queda así:
+
+```text
+Tests/Chat/  → Pipeline, Host y Adapter Chat
+Tests/Follow/ → Pipeline y Adapter Follow
+Tests/Gift|Like|Member|RoomUser|Share/ → sólo .gitkeep
+Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
+```
+
+Core, JSON Decoder y Checklist permanecen en sus runners transversales sin dividirse.
+
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
 prueba falla. Usa un `FTSNowProvider` controlado, sin tiempo real, sleeps ni threads.
@@ -803,14 +824,13 @@ procesamiento, rechazo del hilo incorrecto y Pump explícito con Auto Pump desac
 En `6f71b20`, los resultados manuales fueron Core 10 PASS / 0 FAIL, Pipeline 28 PASS /
 0 FAIL y Host 9 PASS / 0 FAIL.
 
-`Tests/TikStudioTikFinityAdapterTests.cpp` conserva los diez escenarios Chat publicados
-con 10 PASS / 0 FAIL y añade localmente siete casos Follow: conversión completa,
-defaults, evento no Follow, envelope/data/user inválidos, identidad, límites numéricos e
-integración decoder → variante → converter. `Tests/TikStudioEventPipelineTests.cpp`
-conserva los 30 casos disponibles en 4D.1 y añade localmente 12 escenarios de admisión,
-ready global, dispatch, completion, expiración y lifecycle mixto Follow. Los cambios de
-4D.2 no fueron compilados ni ejecutados por el agente; el runner Pipeline contiene ahora
-42 casos.
+La cobertura publicada de 4D.2 conserva diez escenarios Adapter Chat y añade siete
+Follow: conversión completa, defaults, evento no Follow, envelope/data/user inválidos,
+identidad, límites numéricos e integración decoder → variante → converter. Pipeline
+conserva los 30 casos previos y añade 12 escenarios de admisión, ready global, dispatch,
+completion, expiración y lifecycle mixto Follow. La validación manual de `dc4f574`
+terminó con Core 10, Pipeline 42, Host 9, Adapter 17, JSON Decoder 20 y Checklist 10
+casos aprobados, sin fallos: 108 PASS / 0 FAIL.
 
 ## 10. Historial de tareas y commits
 
@@ -1217,14 +1237,28 @@ ready global, dispatch, completion, expiración y lifecycle mixto Follow. Los ca
   mediante templates y helpers privados sobre repositorios tipados separados.
 - El lifecycle valida tandas mixtas completas antes de aplicar en orden la transición y
   limpieza en el repositorio seleccionado por `FamilyKind`.
-- Añade doce escenarios Pipeline; no fueron compilados ni ejecutados por el agente.
-- No modifica Core, Host, Adapter, probe ni CMake. Implementación local sin commit;
-  commit recomendado: `feat(follow): complete pipeline lifecycle`.
+- Añade doce escenarios Pipeline.
+- No modifica Core, Host, Adapter, probe ni CMake.
+- Fue publicada en `dc4f574`. La validación manual totalizó 108 PASS / 0 FAIL: Core 10,
+  Pipeline 42, Host 9, Adapter 17, JSON Decoder 20 y Checklist 10.
+- El probe WebSocket no fue repetido; decoder, transporte y probe permanecieron intactos.
+- Commit `dc4f574` — `feat(follow): complete pipeline lifecycle`.
+
+### Fase 4D.2.1 — Modularización de tests por familia
+
+- Añade un harness común, declaraciones explícitas de suites y soporte compartido del
+  Pipeline sin autorregistro global.
+- Separa los cuerpos existentes en suites Chat, Follow e infraestructura, conservando
+  los 42 casos Pipeline, 9 Host y 17 Adapter con los mismos nombres y orden.
+- Crea los siete directorios familiares; Gift, Like, Member, RoomUser y Share sólo
+  contienen `.gitkeep`.
+- No cambia producción, lógica de pruebas, ejecutables, enlaces, CTest ni resultados
+  esperados. Cambios locales sin commit.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `c0bf886`.
+  `dc4f574`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1240,8 +1274,8 @@ ready global, dispatch, completion, expiración y lifecycle mixto Follow. Los ca
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El vertical slice portable interno de Chat y la Fase 4D.1 están publicados. Follow
-  llega localmente hasta Pipeline completo y lifecycle en 4D.2.
+- El vertical slice portable interno de Chat y el Pipeline completo de Follow están
+  publicados. La reorganización 4D.2.1 permanece local y sin commit.
 - La siguiente fase prevista es 4D.3: Host y certificación vertical Follow.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.

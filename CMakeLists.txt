@@ -154,6 +154,14 @@ add_test(
 
 add_executable(TikStudioEventPipelineTests
   Tests/TikStudioEventPipelineTests.cpp
+  Tests/TSPipelineInfrastructureTests.cpp
+  Tests/Chat/TSChatPipelineTests.cpp
+  Tests/Follow/TSFollowPipelineTests.cpp
+)
+
+target_include_directories(TikStudioEventPipelineTests
+  PRIVATE
+    Tests
 )
 
 target_link_libraries(TikStudioEventPipelineTests
@@ -168,6 +176,12 @@ add_test(
 
 add_executable(TikStudioEventHostTests
   Tests/TikStudioEventHostTests.cpp
+  Tests/Chat/TSChatHostTests.cpp
+)
+
+target_include_directories(TikStudioEventHostTests
+  PRIVATE
+    Tests
 )
 
 target_link_libraries(TikStudioEventHostTests
@@ -182,6 +196,13 @@ add_test(
 
 add_executable(TikStudioTikFinityAdapterTests
   Tests/TikStudioTikFinityAdapterTests.cpp
+  Tests/Chat/TSTikFinityChatAdapterTests.cpp
+  Tests/Follow/TSTikFinityFollowAdapterTests.cpp
+)
+
+target_include_directories(TikStudioTikFinityAdapterTests
+  PRIVATE
+    Tests
 )
 
 target_link_libraries(TikStudioTikFinityAdapterTests
