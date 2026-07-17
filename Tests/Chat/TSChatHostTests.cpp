@@ -14,12 +14,12 @@
 static_assert(!std::is_copy_constructible_v<FTSChatExecutionHost>);
 static_assert(!std::is_copy_assignable_v<FTSChatExecutionHost>);
 static_assert(!std::is_move_constructible_v<FTSChatExecutionHost>);
+static_assert(!std::is_move_assignable_v<FTSChatExecutionHost>);
 
 namespace
 {
-    using TikStudio::Tests::Require;
-{
     using namespace std::chrono_literals;
+    using TikStudio::Tests::Require;
 
     struct FControlledClock
     {
@@ -136,7 +136,7 @@ namespace
     [[nodiscard]]
     FTSEventQueueSettings MakeChatSettings(
         std::uint32_t MaxSlots = 10,
-        std::chrono::milliseconds TTL = 8s,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{8000},
         bool bPumpAfterEnqueue = true,
         bool bPumpAfterConfirm = true
     )

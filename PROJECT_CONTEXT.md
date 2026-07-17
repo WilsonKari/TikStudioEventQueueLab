@@ -2,10 +2,11 @@
 
 Última actualización: 2026-07-17.
 
-Estado de referencia: rama `main`, partiendo de HEAD `dc4f574`
-(`feat(follow): complete pipeline lifecycle`).
+Estado de referencia:
+rama `main`, partiendo de HEAD `0f57a675`
+(`Simplify event queue lab implementation`).
 
-Los cambios de la Fase 4D.2.1 permanecen locales y sin commit.
+Las correcciones de compilación de la Fase 4D.2.1 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -772,6 +773,11 @@ Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
 
 Core, JSON Decoder y Checklist permanecen en sus runners transversales sin dividirse.
+La organización fue publicada en `0f57a675`. La primera compilación posterior detectó
+la pérdida del ámbito de `std::chrono_literals` en las suites Pipeline y una llave
+adicional en `TSChatHostTests.cpp`. La corrección local restaura únicamente esos ámbitos
+y la comprobación estática omitida, sin cambiar casos ni comportamiento; la validación
+final continúa pendiente del propietario.
 
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
@@ -1253,12 +1259,18 @@ casos aprobados, sin fallos: 108 PASS / 0 FAIL.
 - Crea los siete directorios familiares; Gift, Like, Member, RoomUser y Share sólo
   contienen `.gitkeep`.
 - No cambia producción, lógica de pruebas, ejecutables, enlaces, CTest ni resultados
-  esperados. Cambios locales sin commit.
+  esperados.
+- Fue publicada en `0f57a675` con el nombre accidental
+  `Simplify event queue lab implementation`, que se conserva sin reescritura.
+- La primera compilación detectó que las suites Pipeline perdieron el ámbito de
+  `chrono_literals` y que `TSChatHostTests.cpp` contenía una llave extra.
+- La corrección restaura los ámbitos y el `static_assert` omitido sin alterar los 108
+  casos esperados. Permanece local y pendiente de validación final por el propietario.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `dc4f574`.
+  `0f57a675`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1274,8 +1286,8 @@ casos aprobados, sin fallos: 108 PASS / 0 FAIL.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El vertical slice portable interno de Chat y el Pipeline completo de Follow están
-  publicados. La reorganización 4D.2.1 permanece local y sin commit.
+- El vertical slice portable interno de Chat, el Pipeline completo de Follow y la
+  organización 4D.2.1 están publicados. Su corrección de compilación permanece local.
 - La siguiente fase prevista es 4D.3: Host y certificación vertical Follow.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.

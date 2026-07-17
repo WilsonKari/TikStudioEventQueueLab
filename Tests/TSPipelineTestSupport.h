@@ -161,7 +161,7 @@ namespace TikStudio::Tests
     inline FTSEventQueueSettings MakeOperationalChatSettings(
         bool bPumpAfterEnqueue,
         bool bPumpAfterConfirm,
-        std::chrono::milliseconds TTL = 8s,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{8000},
         ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
     )
     {
@@ -195,7 +195,7 @@ namespace TikStudio::Tests
     inline FTSEventQueueSettings MakeOperationalFollowSettings(
         bool bPumpAfterEnqueue,
         bool bPumpAfterConfirm,
-        std::chrono::milliseconds TTL = 8s,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{8000},
         ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
     )
     {
