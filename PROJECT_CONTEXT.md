@@ -1,10 +1,11 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-16.
+Última actualización: 2026-07-17.
 
-Estado de referencia de esta actualización: rama `main`, partiendo de HEAD `6f8c84a`
-(`feat(tikfinity): add chat conversion boundary`). Los cambios de la Fase 4C.3
-permanecen locales y sin commit.
+Estado de referencia de esta actualización: rama `main`, partiendo de HEAD
+`23dd4d2fbf1cb54fa91c5cad9bc6f2a709bc5ed5`
+(`feat(tikfinity): decode and validate seven mapped events`). Los cambios de la Fase
+4D.1 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -71,9 +72,10 @@ decoder tipado de siete eventos              [adaptador]
 FTSTikFinityMappedEvent                      [sólo frontera TikFinity]
         ↓
 Chat → FTSTikFinityChatConverter             [implementado]
-otros seis → converters tipados              [pendientes]
+Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
+otros cinco → converters tipados             [pendientes]
         ↓
-FTS*Input portable                            [Chat implementado]
+FTS*Input portable                            [Chat y Follow implementados]
         ↓
 composición externa → Event Host             [futuro]
 ```
@@ -96,9 +98,9 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones todavía
-no los recibe, interpreta ni almacena. Chat ya dispone de una primera familia portable
-que convierte su input en un candidato tipado; Gift, Like, Member, RoomUser, Share y
-Follow continúan sin implementación semántica.
+no los recibe, interpreta ni almacena. Chat dispone del vertical slice interno completo.
+Follow ya convierte su input en un candidato tipado, mientras Gift, Like, Member,
+RoomUser y Share continúan sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -125,17 +127,19 @@ RoomUser → RoomUser | RoomUserMilestone | RoomUserTop1Change
 Share    → Share | ShareMilestone
 ```
 
-Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat ya
-produce su flujo directo; todavía no existe lógica para los flujos derivados ni para las
-otras seis familias. Los siete archivos de `Core/Private/EventQueueSystem/Events/` sólo
-incluyen el header central y no contienen implementación.
+Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat y
+Follow ya producen sus flujos directos; todavía no existe lógica para los flujos
+derivados ni para las otras cinco familias. Los siete archivos de
+`Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
+implementación.
 
 El recorrido previsto y el punto exacto alcanzado son:
 
 ```text
-texto JSON TikFinity                                [futuro 4C.3]
-→ decoder de transporte                             [no implementado]
-→ FTSTikFinityDecodedChatMessage                    [contrato listo]
+texto JSON TikFinity                                [implementado en Adapter]
+→ decoder tipado de siete eventos                   [implementado]
+→ FTSTikFinityMappedEvent                           [implementado]
+→ contratos decodificados Chat y Follow             [implementados]
 → FTSTikFinityChatConverter                         [implementado]
 → FTSChatInput portable                             [conversión implementada]
 → familia interpreta payload y elige flujo          [implementado sólo para Chat]
@@ -173,8 +177,11 @@ texto JSON TikFinity                                [futuro 4C.3]
 → decoder JSON valida siete eventos TikFinity            [implementado en Adapter]
 → formatter y checklist 0/7 a 7/7                       [implementados]
 → probe WebSocket manual y opcional                      [implementado; no producción]
+→ FTSTikFinityFollowConverter                             [implementado en 4D.1]
+→ FTSFollowInput portable                                 [conversión implementada]
+→ FTSFollowFamily produce candidato Flow Follow           [implementado en 4D.1]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ converters de los otros seis eventos TikFinity         [siguiente fase 4C.4]
+→ repositorio, coordinación y lifecycle Follow            [siguiente fase 4D.2]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -193,8 +200,13 @@ la capa Host y fue publicada en `6f71b20`; los resultados manuales fueron Core
 10 PASS / 0 FAIL, Pipeline 28 PASS / 0 FAIL y Host 9 PASS / 0 FAIL. La Fase 4C.2 fue
 publicada en `6f8c84a`; sus resultados manuales fueron Core 10 PASS / 0 FAIL,
 Pipeline 28 PASS / 0 FAIL, Host 9 PASS / 0 FAIL y TikFinity Adapter 10 PASS / 0 FAIL.
-La Fase 4C.3 añade localmente el decoder JSON, formatter, checklist, dos runners y probe
-manual opcional; estos cambios todavía no fueron compilados ni ejecutados por el agente.
+La Fase 4C.3 fue publicada en `23dd4d2`. La validación manual certificó Core 10 PASS / 0
+FAIL, Pipeline 28 PASS / 0 FAIL, Host 9 PASS / 0 FAIL, TikFinity Adapter 10 PASS / 0
+FAIL, JSON Decoder 20 PASS / 0 FAIL y Checklist 10 PASS / 0 FAIL: 87 pruebas aprobadas
+y 0 fallos. El probe manual alcanzó 7/7 eventos con 119 frames conocidos, 1 desconocido
+(`config`), 0 inválidos, 0 errores de transporte y 0 frames binarios. La Fase 4D.1
+añade localmente la conversión y decisión familiar Follow; sus pruebas nuevas no fueron
+compiladas ni ejecutadas por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -228,8 +240,8 @@ al adaptador y nunca entra al Host, Pipeline, repositorios o Core.
 opcionales ausentes permanecen como `nullopt`; strings, booleanos, enteros, arrays y
 objetos anidados exigen su tipo exacto. Los seis eventos basados en usuario común leen
 los campos directamente desde `data`; `roomUser` conserva la estructura distinta
-`data.topViewers[].user`. El decoder produce directamente el contrato Chat que ya
-consume `FTSTikFinityChatConverter`; todavía no existen converters para las otras seis
+`data.topViewers[].user`. El decoder produce los contratos decodificados que consumen
+los converters Chat y Follow; todavía no existen converters para las otras cinco
 familias.
 
 `FTSTikFinityMappedEventFormatter` genera una representación estable para diagnóstico.
@@ -277,6 +289,30 @@ repositorios, procesamiento ni coordinación.
 
 La familia sólo produce datos. No llama al core, no asigna `EmissionId`, no almacena el
 payload y no conoce repositorios, bindings ni procesadores.
+
+### Segunda familia semántica: Follow
+
+`FTSTikFinityFollowConverter` valida en orden envelope, nombre exacto `"follow"`, data,
+usuario, identidad y representación numérica. El helper privado común convierte el
+usuario decodificado a `FTSUserSnapshot`; Chat lo reutiliza sin cambiar su API, contenido,
+defaults ni precedencia de errores. La identidad continúa siendo precondición de cada
+converter, no responsabilidad del helper.
+
+`FTSFollowPayload` posee un snapshot completo de `FTSFollowInput` y
+`FTSFollowFamily::Decide` produce siempre un candidato directo con `FamilyKind = Follow`,
+`Flow = Follow`, prioridad cero, sin override de TTL y sin protección especial. Esta
+fase termina en la decisión familiar: Follow aún no tiene repositorio, binding,
+coordinación, lifecycle, despacho ni integración con Host.
+
+```text
+Follow decoder          [implementado]
+Follow decoded contract [implementado]
+Follow converter        [implementado en 4D.1]
+FTSFollowInput           [existente]
+Follow family            [implementada en 4D.1]
+Follow Pipeline          [pendiente 4D.2]
+Follow Host              [pendiente 4D.3]
+```
 
 ### Repositorios tipados de payloads
 
@@ -685,16 +721,16 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
-- `TikStudioEventPipeline` (STATIC): contratos portables, primera familia Chat y
-  coordinador de admisión, despacho y finalización; publica `Pipeline/Public` y enlaza
-  públicamente sólo con Core.
+- `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat y Follow, y
+  coordinador Chat de admisión, despacho y finalización; publica `Pipeline/Public` y
+  enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe y ciclo propietario de Chat;
   publica `Host/Public`, enlaza públicamente con Pipeline y privadamente con
   `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
-  checklist y conversor Chat; enlaza públicamente sólo con Core y privadamente con
-  `nlohmann_json::nlohmann_json`. El cliente de transporte sigue siendo placeholder.
+  checklist y converters Chat/Follow; enlaza públicamente sólo con Core y privadamente
+  con `nlohmann_json::nlohmann_json`. El cliente de transporte sigue siendo placeholder.
 - `TikStudioEventConsole` (executable): enlaza los tres targets; actualmente sólo
   imprime `TikStudioEventQueueLab ready.`.
 - `TikStudioEventCoreTests` (executable): enlaza únicamente con Core y está registrado
@@ -762,11 +798,13 @@ procesamiento, rechazo del hilo incorrecto y Pump explícito con Auto Pump desac
 En `6f71b20`, los resultados manuales fueron Core 10 PASS / 0 FAIL, Pipeline 28 PASS /
 0 FAIL y Host 9 PASS / 0 FAIL.
 
-`Tests/TikStudioTikFinityAdapterTests.cpp` añade localmente diez escenarios para
-conversión completa, defaults opcionales, eventos no Chat, envelope/data/user inválidos,
-identidad, Chat sólo con emotes, contenido vacío, emotes inválidos, límites numéricos y
-preservación de texto/duplicados. Este cuarto runner todavía no fue compilado ni
-ejecutado por el agente.
+`Tests/TikStudioTikFinityAdapterTests.cpp` conserva los diez escenarios Chat publicados
+con 10 PASS / 0 FAIL y añade localmente siete casos Follow: conversión completa,
+defaults, evento no Follow, envelope/data/user inválidos, identidad, límites numéricos e
+integración decoder → variante → converter. `Tests/TikStudioEventPipelineTests.cpp`
+añade localmente dos casos para el candidato Follow y su snapshot propietario. Estos
+nueve casos nuevos no fueron compilados ni ejecutados por el agente; al ejecutarlos, los
+runners contendrán respectivamente 17 y 30 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1141,13 +1179,32 @@ ejecutado por el agente.
   exclusivamente detrás de `TIKSTUDIO_BUILD_TIKFINITY_PROBE=ON`.
 - El cliente portable existente sigue siendo placeholder; el probe no es producción ni
   sustituye `TikFinityPlugin` en UE5.
-- Implementación local no compilada ni ejecutada; commit recomendado:
+- La validación manual terminó con Core 10 PASS / 0 FAIL, Pipeline 28 PASS / 0 FAIL,
+  Host 9 PASS / 0 FAIL, TikFinity Adapter 10 PASS / 0 FAIL, JSON Decoder 20 PASS / 0
+  FAIL y Checklist 10 PASS / 0 FAIL: 87 PASS / 0 FAIL en total.
+- El probe manual alcanzó cobertura 7/7 con 119 frames conocidos, 1 desconocido
+  (`config`), 0 inválidos, 0 errores de transporte y 0 frames binarios.
+- Commit `23dd4d2` —
   `feat(tikfinity): decode and validate seven mapped events`.
+
+### Fase 4D.1 — Follow: converter y decisión familiar
+
+- Añade contratos y converter TikFinity Follow sin estado, con estados explícitos y
+  validación ordenada antes de producir `FTSFollowInput`.
+- Extrae la normalización común de usuario a un helper privado que valida los cuatro
+  numéricos antes de construir el snapshot; Chat conserva comportamiento y API.
+- Añade `FTSFollowPayload` propietario y `FTSFollowFamily`, que produce el candidato
+  directo `FamilyKind = Follow` y `Flow = Follow` con defaults de admisión.
+- Añade siete casos al runner del adapter y dos al runner del Pipeline; no fueron
+  compilados ni ejecutados por el agente.
+- No añade repositorio, coordinador, bindings, lifecycle, procesamiento ni Host Follow.
+- Implementación local sin commit; commit recomendado:
+  `feat(follow): add conversion and family decision`.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `6f71b20`.
+  `23dd4d2`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1163,11 +1220,11 @@ ejecutado por el agente.
   del core portable.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
-- El vertical slice portable interno de Chat, el Host portable y la conversión TikFinity
-  Chat están publicados. El decoder de siete eventos, formatter, checklist y probe
-  manual opcional están implementados localmente en 4C.3.
-- La siguiente fase prevista es 4C.4: converters TikFinity para Gift, Like, Member,
-  RoomUser, Share y Follow.
+- El vertical slice portable interno de Chat, el Host portable, la conversión TikFinity
+  Chat y la Fase 4C.3 están publicados. Follow llega localmente hasta converter y decisión
+  familiar en 4D.1.
+- La siguiente fase prevista es 4D.2: repositorio, coordinación y lifecycle completo de
+  Follow.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión Adapter → Host, familias, repositorios, bindings,

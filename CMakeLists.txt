@@ -59,6 +59,7 @@ add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
   Pipeline/Private/EventPipeline/Coordinator/TSEventPipelineCoordinator.cpp
   Pipeline/Private/EventPipeline/Families/TSChatFamily.cpp
+  Pipeline/Private/EventPipeline/Families/TSFollowFamily.cpp
 )
 
 target_include_directories(TikStudioEventPipeline
@@ -104,6 +105,8 @@ target_link_libraries(TikStudioEventSimulator
 add_library(TikStudioTikFinityAdapter STATIC
   Adapters/TikFinity/TikStudioTikFinityClient.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityChatConverter.cpp
+  Adapters/TikFinity/Private/TikFinity/TSTikFinityDecodedUserConverter.cpp
+  Adapters/TikFinity/Private/TikFinity/TSTikFinityFollowConverter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityJsonEventDecoder.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityMappedEventFormatter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinitySevenEventChecklist.cpp
@@ -114,6 +117,7 @@ target_include_directories(TikStudioTikFinityAdapter
     Adapters/TikFinity/Public
   PRIVATE
     Adapters/TikFinity
+    Adapters/TikFinity/Private
 )
 
 target_link_libraries(TikStudioTikFinityAdapter

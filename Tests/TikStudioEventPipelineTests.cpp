@@ -1,6 +1,7 @@
 #include "EventPipeline/Bindings/TSEmissionBindingRegistry.h"
 #include "EventPipeline/Coordinator/TSEventPipelineCoordinator.h"
 #include "EventPipeline/Families/TSChatFamily.h"
+#include "EventPipeline/Families/TSFollowFamily.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 
 #include <chrono>
@@ -154,6 +155,16 @@ namespace
     }
 
     [[nodiscard]]
+    FTSFollowInput MakeCompleteFollowInput()
+    {
+        FTSFollowInput Input;
+        Input.User = MakeCompleteInput().User;
+        Input.User.UniqueId = "follow-user-42";
+        Input.User.Nickname = "Follow User";
+        return Input;
+    }
+
+    [[nodiscard]]
     FTSEventQueueSettings MakeChatSettings(
         bool bEnabled,
         std::uint32_t MaxSlots
@@ -280,6 +291,79 @@ namespace
             Input,
             Original,
             "Chat input after by-copy decision"
+        );
+    }
+
+    void TestFollowCandidateAndAdmissionDefaults()
+    {
+        FTSFollowInput Input;
+        Input.User.UniqueId = "follow-user";
+
+        const TTSFamilyDecision<FTSFollowPayload> Decision =
+            FTSFollowFamily::Decide(Input);
+
+        Require(
+            Decision.has_value(),
+            "Follow must produce an admission candidate"
+        );
+
+        const TTSAdmissionCandidate<FTSFollowPayload>& Candidate = *Decision;
+        Require(
+            Candidate.FamilyKind == ETSEventFamilyKind::Follow,
+            "Follow candidate FamilyKind mismatch"
+        );
+        Require(
+            Candidate.EnqueueRequest.Flow == ETSEventFlow::Follow,
+            "Follow candidate Flow mismatch"
+        );
+        Require(
+            Candidate.EnqueueRequest.PriorityAdjustment == 0,
+            "Follow candidate must not adjust priority"
+        );
+        Require(
+            !Candidate.EnqueueRequest.bOverrideTTL,
+            "Follow candidate must not override TTL"
+        );
+        Require(
+            Candidate.EnqueueRequest.TTLOverride.count() == 0,
+            "Follow candidate TTLOverride default mismatch"
+        );
+        Require(
+            !Candidate.EnqueueRequest.bProtectedFromEviction,
+            "Follow candidate must not request special eviction protection"
+        );
+    }
+
+    void TestFollowPayloadSnapshotAndInputPreservation()
+    {
+        FTSFollowInput Input = MakeCompleteFollowInput();
+        const FTSFollowInput Original = Input;
+
+        const TTSFamilyDecision<FTSFollowPayload> Decision =
+            FTSFollowFamily::Decide(Input);
+
+        Require(Decision.has_value(), "Follow snapshot must produce a candidate");
+        RequireUserEqual(
+            Input.User,
+            Original.User,
+            "Follow input after by-copy decision"
+        );
+
+        Input.User.UniqueId = "mutated-follow-user";
+        Input.User.Nickname = "Mutated Follow User";
+        Input.User.ProfilePictureUrl.clear();
+        Input.User.FollowRole = 0;
+        Input.User.bIsModerator = false;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = false;
+        Input.User.TopGifterRank = 0;
+        Input.User.GifterLevel = 0;
+        Input.User.TeamMemberLevel = 0;
+
+        RequireUserEqual(
+            Decision->Payload.Input.User,
+            Original.User,
+            "Follow payload snapshot"
         );
     }
 
@@ -1756,6 +1840,8 @@ int main()
     const std::vector<FTestCase> Tests{
         {"Chat candidate and admission defaults", &TestChatCandidateAndAdmissionDefaults},
         {"Chat payload snapshot and input preservation", &TestChatPayloadSnapshotAndInputPreservation},
+        {"Follow candidate and admission defaults", &TestFollowCandidateAndAdmissionDefaults},
+        {"Follow payload snapshot and input preservation", &TestFollowPayloadSnapshotAndInputPreservation},
         {"Typed repository stores independent snapshots", &TestTypedRepositoryStoresIndependentSnapshots},
         {"Typed repository erase and handle invariants", &TestTypedRepositoryEraseAndHandleInvariants},
         {"Binding registry insert, visit and duplicate protection", &TestBindingRegistryInsertVisitAndDuplicateProtection},

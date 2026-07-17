@@ -1,6 +1,7 @@
 #include "TikFinity/TSTikFinityChatConverter.h"
 
-#include <limits>
+#include "TikFinity/TSTikFinityDecodedUserConverter.h"
+
 #include <utility>
 
 namespace
@@ -15,27 +16,6 @@ namespace
         return Result;
     }
 
-    [[nodiscard]]
-    bool TryConvertNumericField(
-        const std::optional<std::int64_t>& Source,
-        std::int32_t& Destination
-    ) noexcept
-    {
-        if (!Source.has_value())
-        {
-            Destination = 0;
-            return true;
-        }
-
-        if (*Source < 0 ||
-            *Source > std::numeric_limits<std::int32_t>::max())
-        {
-            return false;
-        }
-
-        Destination = static_cast<std::int32_t>(*Source);
-        return true;
-    }
 }
 
 FTSTikFinityChatConversionResult FTSTikFinityChatConverter::Convert(
@@ -90,15 +70,9 @@ FTSTikFinityChatConversionResult FTSTikFinityChatConverter::Convert(
         );
     }
 
-    std::int32_t FollowRole = 0;
-    std::int32_t TopGifterRank = 0;
-    std::int32_t GifterLevel = 0;
-    std::int32_t TeamMemberLevel = 0;
-
-    if (!TryConvertNumericField(User.FollowRole, FollowRole) ||
-        !TryConvertNumericField(User.TopGifterRank, TopGifterRank) ||
-        !TryConvertNumericField(User.GifterLevel, GifterLevel) ||
-        !TryConvertNumericField(User.TeamMemberLevel, TeamMemberLevel))
+    std::optional<FTSUserSnapshot> ConvertedUser =
+        FTSTikFinityDecodedUserConverter::TryConvert(User);
+    if (!ConvertedUser.has_value())
     {
         return MakeRejectedResult(
             ETSTikFinityChatConversionStatus::RejectedInvalidNumericField
@@ -129,17 +103,7 @@ FTSTikFinityChatConversionResult FTSTikFinityChatConverter::Convert(
         );
     }
 
-    Input.User.UniqueId = *User.UniqueId;
-    Input.User.Nickname = User.Nickname.value_or(std::string{});
-    Input.User.ProfilePictureUrl =
-        User.ProfilePictureUrl.value_or(std::string{});
-    Input.User.FollowRole = FollowRole;
-    Input.User.bIsModerator = User.bIsModerator.value_or(false);
-    Input.User.bIsSubscriber = User.bIsSubscriber.value_or(false);
-    Input.User.bIsNewGifter = User.bIsNewGifter.value_or(false);
-    Input.User.TopGifterRank = TopGifterRank;
-    Input.User.GifterLevel = GifterLevel;
-    Input.User.TeamMemberLevel = TeamMemberLevel;
+    Input.User = std::move(*ConvertedUser);
 
     FTSTikFinityChatConversionResult Result;
     Result.Status = ETSTikFinityChatConversionStatus::Converted;
