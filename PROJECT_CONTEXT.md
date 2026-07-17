@@ -3,10 +3,10 @@
 Última actualización: 2026-07-17.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `0f57a675`
-(`Simplify event queue lab implementation`).
+rama `main`, partiendo de HEAD `d2cfca3`
+(`fix(tests): restore scopes after suite split`).
 
-Las correcciones de compilación de la Fase 4D.2.1 permanecen locales y sin commit.
+Los cambios de la Fase 4D.3 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -78,10 +78,12 @@ otros cinco → converters tipados             [pendientes]
         ↓
 FTS*Input portable                            [Chat y Follow implementados]
         ↓
-composición externa → Event Host             [futuro]
+composición externa → Event Host             [Chat y Follow implementados]
 ```
 
-El adaptador todavía no depende de Host o Pipeline y no existe conexión entre ambos.
+El adaptador todavía no depende de Host o Pipeline. La composición JSON Follow →
+converter → Host existe sólo en el runner vertical; no hay dependencia Adapter → Host
+en producción.
 
 ## 2. Datos entrantes y familias portables
 
@@ -462,27 +464,27 @@ el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()
 al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
 de su repositorio tipado; la consolidación semántica continúa fuera de alcance.
 
-### Host portable de ejecución Chat
+### Host portable compartido de ejecución Chat y Follow
 
-`FTSChatExecutionHost` es una biblioteca separada que posee el coordinador mediante un
-PImpl no copiable ni movible. Su API pública permite `PostChat` y
-`PostChatCompletion` desde cualquier hilo, pero reserva `RunOneCycle` al hilo que
-construyó la instancia. El Host no expone mutexes, bandeja, variante, thread ID ni el
-coordinador.
+`FTSEventExecutionHost` es una biblioteca separada que posee un único coordinador y Core
+mediante un PImpl no copiable ni movible. Su API pública permite `PostChat`,
+`PostFollow` y sus completions tipadas desde cualquier hilo, pero reserva
+`RunOneCycle` al hilo que construyó la instancia. El Host no expone mutexes, bandeja,
+thread ID ni el coordinador.
 
-La bandeja privada contiene únicamente inputs Chat y finalizaciones tipadas. Un mutex
-protege exclusivamente la inserción, extracción y consulta de comandos; nunca permanece
-bloqueado durante una llamada a Pipeline. El FIFO de publicaciones concurrentes queda
-definido por el orden efectivo de inserción obtenido bajo ese mutex, no por el instante
-en que distintos threads comenzaron a publicar. El booleano devuelto por `PostChat` y
-`PostChatCompletion` sólo indica la transición de bandeja vacía a ocupada para que la
+Una sola bandeja privada conserva inputs y finalizaciones Chat/Follow bajo el mismo
+mutex. Así, el FIFO global queda definido por el orden efectivo de inserción entre
+familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El booleano
+de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que la
 composición externa solicite un ciclo.
 
-Cada `RunOneCycle` consume como máximo un comando, procesa expiraciones, intenta obtener
-un ready ya autorizado y, si no existe, ejecuta un único Pump explícito. Como máximo
-devuelve un `FTSChatProcessingDispatch` propietario. Después consulta el próximo wake y
-si quedan comandos. La política es work-conserving: desactivar Auto Pump en Core no
-prohíbe que el Host llame Pump explícitamente para avanzar trabajo Pending.
+Cada `RunOneCycle` consume como máximo un comando, procesa expiraciones y consulta
+`PeekPendingReadyFamilyKind()` antes de invocar exclusivamente el Begin tipado de Chat o
+Follow. Si no existe ready, llama Pump una vez; un `EmissionReady` se enruta y entrega en
+ese mismo ciclo. El resultado contiene como máximo un dispatch propietario dentro de un
+`std::variant<FTSChatProcessingDispatch, FTSFollowProcessingDispatch>` que permanece
+fuera del Pipeline y del Core. Después consulta el próximo wake y si quedan comandos.
+La política continúa siendo work-conserving.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
 procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
@@ -734,9 +736,9 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat y Follow, y
   coordinador Chat/Follow de admisión, despacho y finalización; publica
   `Pipeline/Public` y enlaza públicamente sólo con Core.
-- `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe y ciclo propietario de Chat;
-  publica `Host/Public`, enlaza públicamente con Pipeline y privadamente con
-  `Threads::Threads`.
+- `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
+  propietario de Chat/Follow; publica `Host/Public`, enlaza públicamente con Pipeline y
+  privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
   checklist y converters Chat/Follow; enlaza públicamente sólo con Core y privadamente
@@ -747,8 +749,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   en CTest mediante `add_test`.
 - `TikStudioEventPipelineTests` (executable): enlaza únicamente con Pipeline y está
   registrado en CTest mediante `add_test`.
-- `TikStudioEventHostTests` (executable): enlaza únicamente con Host y está registrado
-  en CTest mediante `add_test`.
+- `TikStudioEventHostTests` (executable): enlaza con Host y, sólo para la certificación
+  vertical, con el adaptador TikFinity; está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
@@ -758,16 +760,16 @@ Targets explícitos, sin `file(GLOB ...)`:
   registra como prueba.
 
 La Fase 4D.2.1 organiza las suites por responsabilidad sin cambiar los seis ejecutables
-automáticos, sus enlaces ni sus registros CTest. `TSTestHarness.h` conserva el contrato
-común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
-global ni dependencia del orden de link. Los runners Pipeline, Host y Adapter contienen
-prácticamente sólo `main` y registran respectivamente 42, 9 y 17 casos.
+automáticos ni sus registros CTest. `TSTestHarness.h` conserva el contrato común de
+ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro global ni
+dependencia del orden de link. Los runners Pipeline, Host y Adapter registran
+respectivamente 42, 18 y 17 casos después de 4D.3.
 
 La estructura familiar queda así:
 
 ```text
 Tests/Chat/  → Pipeline, Host y Adapter Chat
-Tests/Follow/ → Pipeline y Adapter Follow
+Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Gift|Like|Member|RoomUser|Share/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -775,9 +777,9 @@ Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 Core, JSON Decoder y Checklist permanecen en sus runners transversales sin dividirse.
 La organización fue publicada en `0f57a675`. La primera compilación posterior detectó
 la pérdida del ámbito de `std::chrono_literals` en las suites Pipeline y una llave
-adicional en `TSChatHostTests.cpp`. La corrección local restaura únicamente esos ámbitos
-y la comprobación estática omitida, sin cambiar casos ni comportamiento; la validación
-final continúa pendiente del propietario.
+adicional en `TSChatHostTests.cpp`. La corrección publicada en `d2cfca3` restauró esos
+ámbitos y la comprobación estática omitida. La validación manual posterior certificó
+108 PASS / 0 FAIL.
 
 `Tests/TikStudioEventQueueSystemTests.cpp` contiene un runner mínimo estándar que
 continúa tras fallos, imprime PASS/FAIL y devuelve un código distinto de cero si alguna
@@ -837,6 +839,12 @@ conserva los 30 casos previos y añade 12 escenarios de admisión, ready global,
 completion, expiración y lifecycle mixto Follow. La validación manual de `dc4f574`
 terminó con Core 10, Pipeline 42, Host 9, Adapter 17, JSON Decoder 20 y Checklist 10
 casos aprobados, sin fallos: 108 PASS / 0 FAIL.
+
+La cobertura local de 4D.3 conserva los nueve casos Host Chat, añade ocho casos Host
+Follow y una certificación vertical JSON → decoder → converter → Host → completion. El
+runner Host queda en 18 casos y enlaza el adaptador sólo para esa prueba. Sin ejecutar
+los runners durante esta implementación, el total esperado para la validación manual es:
+Core 10, Pipeline 42, Host 18, Adapter 17, JSON Decoder 20 y Checklist 10; 117 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1264,13 +1272,33 @@ casos aprobados, sin fallos: 108 PASS / 0 FAIL.
   `Simplify event queue lab implementation`, que se conserva sin reescritura.
 - La primera compilación detectó que las suites Pipeline perdieron el ámbito de
   `chrono_literals` y que `TSChatHostTests.cpp` contenía una llave extra.
-- La corrección restaura los ámbitos y el `static_assert` omitido sin alterar los 108
-  casos esperados. Permanece local y pendiente de validación final por el propietario.
+- La corrección restauró los ámbitos y el `static_assert` omitido sin alterar los casos
+  existentes. Fue publicada en `d2cfca3` como
+  `fix(tests): restore scopes after suite split`.
+- La validación manual posterior certificó 108 PASS / 0 FAIL.
+
+### Fase 4D.3 — Follow C: Host compartido y certificación vertical
+
+- Generaliza el Host de Chat a `FTSEventExecutionHost`, sin alias ni conservación del
+  contrato anterior, y mantiene PImpl, ownership exclusivo y owner thread.
+- Chat y Follow comparten una sola bandeja FIFO, mutex, Coordinator y Core; cada ciclo
+  procesa como máximo un comando y entrega como máximo un dispatch tipado.
+- El ready se inspecciona mediante `PeekPendingReadyFamilyKind()` y se consume sólo con
+  el `Begin*Processing` de la familia correspondiente. Un ready producido por Pump se
+  despacha en el mismo ciclo.
+- Añade `PostFollow` y `PostFollowCompletion`; la familia del ID se valida al ejecutar
+  el comando en el owner thread, no durante la publicación.
+- Conserva los nueve casos Host Chat, añade ocho Host Follow y una certificación
+  JSON Follow → decoder → converter → Host → completion.
+- El adaptador se enlaza con el runner Host sólo para la prueba vertical; no existe una
+  dependencia Adapter → Host en producción ni conexión WebSocket → Host.
+- Los cambios permanecen locales y sin commit. No se compiló ni se ejecutaron pruebas
+  durante la implementación; la validación manual esperada totaliza 117 casos.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `0f57a675`.
+  `d2cfca3` más los cambios locales de 4D.3.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1287,9 +1315,10 @@ casos aprobados, sin fallos: 108 PASS / 0 FAIL.
 - Preservar la separación: adaptadores convierten fuentes, familias interpretan
   payloads, core administra emisiones.
 - El vertical slice portable interno de Chat, el Pipeline completo de Follow y la
-  organización 4D.2.1 están publicados. Su corrección de compilación permanece local.
-- La siguiente fase prevista es 4D.3: Host y certificación vertical Follow.
+  organización 4D.2.1 con su corrección están publicados.
+- La Fase 4D.3 completa localmente el Host y la certificación vertical Follow; debe
+  compilarse y ejecutar sus runners manualmente antes de publicar.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
-- No añadir automáticamente conexión Adapter → Host, familias, repositorios, bindings,
+- No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios, bindings,
   Simulator, Console, procesadores concretos, efectos ni UE5 sin especificación separada.

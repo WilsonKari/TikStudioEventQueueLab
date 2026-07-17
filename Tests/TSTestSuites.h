@@ -13,6 +13,8 @@ namespace TikStudio::Tests
     void RegisterPipelineInfrastructureTests(FTSTestCases& Tests);
 
     void RegisterChatHostTests(FTSTestCases& Tests);
+    void RegisterFollowHostTests(FTSTestCases& Tests);
+    void RegisterFollowVerticalIntegrationTests(FTSTestCases& Tests);
 
     void RegisterTikFinityChatAdapterTests(FTSTestCases& Tests);
     void RegisterTikFinityFollowAdapterTests(FTSTestCases& Tests);

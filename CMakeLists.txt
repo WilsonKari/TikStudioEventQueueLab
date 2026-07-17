@@ -73,7 +73,7 @@ target_link_libraries(TikStudioEventPipeline
 )
 
 add_library(TikStudioEventHost STATIC
-  Host/Private/EventHost/TSChatExecutionHost.cpp
+  Host/Private/EventHost/TSEventExecutionHost.cpp
 )
 
 target_include_directories(TikStudioEventHost
@@ -177,6 +177,8 @@ add_test(
 add_executable(TikStudioEventHostTests
   Tests/TikStudioEventHostTests.cpp
   Tests/Chat/TSChatHostTests.cpp
+  Tests/Follow/TSFollowHostTests.cpp
+  Tests/Follow/TSFollowVerticalIntegrationTests.cpp
 )
 
 target_include_directories(TikStudioEventHostTests
@@ -187,6 +189,7 @@ target_include_directories(TikStudioEventHostTests
 target_link_libraries(TikStudioEventHostTests
   PRIVATE
     TikStudioEventHost
+    TikStudioTikFinityAdapter
 )
 
 add_test(

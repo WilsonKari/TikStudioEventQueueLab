@@ -1,208 +1,33 @@
-#include "EventHost/TSChatExecutionHost.h"
+#include "EventHost/TSEventExecutionHost.h"
+#include "TSHostTestSupport.h"
 #include "TSTestSuites.h"
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
+#include <exception>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
-
-static_assert(!std::is_copy_constructible_v<FTSChatExecutionHost>);
-static_assert(!std::is_copy_assignable_v<FTSChatExecutionHost>);
-static_assert(!std::is_move_constructible_v<FTSChatExecutionHost>);
-static_assert(!std::is_move_assignable_v<FTSChatExecutionHost>);
+static_assert(!std::is_copy_constructible_v<FTSEventExecutionHost>);
+static_assert(!std::is_copy_assignable_v<FTSEventExecutionHost>);
+static_assert(!std::is_move_constructible_v<FTSEventExecutionHost>);
+static_assert(!std::is_move_assignable_v<FTSEventExecutionHost>);
 
 namespace
 {
     using namespace std::chrono_literals;
-    using TikStudio::Tests::Require;
-
-    struct FControlledClock
-    {
-        FTSEventQueueTimePoint Now{};
-
-        [[nodiscard]]
-        FTSNowProvider MakeProvider()
-        {
-            return [this]()
-            {
-                return Now;
-            };
-        }
-
-        template <typename Rep, typename Period>
-        void Advance(std::chrono::duration<Rep, Period> Delta)
-        {
-            Now += std::chrono::duration_cast<FTSEventQueueClock::duration>(
-                Delta
-            );
-        }
-    };
-
-    [[nodiscard]]
-    FTSChatInput MakeChatInput(const std::string& Label)
-    {
-        FTSChatInput Input;
-        Input.Comment = Label;
-        Input.Emotes = {
-            FTSEmoteInfo{Label + "-emote-a", "https://example.test/a.png"},
-            FTSEmoteInfo{Label + "-emote-b", "https://example.test/b.png"}
-        };
-        Input.User.UniqueId = Label + "-user";
-        Input.User.Nickname = Label + " nickname";
-        Input.User.ProfilePictureUrl = "https://example.test/user.png";
-        Input.User.FollowRole = 3;
-        Input.User.bIsModerator = true;
-        Input.User.bIsSubscriber = true;
-        Input.User.bIsNewGifter = true;
-        Input.User.TopGifterRank = 7;
-        Input.User.GifterLevel = 11;
-        Input.User.TeamMemberLevel = 13;
-        return Input;
-    }
-
-    void RequireChatInputEqual(
-        const FTSChatInput& Actual,
-        const FTSChatInput& Expected,
-        const std::string& Context
-    )
-    {
-        Require(Actual.Comment == Expected.Comment, Context + ": Comment");
-        Require(
-            Actual.Emotes.size() == Expected.Emotes.size(),
-            Context + ": Emote count"
-        );
-
-        for (std::size_t Index = 0; Index < Expected.Emotes.size(); ++Index)
-        {
-            Require(
-                Actual.Emotes[Index].EmoteId == Expected.Emotes[Index].EmoteId,
-                Context + ": EmoteId"
-            );
-            Require(
-                Actual.Emotes[Index].EmoteImageUrl ==
-                    Expected.Emotes[Index].EmoteImageUrl,
-                Context + ": EmoteImageUrl"
-            );
-        }
-
-        Require(
-            Actual.User.UniqueId == Expected.User.UniqueId,
-            Context + ": UniqueId"
-        );
-        Require(
-            Actual.User.Nickname == Expected.User.Nickname,
-            Context + ": Nickname"
-        );
-        Require(
-            Actual.User.ProfilePictureUrl ==
-                Expected.User.ProfilePictureUrl,
-            Context + ": ProfilePictureUrl"
-        );
-        Require(
-            Actual.User.FollowRole == Expected.User.FollowRole,
-            Context + ": FollowRole"
-        );
-        Require(
-            Actual.User.bIsModerator == Expected.User.bIsModerator,
-            Context + ": bIsModerator"
-        );
-        Require(
-            Actual.User.bIsSubscriber == Expected.User.bIsSubscriber,
-            Context + ": bIsSubscriber"
-        );
-        Require(
-            Actual.User.bIsNewGifter == Expected.User.bIsNewGifter,
-            Context + ": bIsNewGifter"
-        );
-        Require(
-            Actual.User.TopGifterRank == Expected.User.TopGifterRank,
-            Context + ": TopGifterRank"
-        );
-        Require(
-            Actual.User.GifterLevel == Expected.User.GifterLevel,
-            Context + ": GifterLevel"
-        );
-        Require(
-            Actual.User.TeamMemberLevel == Expected.User.TeamMemberLevel,
-            Context + ": TeamMemberLevel"
-        );
-    }
-
-    [[nodiscard]]
-    FTSEventQueueSettings MakeChatSettings(
-        std::uint32_t MaxSlots = 10,
-        std::chrono::milliseconds TTL = std::chrono::milliseconds{8000},
-        bool bPumpAfterEnqueue = true,
-        bool bPumpAfterConfirm = true
-    )
-    {
-        FTSEventQueueSettings Settings;
-        FTSFlowQueueSettings* ChatSettings =
-            Settings.TryGetFlowSettings(ETSEventFlow::Chat);
-        Require(ChatSettings != nullptr, "Chat settings must exist");
-        ChatSettings->bEnabled = true;
-        ChatSettings->MaxSlots = MaxSlots;
-        ChatSettings->TTL = TTL;
-        ChatSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
-        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
-        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
-        return Settings;
-    }
-
-    [[nodiscard]]
-    FTSEmissionId RequireAcceptedAdmission(
-        const FTSChatHostCycleResult& Cycle,
-        const std::string& Context
-    )
-    {
-        Require(
-            Cycle.ProcessedCommand == ETSChatHostCommandKind::ChatInput,
-            Context + ": command kind"
-        );
-        Require(
-            Cycle.AdmissionResult.has_value() &&
-                !Cycle.CompletionResult.has_value(),
-            Context + ": admission result invariant"
-        );
-        Require(
-            Cycle.AdmissionResult->Status ==
-                ETSPipelineAdmissionStatus::Accepted &&
-                Cycle.AdmissionResult->EnqueueResult.has_value(),
-            Context + ": admission must be accepted"
-        );
-
-        const FTSEmissionId EmissionId =
-            Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.EmissionId;
-        Require(EmissionId != 0, Context + ": valid EmissionId");
-        return EmissionId;
-    }
-
-    [[nodiscard]]
-    const FTSChatProcessingDispatch& RequireDispatch(
-        const FTSChatHostCycleResult& Cycle,
-        const std::string& Context
-    )
-    {
-        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
-        Require(
-            Cycle.Dispatch->Emission.EmissionId != 0,
-            Context + ": dispatch identity"
-        );
-        return *Cycle.Dispatch;
-    }
+    using namespace TikStudio::Tests;
 
     void TestEmptyHostCycle()
     {
-        FTSChatExecutionHost Host;
-        const FTSChatHostCycleResult Cycle = Host.RunOneCycle();
+        FTSEventExecutionHost Host;
+        const FTSEventHostCycleResult Cycle = Host.RunOneCycle();
 
         Require(
-            Cycle.ProcessedCommand == ETSChatHostCommandKind::None,
+            Cycle.ProcessedCommand == ETSEventHostCommandKind::None,
             "Empty Host must process no command"
         );
         Require(
@@ -234,7 +59,7 @@ namespace
 
     void TestWorkerPostRunsOnOwner()
     {
-        FTSChatExecutionHost Host;
+        FTSEventExecutionHost Host;
         FTSChatInput Input = MakeChatInput("worker-post");
         const FTSChatInput Expected = Input;
         bool bScheduleRequested = false;
@@ -265,10 +90,10 @@ namespace
         Input.User.Nickname = "mutated worker input";
 
         Require(bScheduleRequested, "First worker PostChat must request scheduling");
-        const FTSChatHostCycleResult Cycle = Host.RunOneCycle();
-        (void)RequireAcceptedAdmission(Cycle, "Worker PostChat");
+        const FTSEventHostCycleResult Cycle = Host.RunOneCycle();
+        (void)RequireAcceptedChatAdmission(Cycle, "Worker PostChat");
         const FTSChatProcessingDispatch& Dispatch =
-            RequireDispatch(Cycle, "Worker PostChat");
+            RequireChatDispatch(Cycle, "Worker PostChat");
         RequireChatInputEqual(
             Dispatch.Payload.Input,
             Expected,
@@ -278,18 +103,18 @@ namespace
 
     void TestSequentialFifoAndAsynchronousCompletion()
     {
-        FTSChatExecutionHost Host;
+        FTSEventExecutionHost Host;
         const FTSChatInput InputA = MakeChatInput("fifo-a");
         const FTSChatInput InputB = MakeChatInput("fifo-b");
 
         Require(Host.PostChat(InputA), "First FIFO publication must signal");
         Require(!Host.PostChat(InputB), "Second FIFO publication must not signal");
 
-        const FTSChatHostCycleResult CycleA = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleA = Host.RunOneCycle();
         const FTSEmissionId AId =
-            RequireAcceptedAdmission(CycleA, "FIFO cycle A");
+            RequireAcceptedChatAdmission(CycleA, "FIFO cycle A");
         const FTSChatProcessingDispatch& DispatchA =
-            RequireDispatch(CycleA, "FIFO cycle A");
+            RequireChatDispatch(CycleA, "FIFO cycle A");
         Require(
             DispatchA.Emission.EmissionId == AId,
             "FIFO cycle A dispatch identity"
@@ -304,9 +129,9 @@ namespace
             "FIFO cycle A must leave B published"
         );
 
-        const FTSChatHostCycleResult CycleB = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleB = Host.RunOneCycle();
         const FTSEmissionId BId =
-            RequireAcceptedAdmission(CycleB, "FIFO cycle B");
+            RequireAcceptedChatAdmission(CycleB, "FIFO cycle B");
         Require(
             !CycleB.Dispatch.has_value(),
             "FIFO B must not dispatch while A is Processing"
@@ -325,10 +150,10 @@ namespace
             Host.PostChatCompletion(AId, ETSProcessingResult::Succeeded),
             "FIFO completion publication must signal"
         );
-        const FTSChatHostCycleResult CompletionCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult CompletionCycle = Host.RunOneCycle();
         Require(
             CompletionCycle.ProcessedCommand ==
-                ETSChatHostCommandKind::ProcessingCompletion &&
+                ETSEventHostCommandKind::ChatCompletion &&
                 !CompletionCycle.AdmissionResult.has_value() &&
                 CompletionCycle.CompletionResult.has_value(),
             "FIFO completion result invariant"
@@ -340,7 +165,7 @@ namespace
             "FIFO A must complete successfully"
         );
         const FTSChatProcessingDispatch& DispatchB =
-            RequireDispatch(CompletionCycle, "FIFO completion cycle");
+            RequireChatDispatch(CompletionCycle, "FIFO completion cycle");
         Require(
             DispatchB.Emission.EmissionId == BId,
             "FIFO completion must dispatch B after A"
@@ -354,15 +179,15 @@ namespace
 
     void TestWorkerCompletionReleasesCapacity()
     {
-        FTSChatExecutionHost Host(MakeChatSettings(1));
+        FTSEventExecutionHost Host(MakeChatSettings(1));
         Require(
             Host.PostChat(MakeChatInput("capacity-a")),
             "Capacity A publication must signal"
         );
-        const FTSChatHostCycleResult AdmissionCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult AdmissionCycle = Host.RunOneCycle();
         const FTSEmissionId AId =
-            RequireAcceptedAdmission(AdmissionCycle, "Capacity A");
-        (void)RequireDispatch(AdmissionCycle, "Capacity A");
+            RequireAcceptedChatAdmission(AdmissionCycle, "Capacity A");
+        (void)RequireChatDispatch(AdmissionCycle, "Capacity A");
 
         bool bScheduleRequested = false;
         std::exception_ptr WorkerError;
@@ -393,10 +218,10 @@ namespace
             bScheduleRequested,
             "First worker completion must request scheduling"
         );
-        const FTSChatHostCycleResult CompletionCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult CompletionCycle = Host.RunOneCycle();
         Require(
             CompletionCycle.ProcessedCommand ==
-                ETSChatHostCommandKind::ProcessingCompletion &&
+                ETSEventHostCommandKind::ChatCompletion &&
                 CompletionCycle.CompletionResult.has_value() &&
                 CompletionCycle.CompletionResult->ConfirmResult.has_value(),
             "Worker completion must confirm A"
@@ -406,8 +231,8 @@ namespace
             Host.PostChat(MakeChatInput("capacity-b")),
             "Capacity B publication must signal"
         );
-        const FTSChatHostCycleResult NextAdmission = Host.RunOneCycle();
-        (void)RequireAcceptedAdmission(
+        const FTSEventHostCycleResult NextAdmission = Host.RunOneCycle();
+        (void)RequireAcceptedChatAdmission(
             NextAdmission,
             "Capacity after worker completion"
         );
@@ -415,18 +240,18 @@ namespace
 
     void TestCancelAdvancesWithExplicitPump()
     {
-        FTSChatExecutionHost Host;
+        FTSEventExecutionHost Host;
         Require(Host.PostChat(MakeChatInput("cancel-a")), "Cancel A signal");
         Require(!Host.PostChat(MakeChatInput("cancel-b")), "Cancel B signal");
 
-        const FTSChatHostCycleResult CycleA = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleA = Host.RunOneCycle();
         const FTSEmissionId AId =
-            RequireAcceptedAdmission(CycleA, "Cancel A admission");
-        (void)RequireDispatch(CycleA, "Cancel A admission");
+            RequireAcceptedChatAdmission(CycleA, "Cancel A admission");
+        (void)RequireChatDispatch(CycleA, "Cancel A admission");
 
-        const FTSChatHostCycleResult CycleB = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleB = Host.RunOneCycle();
         const FTSEmissionId BId =
-            RequireAcceptedAdmission(CycleB, "Cancel B admission");
+            RequireAcceptedChatAdmission(CycleB, "Cancel B admission");
         Require(
             CycleB.PumpResult.has_value() &&
                 CycleB.PumpResult->Outcome.Status == ETSPumpStatus::Busy,
@@ -437,7 +262,7 @@ namespace
             Host.PostChatCompletion(AId, ETSProcessingResult::Cancelled),
             "Cancel completion must signal"
         );
-        const FTSChatHostCycleResult CancelCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult CancelCycle = Host.RunOneCycle();
         Require(
             CancelCycle.CompletionResult.has_value() &&
                 CancelCycle.CompletionResult->ProcessingResult ==
@@ -453,7 +278,7 @@ namespace
             "Cancel cycle must Pump B explicitly"
         );
         Require(
-            RequireDispatch(CancelCycle, "Cancel cycle")
+            RequireChatDispatch(CancelCycle, "Cancel cycle")
                     .Emission.EmissionId == BId,
             "Cancel cycle must dispatch the pumped B"
         );
@@ -461,18 +286,18 @@ namespace
 
     void TestWrongCompletionPreservesLaterCommand()
     {
-        FTSChatExecutionHost Host;
+        FTSEventExecutionHost Host;
         Require(Host.PostChat(MakeChatInput("error-a")), "Error A signal");
         Require(!Host.PostChat(MakeChatInput("error-b")), "Error B signal");
 
-        const FTSChatHostCycleResult CycleA = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleA = Host.RunOneCycle();
         const FTSEmissionId AId =
-            RequireAcceptedAdmission(CycleA, "Error A admission");
-        (void)RequireDispatch(CycleA, "Error A admission");
+            RequireAcceptedChatAdmission(CycleA, "Error A admission");
+        (void)RequireChatDispatch(CycleA, "Error A admission");
 
-        const FTSChatHostCycleResult CycleB = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleB = Host.RunOneCycle();
         const FTSEmissionId BId =
-            RequireAcceptedAdmission(CycleB, "Error B admission");
+            RequireAcceptedChatAdmission(CycleB, "Error B admission");
         Require(!CycleB.Dispatch.has_value(), "Error B must remain Bound");
 
         Require(
@@ -499,17 +324,17 @@ namespace
         );
 
         // No se republica A: el siguiente ciclo demuestra que sobrevivió detrás de B.
-        const FTSChatHostCycleResult RecoveryCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult RecoveryCycle = Host.RunOneCycle();
         Require(
             RecoveryCycle.ProcessedCommand ==
-                ETSChatHostCommandKind::ProcessingCompletion &&
+                ETSEventHostCommandKind::ChatCompletion &&
                 RecoveryCycle.CompletionResult.has_value() &&
                 RecoveryCycle.CompletionResult->EmissionId == AId &&
                 RecoveryCycle.CompletionResult->ConfirmResult.has_value(),
             "Correct A completion must remain queued after the failed command"
         );
         Require(
-            RequireDispatch(RecoveryCycle, "Recovery cycle")
+            RequireChatDispatch(RecoveryCycle, "Recovery cycle")
                     .Emission.EmissionId == BId,
             "B must dispatch after the surviving A completion"
         );
@@ -518,20 +343,20 @@ namespace
     void TestPendingChatExpiresWhileAnotherIsProcessing()
     {
         FControlledClock Clock;
-        FTSChatExecutionHost Host(
+        FTSEventExecutionHost Host(
             MakeChatSettings(10, 5s),
             Clock.MakeProvider()
         );
         Require(Host.PostChat(MakeChatInput("ttl-a")), "TTL A signal");
-        const FTSChatHostCycleResult CycleA = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleA = Host.RunOneCycle();
         const FTSEmissionId AId =
-            RequireAcceptedAdmission(CycleA, "TTL A admission");
-        (void)RequireDispatch(CycleA, "TTL A admission");
+            RequireAcceptedChatAdmission(CycleA, "TTL A admission");
+        (void)RequireChatDispatch(CycleA, "TTL A admission");
 
         Require(Host.PostChat(MakeChatInput("ttl-b")), "TTL B signal");
-        const FTSChatHostCycleResult CycleB = Host.RunOneCycle();
+        const FTSEventHostCycleResult CycleB = Host.RunOneCycle();
         const FTSEmissionId BId =
-            RequireAcceptedAdmission(CycleB, "TTL B admission");
+            RequireAcceptedChatAdmission(CycleB, "TTL B admission");
         Require(
             CycleB.PumpResult.has_value() &&
                 CycleB.PumpResult->Outcome.Status == ETSPumpStatus::Busy,
@@ -539,9 +364,9 @@ namespace
         );
 
         Clock.Advance(5s);
-        const FTSChatHostCycleResult ExpirationCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult ExpirationCycle = Host.RunOneCycle();
         Require(
-            ExpirationCycle.ProcessedCommand == ETSChatHostCommandKind::None,
+            ExpirationCycle.ProcessedCommand == ETSEventHostCommandKind::None,
             "Expiration maintenance must process no command"
         );
         Require(
@@ -567,7 +392,7 @@ namespace
             Host.PostChatCompletion(AId, ETSProcessingResult::Succeeded),
             "TTL A completion must signal"
         );
-        const FTSChatHostCycleResult CompletionCycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult CompletionCycle = Host.RunOneCycle();
         Require(
             CompletionCycle.CompletionResult.has_value() &&
                 CompletionCycle.CompletionResult->ConfirmResult.has_value(),
@@ -584,7 +409,7 @@ namespace
                 ++NowCallCount;
                 return FTSEventQueueTimePoint{};
             };
-        FTSChatExecutionHost Host(MakeChatSettings(), std::move(NowProvider));
+        FTSEventExecutionHost Host(MakeChatSettings(), std::move(NowProvider));
         Require(
             Host.PostChat(MakeChatInput("wrong-thread")),
             "Wrong-thread setup publication must signal"
@@ -625,14 +450,14 @@ namespace
             "Wrong-thread cycle must not capture core time"
         );
 
-        const FTSChatHostCycleResult OwnerCycle = Host.RunOneCycle();
-        (void)RequireAcceptedAdmission(OwnerCycle, "Owner recovery cycle");
-        (void)RequireDispatch(OwnerCycle, "Owner recovery cycle");
+        const FTSEventHostCycleResult OwnerCycle = Host.RunOneCycle();
+        (void)RequireAcceptedChatAdmission(OwnerCycle, "Owner recovery cycle");
+        (void)RequireChatDispatch(OwnerCycle, "Owner recovery cycle");
     }
 
     void TestExplicitPumpWorksWhenAutoPumpIsDisabled()
     {
-        FTSChatExecutionHost Host(
+        FTSEventExecutionHost Host(
             MakeChatSettings(10, 8s, false, true)
         );
         Require(
@@ -640,9 +465,9 @@ namespace
             "Explicit Pump publication must signal"
         );
 
-        const FTSChatHostCycleResult Cycle = Host.RunOneCycle();
+        const FTSEventHostCycleResult Cycle = Host.RunOneCycle();
         const FTSEmissionId EmissionId =
-            RequireAcceptedAdmission(Cycle, "Explicit Pump admission");
+            RequireAcceptedChatAdmission(Cycle, "Explicit Pump admission");
         Require(
             Cycle.AdmissionResult->EnqueueResult->AutoPumpOutcome.Status ==
                 ETSPumpStatus::NotRequested,
@@ -657,7 +482,7 @@ namespace
             "Host must explicitly Pump admitted work"
         );
         Require(
-            RequireDispatch(Cycle, "Explicit Pump admission")
+            RequireChatDispatch(Cycle, "Explicit Pump admission")
                     .Emission.EmissionId == EmissionId,
             "Explicit Pump must dispatch in the same cycle"
         );
