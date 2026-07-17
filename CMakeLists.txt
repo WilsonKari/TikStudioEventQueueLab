@@ -178,7 +178,6 @@ add_executable(TikStudioEventHostTests
   Tests/TikStudioEventHostTests.cpp
   Tests/Chat/TSChatHostTests.cpp
   Tests/Follow/TSFollowHostTests.cpp
-  Tests/Follow/TSFollowVerticalIntegrationTests.cpp
 )
 
 target_include_directories(TikStudioEventHostTests
@@ -189,12 +188,33 @@ target_include_directories(TikStudioEventHostTests
 target_link_libraries(TikStudioEventHostTests
   PRIVATE
     TikStudioEventHost
-    TikStudioTikFinityAdapter
 )
 
 add_test(
   NAME TikStudioEventHostTests
   COMMAND TikStudioEventHostTests
+)
+
+add_executable(TikStudioVerticalIntegrationTests
+  Tests/TikStudioVerticalIntegrationTests.cpp
+  Tests/Chat/TSChatVerticalIntegrationTests.cpp
+  Tests/Follow/TSFollowVerticalIntegrationTests.cpp
+)
+
+target_include_directories(TikStudioVerticalIntegrationTests
+  PRIVATE
+    Tests
+)
+
+target_link_libraries(TikStudioVerticalIntegrationTests
+  PRIVATE
+    TikStudioEventHost
+    TikStudioTikFinityAdapter
+)
+
+add_test(
+  NAME TikStudioVerticalIntegrationTests
+  COMMAND TikStudioVerticalIntegrationTests
 )
 
 add_executable(TikStudioTikFinityAdapterTests

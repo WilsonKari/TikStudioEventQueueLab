@@ -3,10 +3,10 @@
 Última actualización: 2026-07-17.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `d2cfca3`
-(`fix(tests): restore scopes after suite split`).
+rama `main`, partiendo de HEAD `2416bf6`
+(`feat(host): complete follow vertical integration`).
 
-Los cambios de la Fase 4D.3 permanecen locales y sin commit.
+Los cambios de refinamiento 4D.3.1 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -81,9 +81,9 @@ FTS*Input portable                            [Chat y Follow implementados]
 composición externa → Event Host             [Chat y Follow implementados]
 ```
 
-El adaptador todavía no depende de Host o Pipeline. La composición JSON Follow →
-converter → Host existe sólo en el runner vertical; no hay dependencia Adapter → Host
-en producción.
+El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON Chat/Follow
+→ converter → Host existen sólo en el runner vertical; no hay dependencia Adapter →
+Host en producción.
 
 ## 2. Datos entrantes y familias portables
 
@@ -101,9 +101,9 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
-interpreta ni almacena. Chat dispone del vertical slice interno completo y Follow llega
-hasta Pipeline completo y lifecycle. Gift, Like, Member, RoomUser y Share continúan sin
-implementación semántica.
+interpreta ni almacena. Chat y Follow disponen del recorrido portable completo hasta
+Host y lifecycle. Gift, Like, Member, RoomUser y Share continúan sin implementación
+semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -145,11 +145,11 @@ texto JSON TikFinity                                [implementado en Adapter]
 → contratos decodificados Chat y Follow             [implementados]
 → FTSTikFinityChatConverter                         [implementado]
 → FTSChatInput portable                             [conversión implementada]
-→ familia interpreta payload y elige flujo          [implementado sólo para Chat]
-→ decisión familiar / candidato de admisión tipado  [Chat implementado]
-→ coordinador inserta payload provisional            [implementado para Chat]
-→ repositorio tipado de payloads                     [Chat conectado]
-→ FTSEnqueueRequest                                  [Chat llama Core.Enqueue]
+→ familia interpreta payload y elige flujo          [Chat y Follow]
+→ decisión familiar / candidato de admisión tipado  [Chat y Follow]
+→ coordinador inserta payload provisional            [Chat y Follow]
+→ repositorio tipado de payloads                     [Chat y Follow]
+→ FTSEnqueueRequest                                  [Chat y Follow llaman Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -186,8 +186,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → repositorio, binding y admisión Follow                  [implementados en 4D.2]
 → dispatch y completion Follow                            [implementados en 4D.2]
 → lifecycle mixto Chat/Follow                             [generalizado en 4D.2]
+→ Host y certificación vertical Follow                    [implementados en 4D.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-→ Host y certificación vertical Follow                    [siguiente fase 4D.3]
+→ certificación vertical equivalente Chat                 [implementada localmente en 4D.3.1]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -217,6 +218,9 @@ certificó Core 10 PASS / 0 FAIL, Pipeline 42 PASS / 0 FAIL, Host 9 PASS / 0 FAI
 Adapter 17 PASS / 0 FAIL, JSON Decoder 20 PASS / 0 FAIL y Checklist 10 PASS / 0 FAIL:
 108 pruebas aprobadas y 0 fallos. El probe WebSocket no fue repetido después de 4D.2;
 esa fase no modificó decoder, transporte ni probe.
+La Fase 4D.3 fue publicada en `2416bf6` y completó el Host compartido y la primera
+certificación JSON Follow → Host. La Fase 4D.3.1 añade localmente la certificación
+equivalente Chat y separa ambas integraciones del runner Host.
 
 ## 4. Contratos públicos actuales
 
@@ -312,7 +316,7 @@ converter, no responsabilidad del helper.
 `FTSFollowFamily::Decide` produce siempre un candidato directo con `FamilyKind = Follow`,
 `Flow = Follow`, prioridad cero, sin override de TTL y sin protección especial. En 4D.2,
 ese candidato ya recorre repositorio tipado, admisión, binding, dispatch, completion y
-lifecycle compartido con Chat. La integración con Host permanece pendiente.
+lifecycle compartido con Chat. La integración con Host quedó completa en 4D.3.
 
 ```text
 Follow decoder          [implementado]
@@ -325,7 +329,7 @@ Follow admission/binding [implementado en 4D.2]
 Follow dispatch          [implementado en 4D.2]
 Follow completion        [implementado en 4D.2]
 Lifecycle Chat/Follow    [generalizado en 4D.2]
-Follow Host              [siguiente fase 4D.3]
+Follow Host              [implementado en 4D.3]
 ```
 
 ### Repositorios tipados de payloads
@@ -749,8 +753,12 @@ Targets explícitos, sin `file(GLOB ...)`:
   en CTest mediante `add_test`.
 - `TikStudioEventPipelineTests` (executable): enlaza únicamente con Pipeline y está
   registrado en CTest mediante `add_test`.
-- `TikStudioEventHostTests` (executable): enlaza con Host y, sólo para la certificación
-  vertical, con el adaptador TikFinity; está registrado en CTest mediante `add_test`.
+- `TikStudioEventHostTests` (executable): enlaza únicamente con Host y certifica su
+  comportamiento desde inputs normalizados; está registrado en CTest mediante
+  `add_test`.
+- `TikStudioVerticalIntegrationTests` (executable): compone Adapter y Host sólo para
+  certificar los recorridos JSON Chat/Follow → converter → Host → Pipeline → Core; está
+  registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
@@ -759,16 +767,17 @@ Targets explícitos, sin `file(GLOB ...)`:
   `TIKSTUDIO_BUILD_TIKFINITY_PROBE=ON` y enlaza Adapter, IXWebSocket y Threads. No se
   registra como prueba.
 
-La Fase 4D.2.1 organiza las suites por responsabilidad sin cambiar los seis ejecutables
-automáticos ni sus registros CTest. `TSTestHarness.h` conserva el contrato común de
-ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro global ni
-dependencia del orden de link. Los runners Pipeline, Host y Adapter registran
-respectivamente 42, 18 y 17 casos después de 4D.3.
+La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis ejecutables
+automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
+común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
+global ni dependencia del orden de link. El refinamiento 4D.3.1 añade un séptimo runner
+automático; Pipeline, Host, Adapter y Vertical registran respectivamente 42, 17, 17 y
+2 casos.
 
 La estructura familiar queda así:
 
 ```text
-Tests/Chat/  → Pipeline, Host y Adapter Chat
+Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Gift|Like|Member|RoomUser|Share/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
@@ -840,11 +849,12 @@ completion, expiración y lifecycle mixto Follow. La validación manual de `dc4f
 terminó con Core 10, Pipeline 42, Host 9, Adapter 17, JSON Decoder 20 y Checklist 10
 casos aprobados, sin fallos: 108 PASS / 0 FAIL.
 
-La cobertura local de 4D.3 conserva los nueve casos Host Chat, añade ocho casos Host
-Follow y una certificación vertical JSON → decoder → converter → Host → completion. El
-runner Host queda en 18 casos y enlaza el adaptador sólo para esa prueba. Sin ejecutar
-los runners durante esta implementación, el total esperado para la validación manual es:
-Core 10, Pipeline 42, Host 18, Adapter 17, JSON Decoder 20 y Checklist 10; 117 casos.
+La cobertura publicada de 4D.3 conserva los nueve casos Host Chat, añade ocho casos Host
+Follow y una certificación vertical JSON Follow → decoder → converter → Host →
+completion. El refinamiento local 4D.3.1 mueve ese caso a un runner vertical y añade el
+equivalente Chat. Sin ejecutar los runners durante esta implementación, el resultado
+esperado para la validación manual es: Core 10, Pipeline 42, Host 17, Adapter 17, JSON
+Decoder 20, Checklist 10 y Vertical Integration 2; 118 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1292,13 +1302,28 @@ Core 10, Pipeline 42, Host 18, Adapter 17, JSON Decoder 20 y Checklist 10; 117 c
   JSON Follow → decoder → converter → Host → completion.
 - El adaptador se enlaza con el runner Host sólo para la prueba vertical; no existe una
   dependencia Adapter → Host en producción ni conexión WebSocket → Host.
-- Los cambios permanecen locales y sin commit. No se compiló ni se ejecutaron pruebas
-  durante la implementación; la validación manual esperada totaliza 117 casos.
+- Fue publicada en `2416bf6` como
+  `feat(host): complete follow vertical integration`.
+
+### Fase 4D.3.1 — Refinamiento de certificación vertical Chat/Follow
+
+- Corrige una asimetría exclusiva de certificación: Chat y Follow ya tenían el mismo
+  nivel funcional A → B → C, pero sólo Follow recorría JSON → Host en una prueba.
+- Añade el caso vertical equivalente Chat sin reducir las comprobaciones del caso
+  Follow existente.
+- Separa las pruebas que comienzan con inputs portables de las integraciones que
+  comienzan con JSON TikFinity.
+- `TikStudioEventHostTests` vuelve a enlazar únicamente Host y registra 17 casos;
+  `TikStudioVerticalIntegrationTests` enlaza Host y Adapter y registra los dos casos
+  verticales en orden Chat, Follow.
+- WebSocket → Host continúa pendiente para ambos eventos. No se modificó producción.
+- Los cambios permanecen locales y sin commit. No se compiló ni se ejecutaron pruebas;
+  la validación manual esperada totaliza 118 casos.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `d2cfca3` más los cambios locales de 4D.3.
+  `2416bf6` más los cambios locales de 4D.3.1.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1316,9 +1341,11 @@ Core 10, Pipeline 42, Host 18, Adapter 17, JSON Decoder 20 y Checklist 10; 117 c
   payloads, core administra emisiones.
 - El vertical slice portable interno de Chat, el Pipeline completo de Follow y la
   organización 4D.2.1 con su corrección están publicados.
-- La Fase 4D.3 completa localmente el Host y la certificación vertical Follow; debe
-  compilarse y ejecutar sus runners manualmente antes de publicar.
+- La Fase 4D.3 publicó el Host compartido y la certificación vertical Follow. El
+  refinamiento 4D.3.1 alinea localmente la certificación Chat/Follow y debe validarse
+  manualmente antes de publicar.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
-- No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios, bindings,
-  Simulator, Console, procesadores concretos, efectos ni UE5 sin especificación separada.
+- No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,
+  bindings, Simulator, Console, procesadores concretos, efectos ni UE5 sin
+  especificación separada.
