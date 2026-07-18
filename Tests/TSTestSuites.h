@@ -17,8 +17,10 @@ namespace TikStudio::Tests
 
     void RegisterChatHostTests(FTSTestCases& Tests);
     void RegisterFollowHostTests(FTSTestCases& Tests);
+    void RegisterShareHostTests(FTSTestCases& Tests);
     void RegisterChatVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterFollowVerticalIntegrationTests(FTSTestCases& Tests);
+    void RegisterShareVerticalIntegrationTests(FTSTestCases& Tests);
 
     void RegisterTikFinityChatAdapterTests(FTSTestCases& Tests);
     void RegisterTikFinityFollowAdapterTests(FTSTestCases& Tests);

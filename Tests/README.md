@@ -1,8 +1,7 @@
 # Organización de pruebas
 
-`Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat y Follow
-tienen completos Adapter, Pipeline, Host e integración vertical. Share tiene completos
-Adapter y Pipeline; Host e integración vertical continúan pendientes. Gift, Like,
+`Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow y
+Share tienen completos Adapter, Pipeline, Host e integración vertical. Gift, Like,
 Member y RoomUser conservan sólo su directorio hasta que exista comportamiento para
 probar.
 
@@ -22,10 +21,10 @@ Las pruebas verticales permanecen organizadas dentro del directorio de cada even
 Cada evento que complete este recorrido debe añadir su equivalente vertical al runner
 de integración, sin mezclarlo con sus pruebas propias del Host.
 
-Share dispone de repositorio tipado, admisión coordinada, dispatch y completion dentro
-del Pipeline. Todavía no tiene Host ni prueba vertical. Su familia produce
-exclusivamente el flujo directo `Share`; cualquier semántica `ShareMilestone` requiere
-una especificación posterior.
+Share dispone de repositorio tipado, admisión coordinada, dispatch, completion, Host y
+certificación vertical JSON → Host. Su familia produce exclusivamente
+`ETSEventFlow::Share`; `ShareMilestone` no está implementado y requiere una
+especificación posterior.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

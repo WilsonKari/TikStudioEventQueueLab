@@ -72,6 +72,23 @@ namespace TikStudio::Tests
         return Input;
     }
 
+    [[nodiscard]]
+    inline FTSShareInput MakeShareInput(const std::string& Label)
+    {
+        FTSShareInput Input;
+        Input.User.UniqueId = Label + "-user";
+        Input.User.Nickname = Label + " nickname";
+        Input.User.ProfilePictureUrl = "https://example.test/share.png";
+        Input.User.FollowRole = 4;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 8;
+        Input.User.GifterLevel = 12;
+        Input.User.TeamMemberLevel = 14;
+        return Input;
+    }
+
     inline void RequireUserEqual(
         const FTSUserSnapshot& Actual,
         const FTSUserSnapshot& Expected,
@@ -146,6 +163,15 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireShareInputEqual(
+        const FTSShareInput& Actual,
+        const FTSShareInput& Expected,
+        const std::string& Context
+    )
+    {
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSEventQueueSettings MakeChatSettings(
         std::uint32_t MaxSlots = 10,
@@ -189,6 +215,27 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeShareSettings(
+        std::uint32_t MaxSlots = 10,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{25000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* ShareSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Share);
+        Require(ShareSettings != nullptr, "Share settings must exist");
+        ShareSettings->bEnabled = true;
+        ShareSettings->MaxSlots = MaxSlots;
+        ShareSettings->TTL = TTL;
+        ShareSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeChatFollowSettings(
         std::uint32_t ChatMaxSlots = 10,
         std::uint32_t FollowMaxSlots = 10,
@@ -211,6 +258,32 @@ namespace TikStudio::Tests
         FollowSettings->MaxSlots = FollowMaxSlots;
         FollowSettings->TTL = FollowTTL;
         FollowSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeChatShareSettings(
+        std::uint32_t ChatMaxSlots = 10,
+        std::uint32_t ShareMaxSlots = 10,
+        std::chrono::milliseconds ChatTTL = std::chrono::milliseconds{8000},
+        std::chrono::milliseconds ShareTTL = std::chrono::milliseconds{25000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(
+            ChatMaxSlots,
+            ChatTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* ShareSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Share);
+        Require(ShareSettings != nullptr, "Share settings must exist");
+        ShareSettings->bEnabled = true;
+        ShareSettings->MaxSlots = ShareMaxSlots;
+        ShareSettings->TTL = ShareTTL;
+        ShareSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
         return Settings;
     }
 
@@ -269,6 +342,19 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedShareAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        return RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::ShareInput,
+            Context
+        );
+    }
+
+    [[nodiscard]]
     inline const FTSChatProcessingDispatch& RequireChatDispatch(
         const FTSEventHostCycleResult& Cycle,
         const std::string& Context
@@ -300,6 +386,24 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::Follow,
             Context + ": Follow dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSShareProcessingDispatch& RequireShareDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSShareProcessingDispatch* Dispatch =
+            std::get_if<FTSShareProcessingDispatch>(&*Cycle.Dispatch);
+        Require(Dispatch != nullptr, Context + ": Share dispatch expected");
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::Share,
+            Context + ": Share dispatch identity and flow"
         );
         return *Dispatch;
     }
