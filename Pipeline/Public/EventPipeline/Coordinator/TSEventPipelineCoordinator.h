@@ -5,8 +5,11 @@
 #include "EventPipeline/Processing/TSChatProcessingDispatch.h"
 #include "EventPipeline/Processing/TSFollowProcessingCompletion.h"
 #include "EventPipeline/Processing/TSFollowProcessingDispatch.h"
+#include "EventPipeline/Processing/TSShareProcessingCompletion.h"
+#include "EventPipeline/Processing/TSShareProcessingDispatch.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventPipeline/Repositories/TSFollowPayloadRepository.h"
+#include "EventPipeline/Repositories/TSSharePayloadRepository.h"
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
 
 #include <cstddef>
@@ -53,6 +56,9 @@ using FTSChatDispatchResult =
 using FTSFollowDispatchResult =
     TTSPipelineDispatchResult<FTSFollowProcessingDispatch>;
 
+using FTSShareDispatchResult =
+    TTSPipelineDispatchResult<FTSShareProcessingDispatch>;
+
 // Orquesta autoridades independientes sin asumir la semántica ni el ownership de ellas.
 class FTSEventPipelineCoordinator final
 {
@@ -79,10 +85,16 @@ public:
     FTSPipelineAdmissionResult SubmitFollow(FTSFollowInput Input);
 
     [[nodiscard]]
+    FTSPipelineAdmissionResult SubmitShare(FTSShareInput Input);
+
+    [[nodiscard]]
     FTSChatDispatchResult BeginChatProcessing();
 
     [[nodiscard]]
     FTSFollowDispatchResult BeginFollowProcessing();
+
+    [[nodiscard]]
+    FTSShareDispatchResult BeginShareProcessing();
 
     [[nodiscard]]
     FTSChatProcessingCompletionResult CompleteChatProcessing(
@@ -92,6 +104,12 @@ public:
 
     [[nodiscard]]
     FTSFollowProcessingCompletionResult CompleteFollowProcessing(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    FTSShareProcessingCompletionResult CompleteShareProcessing(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
     );
@@ -202,6 +220,46 @@ public:
         return true;
     }
 
+    template <typename TCallback>
+    [[nodiscard]]
+    bool VisitSharePayloadForEmission(
+        FTSEmissionId EmissionId,
+        TCallback&& Callback
+    ) const
+    {
+        FTSEmissionBinding Binding;
+        const bool bFoundBinding = BindingRegistry.Visit(
+            EmissionId,
+            [&](const FTSEmissionBinding& StoredBinding)
+            {
+                Binding = StoredBinding;
+            }
+        );
+
+        if (!bFoundBinding)
+        {
+            return false;
+        }
+
+        if (Binding.FamilyKind != ETSEventFamilyKind::Share ||
+            Binding.ExpectedFlow != ETSEventFlow::Share)
+        {
+            throw std::logic_error("Emission binding is not a Share binding");
+        }
+
+        const bool bFoundPayload = SharePayloadRepository.Visit(
+            Binding.PayloadHandle,
+            std::forward<TCallback>(Callback)
+        );
+
+        if (!bFoundPayload)
+        {
+            throw std::logic_error("Share binding references a missing payload");
+        }
+
+        return true;
+    }
+
     [[nodiscard]]
     std::size_t GetBindingCount() const noexcept;
 
@@ -210,6 +268,9 @@ public:
 
     [[nodiscard]]
     std::size_t GetFollowPayloadCount() const noexcept;
+
+    [[nodiscard]]
+    std::size_t GetSharePayloadCount() const noexcept;
 
 private:
     template <typename TPayload, typename TRepository>
@@ -260,7 +321,8 @@ private:
     TikStudioEventQueueSystem Core;
     FTSChatPayloadRepository ChatPayloadRepository;
     FTSFollowPayloadRepository FollowPayloadRepository;
+    FTSSharePayloadRepository SharePayloadRepository;
     FTSEmissionBindingRegistry BindingRegistry;
-    // Chat y Follow comparten este ready porque el core posee un único InFlight.
+    // Chat, Follow y Share comparten el ready porque el core posee un único InFlight.
     std::optional<FTSEmissionEnvelope> PendingReadyEmission;
 };

@@ -2,6 +2,7 @@
 
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Families/TSFollowFamily.h"
+#include "EventPipeline/Families/TSShareFamily.h"
 
 #include <stdexcept>
 #include <type_traits>
@@ -14,8 +15,14 @@ static_assert(
 static_assert(
     std::is_nothrow_move_constructible_v<FTSFollowProcessingDispatch>
 );
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSShareProcessingDispatch>
+);
 static_assert(std::is_nothrow_move_constructible_v<FTSChatDispatchResult>);
 static_assert(std::is_nothrow_move_constructible_v<FTSFollowDispatchResult>);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSShareDispatchResult>
+);
 static_assert(
     std::is_nothrow_move_constructible_v<FTSProcessingCompletionResult>
 );
@@ -117,7 +124,9 @@ namespace
             (FamilyKind == ETSEventFamilyKind::Chat &&
                 Flow == ETSEventFlow::Chat) ||
             (FamilyKind == ETSEventFamilyKind::Follow &&
-                Flow == ETSEventFlow::Follow);
+                Flow == ETSEventFlow::Follow) ||
+            (FamilyKind == ETSEventFamilyKind::Share &&
+                Flow == ETSEventFlow::Share);
     }
 
     void ValidateSupportedFamilyFlowPair(
@@ -242,7 +251,8 @@ namespace
     bool HasPayloadForBinding(
         const FTSEmissionBinding& Binding,
         const FTSChatPayloadRepository& ChatPayloadRepository,
-        const FTSFollowPayloadRepository& FollowPayloadRepository
+        const FTSFollowPayloadRepository& FollowPayloadRepository,
+        const FTSSharePayloadRepository& SharePayloadRepository
     )
     {
         switch (Binding.FamilyKind)
@@ -263,6 +273,14 @@ namespace
                 }
             );
 
+        case ETSEventFamilyKind::Share:
+            return SharePayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [](const FTSSharePayload&)
+                {
+                }
+            );
+
         default:
             throw std::logic_error(
                 "Lifecycle references an unsupported payload family"
@@ -274,7 +292,8 @@ namespace
     bool ErasePayloadForBinding(
         const FValidatedLifecycleEntry& Entry,
         FTSChatPayloadRepository& ChatPayloadRepository,
-        FTSFollowPayloadRepository& FollowPayloadRepository
+        FTSFollowPayloadRepository& FollowPayloadRepository,
+        FTSSharePayloadRepository& SharePayloadRepository
     )
     {
         switch (Entry.FamilyKind)
@@ -284,6 +303,9 @@ namespace
 
         case ETSEventFamilyKind::Follow:
             return FollowPayloadRepository.Erase(Entry.PayloadHandle);
+
+        case ETSEventFamilyKind::Share:
+            return SharePayloadRepository.Erase(Entry.PayloadHandle);
 
         default:
             throw std::logic_error(
@@ -296,6 +318,7 @@ namespace
         FTSEmissionBindingRegistry& BindingRegistry,
         FTSChatPayloadRepository& ChatPayloadRepository,
         FTSFollowPayloadRepository& FollowPayloadRepository,
+        FTSSharePayloadRepository& SharePayloadRepository,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
         const FTSEmissionLifecycleEvents& LifecycleEvents,
         ELifecycleBatchKind BatchKind,
@@ -392,7 +415,8 @@ namespace
             if (!HasPayloadForBinding(
                     Binding,
                     ChatPayloadRepository,
-                    FollowPayloadRepository
+                    FollowPayloadRepository,
+                    SharePayloadRepository
                 ))
             {
                 throw std::logic_error(
@@ -427,7 +451,8 @@ namespace
             if (!ErasePayloadForBinding(
                     Entry,
                     ChatPayloadRepository,
-                    FollowPayloadRepository
+                    FollowPayloadRepository,
+                    SharePayloadRepository
                 ))
             {
                 throw std::logic_error(
@@ -561,6 +586,18 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitFollow(
         ETSEventFamilyKind::Follow,
         ETSEventFlow::Follow,
         FollowPayloadRepository
+    );
+}
+
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitShare(
+    FTSShareInput Input
+)
+{
+    return SubmitDecision(
+        FTSShareFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::Share,
+        SharePayloadRepository
     );
 }
 
@@ -701,6 +738,18 @@ FTSFollowDispatchResult FTSEventPipelineCoordinator::BeginFollowProcessing()
         ETSEventFamilyKind::Follow,
         ETSEventFlow::Follow,
         FollowPayloadRepository
+    );
+}
+
+FTSShareDispatchResult FTSEventPipelineCoordinator::BeginShareProcessing()
+{
+    return BeginProcessing<
+        FTSSharePayload,
+        FTSShareProcessingDispatch
+    >(
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::Share,
+        SharePayloadRepository
     );
 }
 
@@ -879,6 +928,21 @@ FTSEventPipelineCoordinator::CompleteFollowProcessing(
     );
 }
 
+FTSShareProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteShareProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::Share,
+        SharePayloadRepository
+    );
+}
+
 FTSPumpResult FTSEventPipelineCoordinator::Pump()
 {
     FTSPumpResult Result = Core.Pump();
@@ -926,6 +990,11 @@ std::size_t FTSEventPipelineCoordinator::GetFollowPayloadCount() const noexcept
     return FollowPayloadRepository.Size();
 }
 
+std::size_t FTSEventPipelineCoordinator::GetSharePayloadCount() const noexcept
+{
+    return SharePayloadRepository.Size();
+}
+
 void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
     const FTSPumpOutcome& PumpOutcome
 )
@@ -954,6 +1023,7 @@ void FTSEventPipelineCoordinator::ProcessPendingLifecycleEvents(
         BindingRegistry,
         ChatPayloadRepository,
         FollowPayloadRepository,
+        SharePayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::PendingOnly,
@@ -970,6 +1040,7 @@ void FTSEventPipelineCoordinator::ProcessConfirmLifecycleEvents(
         BindingRegistry,
         ChatPayloadRepository,
         FollowPayloadRepository,
+        SharePayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::Confirm,
@@ -986,6 +1057,7 @@ void FTSEventPipelineCoordinator::ProcessCancelLifecycleEvents(
         BindingRegistry,
         ChatPayloadRepository,
         FollowPayloadRepository,
+        SharePayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::Cancel,

@@ -3,10 +3,10 @@
 Última actualización: 2026-07-17.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `a63ad16`
-(`test: align chat and follow vertical certification`).
+rama `main`, partiendo de HEAD `f2527b2`
+(`feat(share): add conversion and direct family decision`).
 
-Los cambios de la Fase 4E.1 permanecen locales y sin commit.
+Los cambios de la Fase 4E.2 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -74,7 +74,7 @@ FTSTikFinityMappedEvent                      [sólo frontera TikFinity]
         ↓
 Chat → FTSTikFinityChatConverter             [implementado]
 Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
-Share → FTSTikFinityShareConverter           [implementado localmente en 4E.1]
+Share → FTSTikFinityShareConverter           [implementado en 4E.1]
 otros cuatro → converters tipados            [pendientes]
         ↓
 FTS*Input portable                            [Chat, Follow y Share implementados]
@@ -103,8 +103,8 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat y Follow disponen del recorrido portable completo hasta
-Host y lifecycle. Share tiene localmente converter y decisión familiar directa; Gift,
-Like, Member y RoomUser continúan sin implementación semántica.
+Host y lifecycle. Share dispone localmente del Pipeline completo, pero todavía no de
+Host; Gift, Like, Member y RoomUser continúan sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -143,14 +143,14 @@ El recorrido previsto y el punto exacto alcanzado son:
 texto JSON TikFinity                                [implementado en Adapter]
 → decoder tipado de siete eventos                   [implementado]
 → FTSTikFinityMappedEvent                           [implementado]
-→ contratos decodificados Chat y Follow             [implementados]
+→ contratos decodificados Chat, Follow y Share      [implementados]
 → FTSTikFinityChatConverter                         [implementado]
 → FTSChatInput portable                             [conversión implementada]
-→ familia interpreta payload y elige flujo          [Chat y Follow]
-→ decisión familiar / candidato de admisión tipado  [Chat y Follow]
-→ coordinador inserta payload provisional            [Chat y Follow]
-→ repositorio tipado de payloads                     [Chat y Follow]
-→ FTSEnqueueRequest                                  [Chat y Follow llaman Core.Enqueue]
+→ familia interpreta payload y elige flujo          [Chat, Follow y Share]
+→ decisión familiar / candidato de admisión tipado  [Chat, Follow y Share]
+→ coordinador inserta payload provisional            [Chat, Follow y Share]
+→ repositorio tipado de payloads                     [Chat, Follow y Share]
+→ FTSEnqueueRequest                                  [Chat, Follow y Share llaman Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -158,22 +158,22 @@ texto JSON TikFinity                                [implementado en Adapter]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
-→ binding externo EmissionId → PayloadHandle          [Chat y Follow conectados]
-→ lifecycle de Enqueue libera binding y payload       [generalizado Chat/Follow]
+→ binding externo EmissionId → PayloadHandle          [Chat, Follow y Share conectados]
+→ lifecycle de Enqueue libera binding y payload       [generalizado Chat/Follow/Share]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-→ coordinador captura ready global de un solo uso       [Chat y Follow]
-→ Begin*Processing produce copia propietaria            [Chat y Follow]
-→ binding externo Bound → Processing                    [Chat y Follow]
-→ coordinador entrega despacho tipado propietario       [Chat y Follow]
+→ coordinador captura ready global de un solo uso       [Chat, Follow y Share]
+→ Begin*Processing produce copia propietaria            [Chat, Follow y Share]
+→ binding externo Bound → Processing                    [Chat, Follow y Share]
+→ coordinador entrega despacho tipado propietario       [Chat, Follow y Share]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-→ Succeeded coordina Confirm                            [Chat y Follow]
-→ Cancelled / Failed coordinan CancelInFlight           [Chat y Follow]
-→ lifecycle terminal enruta y limpia payload tipado     [Chat y Follow]
+→ Succeeded coordina Confirm                            [Chat, Follow y Share]
+→ Cancelled / Failed coordinan CancelInFlight           [Chat, Follow y Share]
+→ lifecycle terminal enruta y limpia payload tipado     [Chat, Follow y Share]
 → Confirm captura el siguiente ready multi-familia      [implementado]
-→ Pump y expiración se exponen por el coordinador       [Chat y Follow]
+→ Pump y expiración se exponen por el coordinador       [Chat, Follow y Share]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
@@ -189,13 +189,15 @@ texto JSON TikFinity                                [implementado en Adapter]
 → lifecycle mixto Chat/Follow                             [generalizado en 4D.2]
 → Host y certificación vertical Follow                    [implementados en 4D.3]
 → certificación vertical equivalente Chat                 [publicada en 4D.3.1]
-→ FTSTikFinityShareConverter                               [implementado localmente en 4E.1]
-→ FTSShareFamily produce candidato Flow Share              [implementado localmente en 4E.1]
+→ FTSTikFinityShareConverter                               [implementado en 4E.1]
+→ FTSShareFamily produce candidato Flow Share              [implementado en 4E.1]
+→ repositorio, binding y admisión Share                    [implementados localmente en 4E.2]
+→ dispatch y completion Share                              [implementados localmente en 4E.2]
+→ lifecycle mixto Chat/Follow/Share                        [generalizado localmente en 4E.2]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat A → B → C                                             [completo]
 Follow A → B → C                                           [completo]
-Share A                                                    [implementado localmente en 4E.1]
-Share B                                                    [pendiente]
+Share A → B                                                [completo localmente]
 Share C                                                    [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -230,6 +232,8 @@ La Fase 4D.3 fue publicada en `2416bf6` y completó el Host compartido y la prim
 certificación JSON Follow → Host. La Fase 4D.3.1 fue publicada en `a63ad16`, separó
 ambas integraciones del runner Host y añadió la certificación equivalente Chat. El
 propietario certificó 118 PASS / 0 FAIL.
+La Fase 4E.1 fue publicada en `f2527b2`; el propietario certificó el baseline completo
+con 127 PASS / 0 FAIL. La Fase 4E.2 amplía localmente sólo el Pipeline Share.
 
 ## 4. Contratos públicos actuales
 
@@ -355,8 +359,10 @@ override de TTL y sin protección especial. `ShareMilestone` permanece reservado
 TikFinity no aporta un contador de hito y no existe umbral ni regla aprobada que permita
 inferirlo.
 
-Share se encuentra únicamente en fase A. No tiene repositorio, admisión coordinada,
-binding, dispatch, completion, Host ni integración vertical JSON → Host.
+En 4E.2, Share entra en el Coordinator compartido mediante un repositorio tipado propio,
+admisión y binding `Share / Share`, dispatch propietario y completion terminal. Reutiliza
+las rutas comunes sin crear otra cola, otro ready o un segundo `InFlight`. Todavía no
+tiene Host ni integración vertical JSON → Host.
 
 ### Repositorios tipados de payloads
 
@@ -369,12 +375,13 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 - `Erase(Handle)`, que sólo tiene éxito una vez por entrada;
 - `Size()` y `Empty()`.
 
-`FTSChatPayloadRepository` y `FTSFollowPayloadRepository` son aliases tipados de
-instancias independientes. Ninguno conoce identidades de emisión, flujos, familias,
-bindings, lifecycle events ni procesadores. El handle sólo identifica una entrada de su
-instancia; Chat y Follow pueden asignar el mismo valor numérico porque `FamilyKind`
-enruta el repositorio correcto. Ambos conservan autoridad exclusiva y no pueden copiarse
-ni moverse.
+`FTSChatPayloadRepository`, `FTSFollowPayloadRepository` y
+`FTSSharePayloadRepository` son aliases tipados de instancias independientes. Ninguno
+conoce identidades de emisión, flujos, familias, bindings, lifecycle events ni
+procesadores. El handle sólo identifica una entrada de su instancia; varios
+repositorios pueden asignar el mismo valor numérico porque `FamilyKind` enruta la
+autoridad correcta. Los tres conservan autoridad exclusiva y no pueden copiarse ni
+moverse.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
 condición que sólo existe desde la perspectiva de la coordinación externa durante este
@@ -411,14 +418,14 @@ los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa par
 el binding Chat después de una admisión aceptada. Como autoridad estable de los bindings
 por `EmissionId`, no puede copiarse, asignarse ni moverse.
 
-### Coordinador de admisión Chat y Follow
+### Coordinador de admisión Chat, Follow y Share
 
 `FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, los
-repositorios Chat/Follow y el registro de bindings. Es no copiable y no movible, y no
-expone referencias mutables a ninguna autoridad.
+repositorios Chat/Follow/Share y el registro de bindings. Es no copiable y no movible,
+y no expone referencias mutables a ninguna autoridad.
 
-`SubmitChat` y `SubmitFollow` conservan este orden mediante una guarda provisional
-templada:
+`SubmitChat`, `SubmitFollow` y `SubmitShare` conservan este orden mediante una guarda
+provisional templada:
 
 ```text
 familia tipada::Decide
@@ -439,20 +446,20 @@ Ante aceptación, el payload permanece en la misma entrada y el binding existe a
 exponer un posible `AutoPumpOutcome`. Un fallo posterior se trata como
 invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
 
-El handler privado de lifecycle acepta tandas mixtas Chat/Follow. Valida primero toda la
-tanda, incluida la pareja familia/flujo y la existencia del payload en su repositorio;
-después aplica en orden `TerminalPendingHandling`, borrado tipado y borrado del binding.
-Una familia todavía no integrada produce `std::logic_error`.
+El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share. Valida primero
+toda la tanda, incluida la pareja familia/flujo y la existencia del payload en su
+repositorio; después aplica en orden `TerminalPendingHandling`, borrado tipado y borrado
+del binding. Una familia todavía no integrada produce `std::logic_error`.
 
-La inspección pública permite visitar bindings y payloads Chat/Follow mediante
+La inspección pública permite visitar bindings y payloads Chat/Follow/Share mediante
 `EmissionId`, además de consultar sus conteos, sin exponer ownership ni referencias
 mutables.
 
-### Despacho autorizado de Chat y Follow
+### Despacho autorizado de Chat, Follow y Share
 
 El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
-`PendingReadyEmission`, compartida por Chat y Follow porque el core sólo posee un
-`InFlight`. Es una notificación de despacho pendiente, no una réplica del estado
+`PendingReadyEmission`, compartida por Chat, Follow y Share porque el core sólo posee
+un `InFlight`. Es una notificación de despacho pendiente, no una réplica del estado
 autoritativo.
 
 `CaptureCorePumpOutcome` ignora `NotRequested`, `QueueEmpty` y `Busy` sin eliminar una
@@ -461,10 +468,11 @@ familia/flujo soportada y estado `Bound`; nunca sobrescribe otro ready pendiente
 `AutoPumpOutcome` que permanece dentro de `FTSEnqueueResult` es diagnóstico y no autoriza
 un despacho creado por código externo.
 
-`BeginChatProcessing()` y `BeginFollowProcessing()` sólo autorizan su propia familia. Si
-el ready pertenece a la otra, devuelven `NoEmissionReady` y preservan ready, binding y
-payload. `PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni
-autorizar procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
+`BeginChatProcessing()`, `BeginFollowProcessing()` y `BeginShareProcessing()` sólo
+autorizan su propia familia. Si el ready pertenece a otra, devuelven
+`NoEmissionReady` y preservan ready, binding y payload.
+`PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni autorizar
+procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
 
 Las comprobaciones estáticas exigen que despacho y resultado puedan moverse sin lanzar.
 Si cualquier copia o validación falla antes de la transición, binding, payload y ready
@@ -472,12 +480,13 @@ permanecen intactos y la operación puede reintentarse. Después de una transici
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
 almacenados mientras la emisión permanece `Processing`.
 
-### Finalización y lifecycle completo de Chat y Follow
+### Finalización y lifecycle completo de Chat, Follow y Share
 
-`CompleteChatProcessing` y `CompleteFollowProcessing` conservan wrappers públicos
-tipados sobre un helper común. Validan identidad, familia, flujo, handle, estado y
-payload antes de solicitar una transición terminal al core. `Succeeded` llama a
-`Confirm`; `Cancelled` y `Failed` llaman a `CancelInFlight`, sin retry implícito.
+`CompleteChatProcessing`, `CompleteFollowProcessing` y `CompleteShareProcessing`
+conservan wrappers públicos tipados sobre un helper común. Validan identidad, ausencia
+de cualquier ready pendiente, familia, flujo, handle, estado y payload antes de
+solicitar una transición terminal al core. `Succeeded` llama a `Confirm`; `Cancelled`
+y `Failed` llaman a `CancelInFlight`, sin retry implícito.
 
 El resultado portable conserva el `ETSProcessingResult` comunicado por el procesador y
 expone exactamente uno de los resultados del core: `ConfirmResult` para `Succeeded` o
@@ -764,7 +773,7 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat, Follow y Share,
-  y coordinador Chat/Follow de admisión, despacho y finalización; publica
+  y coordinador Chat/Follow/Share de admisión, despacho y finalización; publica
   `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
   propietario de Chat/Follow; publica `Host/Public`, enlaza públicamente con Pipeline y
@@ -798,15 +807,15 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. Después de 4E.1, Pipeline, Host, Adapter y Vertical registran
-respectivamente 44, 17, 24 y 2 casos.
+automático. Después de 4E.2, Pipeline, Host, Adapter y Vertical registran
+respectivamente 56, 17, 24 y 2 casos.
 
 La estructura familiar queda así:
 
 ```text
 Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
-Tests/Share/ → Adapter y familia Pipeline de fase A
+Tests/Share/ → Adapter, familia y Coordinator Pipeline
 Tests/Gift|Like|Member|RoomUser/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -882,10 +891,13 @@ Follow y una certificación vertical JSON Follow → decoder → converter → H
 completion. La Fase 4D.3.1 movió ese caso a un runner vertical y añadió el equivalente
 Chat; el propietario certificó 118 PASS / 0 FAIL.
 
-La cobertura local de 4E.1 añade siete casos Adapter Share y dos casos de familia
-Pipeline Share. Sin ejecutar los runners durante esta implementación, el resultado
-esperado para la validación manual es: Core 10, Pipeline 44, Host 17, Adapter 24, JSON
-Decoder 20, Checklist 10 y Vertical Integration 2; 127 casos.
+La cobertura publicada de 4E.1 añadió siete casos Adapter Share y dos casos de familia
+Pipeline Share; el propietario certificó 127 PASS / 0 FAIL. La cobertura local de
+4E.2 añade doce casos Coordinator Share para admisión, ready global, dispatch,
+completion, interacción con Chat/Follow y expiración. Sin ejecutar los runners durante
+esta implementación, el resultado esperado para la validación manual es: Core 10,
+Pipeline 56, Host 17, Adapter 24, JSON Decoder 20, Checklist 10 y Vertical Integration
+2; 139 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1364,13 +1376,27 @@ Decoder 20, Checklist 10 y Vertical Integration 2; 127 casos.
   inferirlo.
 - Añade siete casos Adapter y dos casos de familia Pipeline. Share todavía no tiene
   repositorio, Coordinator, Host ni integración vertical.
+- Fue publicada en `f2527b2` como
+  `feat(share): add conversion and direct family decision`.
+- El propietario certificó 127 PASS / 0 FAIL.
+
+### Fase 4E.2 — Share B: Pipeline completo y lifecycle
+
+- Añade `FTSSharePayloadRepository`, aliases tipados de dispatch/completion y las APIs
+  públicas de admisión, inspección, despacho y finalización Share.
+- Reutiliza `SubmitDecision`, `BeginProcessing` y `CompleteProcessing`; no crea otra
+  cola, registro de bindings, notificación ready o autoridad `InFlight`.
+- Amplía la pareja soportada con `Share / Share` y enruta lifecycle al repositorio Share
+  por `FamilyKind`, preservando la validación completa previa a mutaciones.
+- Mantiene `ShareMilestone` reservado y no añade contadores, umbrales ni acumulación.
+- Añade doce casos Coordinator Share. Host e integración vertical permanecen pendientes.
 - Los cambios permanecen locales y sin commit. No se compiló ni se ejecutaron pruebas;
-  la validación manual esperada totaliza 127 casos.
+  la validación manual esperada totaliza 139 casos.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `a63ad16` más los cambios locales de 4E.1.
+  `f2527b2` más los cambios locales de 4E.2.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1391,8 +1417,9 @@ Decoder 20, Checklist 10 y Vertical Integration 2; 127 casos.
 - La Fase 4D.3 publicó el Host compartido y la certificación vertical Follow. El
   refinamiento 4D.3.1 publicó la certificación simétrica Chat/Follow y quedó validado
   manualmente con 118 PASS / 0 FAIL.
-- La Fase 4E.1 inicia localmente Share A. La siguiente fase prevista es 4E.2, pero no
-  debe iniciarse sin una especificación separada.
+- La Fase 4E.1 publicó Share A y fue certificada con 127 PASS / 0 FAIL. La Fase 4E.2
+  completa localmente Share B. La siguiente fase prevista es 4E.3, pero no debe
+  iniciarse sin una especificación separada.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

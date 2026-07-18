@@ -237,6 +237,40 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeShareSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* ShareSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Share);
+        Require(ShareSettings != nullptr, "Share settings must be available");
+        ShareSettings->bEnabled = bEnabled;
+        ShareSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalShareSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{25000},
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeShareSettings(true, 10);
+        FTSFlowQueueSettings* ShareSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Share);
+        Require(ShareSettings != nullptr, "Share settings must be available");
+        ShareSettings->TTL = TTL;
+        ShareSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -283,6 +317,29 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedShare(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSShareInput Input = MakeCompleteShareInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitShare(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Share admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Share admission must have a valid identity"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -308,6 +365,21 @@ namespace TikStudio::Tests
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready Follow must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyShare(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSShareDispatchResult Dispatch =
+            Coordinator.BeginShareProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Share must produce a dispatch"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }

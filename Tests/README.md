@@ -1,9 +1,10 @@
 # Organización de pruebas
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat y Follow
-tienen el recorrido completo A → B → C. Share implementa únicamente la fase A:
-converter y decisión familiar directa. Gift, Like, Member y RoomUser conservan sólo su
-directorio hasta que exista comportamiento para probar.
+tienen completos Adapter, Pipeline, Host e integración vertical. Share tiene completos
+Adapter y Pipeline; Host e integración vertical continúan pendientes. Gift, Like,
+Member y RoomUser conservan sólo su directorio hasta que exista comportamiento para
+probar.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -21,9 +22,10 @@ Las pruebas verticales permanecen organizadas dentro del directorio de cada even
 Cada evento que complete este recorrido debe añadir su equivalente vertical al runner
 de integración, sin mezclarlo con sus pruebas propias del Host.
 
-Share todavía no tiene repositorio, Coordinator, Host ni prueba vertical. Su familia
-produce exclusivamente el flujo directo `Share`; cualquier semántica
-`ShareMilestone` requiere una especificación posterior.
+Share dispone de repositorio tipado, admisión coordinada, dispatch y completion dentro
+del Pipeline. Todavía no tiene Host ni prueba vertical. Su familia produce
+exclusivamente el flujo directo `Share`; cualquier semántica `ShareMilestone` requiere
+una especificación posterior.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa
