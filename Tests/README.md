@@ -1,11 +1,9 @@
 # Organización de pruebas
 
-`Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow y
-Share tienen completos Adapter, Pipeline, Host e integración vertical. Like tiene
-completos Adapter, decisión familiar directa, repositorio tipado, admisión, binding,
-dispatch, completion y lifecycle compartido; Host e integración vertical JSON → Host
-permanecen pendientes. Gift, Member y RoomUser conservan sólo su directorio hasta que
-exista comportamiento para probar.
+`Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
+Share y Like tienen completos Adapter tipado, familia directa, Pipeline, Host,
+lifecycle e integración vertical JSON → Host. Gift, Member y RoomUser conservan sólo
+su directorio hasta que exista comportamiento para probar.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -29,8 +27,8 @@ certificación vertical JSON → Host. Su familia produce exclusivamente
 especificación posterior.
 
 Like conserva `LikeCount` y `TotalLikeCount` como datos portables y produce únicamente
-`ETSEventFlow::Like`. `LikeUser` no está implementado; no existe acumulación, umbral ni
-estado semántico para inferirlo.
+`ETSEventFlow::Like`. `LikeUser` permanece reservado y no está implementado; no existe
+acumulación, umbral ni estado semántico para inferirlo.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

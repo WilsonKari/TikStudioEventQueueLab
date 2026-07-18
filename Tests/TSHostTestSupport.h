@@ -89,6 +89,26 @@ namespace TikStudio::Tests
         return Input;
     }
 
+    [[nodiscard]]
+    inline FTSLikeInput MakeLikeInput(const std::string& Label)
+    {
+        FTSLikeInput Input;
+        Input.LikeCount = 5;
+        Input.TotalLikeCount = 50;
+        Input.User.UniqueId = Label + "-user";
+        Input.User.Nickname = Label + " nickname";
+        Input.User.ProfilePictureUrl =
+            "https://example.test/like.png";
+        Input.User.FollowRole = 4;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 8;
+        Input.User.GifterLevel = 12;
+        Input.User.TeamMemberLevel = 14;
+        return Input;
+    }
+
     inline void RequireUserEqual(
         const FTSUserSnapshot& Actual,
         const FTSUserSnapshot& Expected,
@@ -172,6 +192,23 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireLikeInputEqual(
+        const FTSLikeInput& Actual,
+        const FTSLikeInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(
+            Actual.LikeCount == Expected.LikeCount,
+            Context + ": LikeCount"
+        );
+        Require(
+            Actual.TotalLikeCount == Expected.TotalLikeCount,
+            Context + ": TotalLikeCount"
+        );
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSEventQueueSettings MakeChatSettings(
         std::uint32_t MaxSlots = 10,
@@ -236,6 +273,27 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeLikeSettings(
+        std::uint32_t MaxSlots = 10,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{10000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* LikeSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Like);
+        Require(LikeSettings != nullptr, "Like settings must exist");
+        LikeSettings->bEnabled = true;
+        LikeSettings->MaxSlots = MaxSlots;
+        LikeSettings->TTL = TTL;
+        LikeSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeChatFollowSettings(
         std::uint32_t ChatMaxSlots = 10,
         std::uint32_t FollowMaxSlots = 10,
@@ -284,6 +342,32 @@ namespace TikStudio::Tests
         ShareSettings->MaxSlots = ShareMaxSlots;
         ShareSettings->TTL = ShareTTL;
         ShareSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeChatLikeSettings(
+        std::uint32_t ChatMaxSlots = 10,
+        std::uint32_t LikeMaxSlots = 1,
+        std::chrono::milliseconds ChatTTL = std::chrono::milliseconds{8000},
+        std::chrono::milliseconds LikeTTL = std::chrono::milliseconds{10000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(
+            ChatMaxSlots,
+            ChatTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* LikeSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Like);
+        Require(LikeSettings != nullptr, "Like settings must exist");
+        LikeSettings->bEnabled = true;
+        LikeSettings->MaxSlots = LikeMaxSlots;
+        LikeSettings->TTL = LikeTTL;
+        LikeSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
         return Settings;
     }
 
@@ -355,6 +439,19 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedLikeAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        return RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::LikeInput,
+            Context
+        );
+    }
+
+    [[nodiscard]]
     inline const FTSChatProcessingDispatch& RequireChatDispatch(
         const FTSEventHostCycleResult& Cycle,
         const std::string& Context
@@ -404,6 +501,24 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::Share,
             Context + ": Share dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSLikeProcessingDispatch& RequireLikeDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSLikeProcessingDispatch* Dispatch =
+            std::get_if<FTSLikeProcessingDispatch>(&*Cycle.Dispatch);
+        Require(Dispatch != nullptr, Context + ": Like dispatch expected");
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::Like,
+            Context + ": Like dispatch identity and flow"
         );
         return *Dispatch;
     }

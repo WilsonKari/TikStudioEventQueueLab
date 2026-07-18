@@ -120,6 +120,17 @@ namespace
         }
     }
 
+    void ValidateOwnedDispatch(
+        const FTSLikeProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::Like)
+        {
+            throw std::logic_error("Invalid owned Like dispatch");
+        }
+    }
+
     [[nodiscard]]
     FTSEmissionId GetDispatchEmissionId(
         const FTSEventProcessingDispatch& Dispatch
@@ -166,6 +177,12 @@ public:
     }
 
     [[nodiscard]]
+    bool PostLike(FTSLikeInput Input)
+    {
+        return PostCommand(std::move(Input));
+    }
+
+    [[nodiscard]]
     bool PostChatCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
@@ -201,6 +218,19 @@ public:
         ValidateCompletionArguments(EmissionId, ProcessingResult);
         return PostCommand(
             FPostedShareCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
+    bool PostLikeCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        // La familia del ID se valida en el owner thread.
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedLikeCompletion{EmissionId, ProcessingResult}
         );
     }
 
@@ -311,13 +341,22 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedLikeCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     using FPostedCommand = std::variant<
         FTSChatInput,
         FTSFollowInput,
         FPostedChatCompletion,
         FPostedFollowCompletion,
         FTSShareInput,
-        FPostedShareCompletion
+        FPostedShareCompletion,
+        FTSLikeInput,
+        FPostedLikeCompletion
     >;
 
     static_assert(
@@ -395,6 +434,25 @@ private:
                         ETSEventHostCommandKind::ShareCompletion;
                     Result.CompletionResult.emplace(
                         Coordinator.CompleteShareProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
+                },
+                [&](FTSLikeInput& Input)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::LikeInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitLike(std::move(Input))
+                    );
+                },
+                [&](const FPostedLikeCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::LikeCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteLikeProcessing(
                             Completion.EmissionId,
                             Completion.ProcessingResult
                         )
@@ -485,6 +543,28 @@ private:
             return Dispatch;
         }
 
+        case ETSEventFamilyKind::Like:
+        {
+            FTSLikeDispatchResult DispatchResult =
+                Coordinator.BeginLikeProcessing();
+            ValidateDispatchResult(DispatchResult);
+            if (DispatchResult.Status !=
+                ETSPipelineDispatchStatus::Dispatched)
+            {
+                throw std::logic_error(
+                    "Peeked Like ready did not produce a dispatch"
+                );
+            }
+
+            ValidateOwnedDispatch(*DispatchResult.Dispatch);
+            std::optional<FTSEventProcessingDispatch> Dispatch;
+            Dispatch.emplace(
+                std::in_place_type<FTSLikeProcessingDispatch>,
+                std::move(*DispatchResult.Dispatch)
+            );
+            return Dispatch;
+        }
+
         default:
             throw std::logic_error(
                 "Pending ready belongs to an unsupported Host family"
@@ -526,6 +606,11 @@ bool FTSEventExecutionHost::PostShare(FTSShareInput Input)
     return Impl->PostShare(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostLike(FTSLikeInput Input)
+{
+    return Impl->PostLike(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostChatCompletion(
     FTSEmissionId EmissionId,
     ETSProcessingResult ProcessingResult
@@ -548,6 +633,14 @@ bool FTSEventExecutionHost::PostShareCompletion(
 )
 {
     return Impl->PostShareCompletion(EmissionId, ProcessingResult);
+}
+
+bool FTSEventExecutionHost::PostLikeCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostLikeCompletion(EmissionId, ProcessingResult);
 }
 
 FTSEventHostCycleResult FTSEventExecutionHost::RunOneCycle()

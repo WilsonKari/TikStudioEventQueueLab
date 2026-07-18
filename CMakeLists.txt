@@ -185,6 +185,7 @@ add_executable(TikStudioEventHostTests
   Tests/Chat/TSChatHostTests.cpp
   Tests/Follow/TSFollowHostTests.cpp
   Tests/Share/TSShareHostTests.cpp
+  Tests/Like/TSLikeHostTests.cpp
 )
 
 target_include_directories(TikStudioEventHostTests
@@ -207,6 +208,7 @@ add_executable(TikStudioVerticalIntegrationTests
   Tests/Chat/TSChatVerticalIntegrationTests.cpp
   Tests/Follow/TSFollowVerticalIntegrationTests.cpp
   Tests/Share/TSShareVerticalIntegrationTests.cpp
+  Tests/Like/TSLikeVerticalIntegrationTests.cpp
 )
 
 target_include_directories(TikStudioVerticalIntegrationTests

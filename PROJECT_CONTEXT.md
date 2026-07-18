@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `0081ee8`
-(`feat(like): add conversion and direct family decision`).
+rama `main`, partiendo de HEAD `46fdc41`
+(`feat(like): complete pipeline lifecycle`).
 
-Los cambios de la Fase 4F.2 permanecen locales y sin commit.
+Los cambios de la Fase 4F.3 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -80,11 +80,11 @@ otros tres → converters tipados              [pendientes]
         ↓
 FTS*Input portable                            [Chat, Follow, Share y Like implementados]
         ↓
-composición externa → Event Host             [Chat, Follow y Share implementados]
+composición externa → Event Host             [Chat, Follow, Share y Like implementados]
 ```
 
 El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON
-Chat/Follow/Share → converter → Host existen sólo en el runner vertical; no hay
+Chat/Follow/Share/Like → converter → Host existen sólo en el runner vertical; no hay
 dependencia Adapter → Host en producción.
 
 ## 2. Datos entrantes y familias portables
@@ -103,9 +103,9 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
-interpreta ni almacena. Chat, Follow y Share disponen del recorrido portable completo
-hasta Host y lifecycle. Like dispone del Pipeline completo hasta lifecycle, pero aún no
-entra al Host; Gift, Member y RoomUser continúan sin implementación semántica.
+interpreta ni almacena. Chat, Follow, Share y Like disponen del recorrido portable
+completo hasta Host y lifecycle. Gift, Member y RoomUser continúan sin implementación
+semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -199,15 +199,17 @@ texto JSON TikFinity                                [implementado en Adapter]
 → certificación JSON Share → Host                          [publicada en 4E.3]
 → FTSTikFinityLikeConverter                                [publicado en 4F.1]
 → FTSLikePayload y candidato directo Flow Like             [publicados en 4F.1]
-→ repositorio, binding y admisión Like                     [implementados localmente en 4F.2]
-→ dispatch y completion Like                               [implementados localmente en 4F.2]
-→ lifecycle mixto Chat/Follow/Share/Like                   [generalizado localmente en 4F.2]
+→ repositorio, binding y admisión Like                     [publicados en 4F.2]
+→ dispatch y completion Like                               [publicados en 4F.2]
+→ lifecycle mixto Chat/Follow/Share/Like                   [generalizado en 4F.2]
+→ PostLike y PostLikeCompletion en Host compartido         [implementados localmente en 4F.3]
+→ Like en FIFO global y dispatch variant                   [implementado localmente en 4F.3]
+→ certificación JSON Like → Host                           [implementada localmente en 4F.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
-Like    A → B                                              [completo localmente]
-Like    C                                                  [pendiente]
+Like    A → B → C                                          [completo localmente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -245,7 +247,8 @@ La Fase 4E.1 fue publicada en `f2527b2`; el propietario certificó el baseline c
 con 127 PASS / 0 FAIL. La Fase 4E.2 fue publicada en `b890407` y su certificación manual
 terminó con 139 PASS / 0 FAIL. La Fase 4E.3 fue publicada en `3321a2a`; el propietario
 certificó 148 PASS / 0 FAIL. La Fase 4F.1 fue publicada en `0081ee8`; el propietario
-certificó 158 PASS / 0 FAIL. La Fase 4F.2 implementa localmente Like B, sin compilación
+certificó 158 PASS / 0 FAIL. La Fase 4F.2 fue publicada en `46fdc41`; el propietario
+certificó 170 PASS / 0 FAIL. La Fase 4F.3 implementa localmente Like C, sin compilación
 ni ejecución de pruebas por el agente.
 
 ## 4. Contratos públicos actuales
@@ -397,8 +400,13 @@ admite Like sólo mediante la pareja `Like / Like`: `SubmitLike` coordina admisi
 binding, `BeginLikeProcessing` entrega un snapshot propietario y
 `CompleteLikeProcessing` usa `Confirm` para `Succeeded` o `CancelInFlight` para
 `Cancelled` y `Failed`. Like participa en el lifecycle compartido sin crear otro Core,
-ready, `InFlight` o `BindingRegistry`. `LikeUser` permanece reservado. Host e
-integración vertical Like todavía no existen.
+ready, `InFlight` o `BindingRegistry`.
+
+En 4F.3, `PostLike` y `PostLikeCompletion` incorporan Like al Host compartido. Input y
+completion viajan por el mismo FIFO global y se ejecutan exclusivamente en el mismo
+owner thread. `FTSLikeProcessingDispatch` forma parte del dispatch variant propietario;
+el recorrido JSON Like → converter → Host queda certificado localmente sin crear otro
+Host, Coordinator, Core, ready o `InFlight`. `LikeUser` permanece reservado.
 
 ### Repositorios tipados de payloads
 
@@ -539,27 +547,27 @@ el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()
 al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
 de su repositorio tipado; la consolidación semántica continúa fuera de alcance.
 
-### Host portable compartido de ejecución Chat, Follow y Share
+### Host portable compartido de ejecución Chat, Follow, Share y Like
 
 `FTSEventExecutionHost` es una biblioteca separada que posee un único coordinador y Core
 mediante un PImpl no copiable ni movible. Su API pública permite `PostChat`,
-`PostFollow`, `PostShare` y sus completions tipadas desde cualquier hilo, pero reserva
-`RunOneCycle` al hilo que construyó la instancia. El Host no expone mutexes, bandeja,
-thread ID ni el coordinador.
+`PostFollow`, `PostShare`, `PostLike` y sus completions tipadas desde cualquier hilo,
+pero reserva `RunOneCycle` al hilo que construyó la instancia. El Host no expone
+mutexes, bandeja, thread ID ni el coordinador.
 
-Una sola bandeja privada conserva inputs y finalizaciones Chat/Follow/Share bajo el mismo
-mutex. Así, el FIFO global queda definido por el orden efectivo de inserción entre
-familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El booleano
-de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que la
-composición externa solicite un ciclo.
+Una sola bandeja privada conserva inputs y finalizaciones Chat/Follow/Share/Like bajo el
+mismo mutex. Así, el FIFO global queda definido por el orden efectivo de inserción
+entre familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El
+booleano de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que
+la composición externa solicite un ciclo.
 
 Cada `RunOneCycle` consume como máximo un comando, procesa expiraciones y consulta
-`PeekPendingReadyFamilyKind()` antes de invocar exclusivamente el Begin tipado de Chat o
-Follow o Share. Si no existe ready, llama Pump una vez; un `EmissionReady` se enruta y
-entrega en ese mismo ciclo. El resultado contiene como máximo un dispatch propietario
-dentro de un variant de las tres familias que permanece fuera del Pipeline y del Core.
-Después consulta el próximo wake y si quedan comandos. La política continúa siendo
-work-conserving.
+`PeekPendingReadyFamilyKind()` antes de invocar exclusivamente el Begin tipado de Chat,
+Follow, Share o Like. Si no existe ready, llama Pump una vez; un `EmissionReady` se
+enruta y entrega en ese mismo ciclo. El resultado contiene como máximo un dispatch
+propietario dentro de un variant de las cuatro familias que permanece fuera del
+Pipeline y del Core. Después consulta el próximo wake y si quedan comandos. La política
+continúa siendo work-conserving.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
 procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
@@ -810,11 +818,10 @@ Targets explícitos, sin `file(GLOB ...)`:
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat, Follow, Share
   y Like, y coordinador Chat/Follow/Share/Like de admisión, despacho y finalización;
-  publica `Pipeline/Public` y enlaza públicamente sólo con Core. Like todavía no entra
-  al Host.
+  publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
-  propietario de Chat/Follow/Share; publica `Host/Public`, enlaza públicamente con
-  Pipeline y privadamente con `Threads::Threads`.
+  propietario de Chat/Follow/Share/Like; publica `Host/Public`, enlaza públicamente
+  con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
   checklist y converters Chat/Follow/Share/Like; enlaza públicamente sólo con Core y
@@ -830,8 +837,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   comportamiento desde inputs normalizados; está registrado en CTest mediante
   `add_test`.
 - `TikStudioVerticalIntegrationTests` (executable): compone Adapter y Host sólo para
-  certificar los recorridos JSON Chat/Follow/Share → converter → Host → Pipeline → Core;
-  está registrado en CTest mediante `add_test`.
+  certificar los recorridos JSON Chat/Follow/Share/Like → converter → Host → Pipeline
+  → Core; está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
@@ -844,8 +851,8 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. Después de 4F.2, Pipeline, Host, Adapter y Vertical registran localmente
-respectivamente 70, 25, 32 y 3 casos.
+automático. Después de 4F.3, Pipeline, Host, Adapter y Vertical registran localmente
+respectivamente 70, 33, 32 y 4 casos.
 
 La estructura familiar queda así:
 
@@ -853,7 +860,7 @@ La estructura familiar queda así:
 Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
-Tests/Like/ → converter Adapter y Pipeline completo hasta lifecycle
+Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/Gift|Member|RoomUser/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -934,13 +941,12 @@ Pipeline Share; el propietario certificó 127 PASS / 0 FAIL. La Fase 4E.2 añadi
 casos Coordinator Share para admisión, ready global, dispatch, completion, interacción
 con Chat/Follow y expiración; fue publicada en `b890407` y certificada con 139 PASS / 0
 FAIL. La Fase 4E.3 añadió ocho casos Host Share y una certificación JSON Share → Host;
-fue publicada en `3321a2a` y certificada con 148 PASS / 0 FAIL. La cobertura local de
-4F.2 conserva los dos casos de familia Pipeline Like y añade doce casos Coordinator
-Like para admisión, ready compartido, dispatch, completion, interacción con
-Chat/Follow/Share y expiración. La Fase 4F.1 fue publicada en `0081ee8` y certificada
-manualmente con 158 PASS / 0 FAIL. Sin ejecutar los runners durante esta implementación,
-el resultado esperado para la validación manual de 4F.2 es: Core 10, Pipeline 70, Host
-25, Adapter 32, JSON Decoder 20, Checklist 10 y Vertical Integration 3; 170 casos.
+fue publicada en `3321a2a` y certificada con 148 PASS / 0 FAIL. La Fase 4F.2 añadió
+doce casos Coordinator Like y fue publicada en `46fdc41`; el propietario certificó 170
+PASS / 0 FAIL. La cobertura local de 4F.3 añade ocho casos Host Like y una certificación
+JSON Like → Host. Sin ejecutar los runners durante esta implementación, el resultado
+esperado para la validación manual es: Core 10, Pipeline 70, Host 33, Adapter 32, JSON
+Decoder 20, Checklist 10 y Vertical Integration 4; 179 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1473,16 +1479,29 @@ el resultado esperado para la validación manual de 4F.2 es: Core 10, Pipeline 7
   `EmissionId` y conteo de payloads en el Coordinator existente.
 - Generaliza el routing de payload y las tres rutas de lifecycle para la pareja
   exclusiva `Like / Like`, sin crear otro Core, ready, `InFlight` o `BindingRegistry`.
-- Añade doce escenarios Coordinator Like; Pipeline registra localmente 70 casos y el
-  total esperado para certificación manual es 170 PASS / 0 FAIL.
+- Añade doce escenarios Coordinator Like; Pipeline registra 70 casos.
 - Mantiene `LikeUser` reservado y no añade Host ni integración vertical Like.
+- Fue publicada en `46fdc41` como `feat(like): complete pipeline lifecycle`.
+- El propietario certificó 170 PASS / 0 FAIL: Core 10, Pipeline 70, Host 25, Adapter
+  32, JSON Decoder 20, Checklist 10 y Vertical Integration 3.
+
+### Fase 4F.3 — Like C: Host compartido e integración vertical
+
+- Añade `PostLike` y `PostLikeCompletion` al `FTSEventExecutionHost` existente.
+- Incorpora input y completion Like al único FIFO global y al visitor del owner thread.
+- Amplía el dispatch variant con `FTSLikeProcessingDispatch` y enruta Like mediante el
+  mismo Coordinator, Core, ready e `InFlight`.
+- Añade ocho casos Host Like y una certificación JSON Like → converter → Host →
+  completion. Host registra localmente 33 casos y Vertical Integration 4.
+- Mantiene `LikeUser` reservado y no añade acumulación, thresholds ni emisiones
+  derivadas.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `0081ee8` más los cambios locales de 4F.2.
+  `46fdc41` más los cambios locales de 4F.3.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1507,7 +1526,8 @@ el resultado esperado para la validación manual de 4F.2 es: Core 10, Pipeline 7
   publicó Share B en `b890407` y fue certificada con 139 PASS / 0 FAIL. La Fase 4E.3
   publicó Share C en `3321a2a` y fue certificada con 148 PASS / 0 FAIL. La Fase 4F.1
   publicó Like A en `0081ee8` y fue certificada con 158 PASS / 0 FAIL. La Fase 4F.2
-  completa localmente Like B; Like C continúa pendiente.
+  publicó Like B en `46fdc41` y fue certificada con 170 PASS / 0 FAIL. La Fase 4F.3
+  completa localmente Like C.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,
