@@ -119,6 +119,23 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireLikeInputEqual(
+        const FTSLikeInput& Actual,
+        const FTSLikeInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(
+            Actual.LikeCount == Expected.LikeCount,
+            Context + ": LikeCount"
+        );
+        Require(
+            Actual.TotalLikeCount == Expected.TotalLikeCount,
+            Context + ": TotalLikeCount"
+        );
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSChatInput MakeCompleteInput()
     {
@@ -158,6 +175,25 @@ namespace TikStudio::Tests
         Input.User.UniqueId = "share-user-42";
         Input.User.Nickname = "Share User";
         Input.User.ProfilePictureUrl = "https://example.test/share.png";
+        Input.User.FollowRole = 3;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 7;
+        Input.User.GifterLevel = 11;
+        Input.User.TeamMemberLevel = 13;
+        return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSLikeInput MakeCompleteLikeInput()
+    {
+        FTSLikeInput Input;
+        Input.LikeCount = 17;
+        Input.TotalLikeCount = 900;
+        Input.User.UniqueId = "like-user-42";
+        Input.User.Nickname = "Like User";
+        Input.User.ProfilePictureUrl = "https://example.test/like.png";
         Input.User.FollowRole = 3;
         Input.User.bIsModerator = true;
         Input.User.bIsSubscriber = false;
