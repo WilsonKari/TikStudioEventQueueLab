@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `3321a2a`
-(`feat(host): complete share vertical integration`).
+rama `main`, partiendo de HEAD `0081ee8`
+(`feat(like): add conversion and direct family decision`).
 
-Los cambios de la Fase 4F.1 permanecen locales y sin commit.
+Los cambios de la Fase 4F.2 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -75,7 +75,7 @@ FTSTikFinityMappedEvent                      [sólo frontera TikFinity]
 Chat → FTSTikFinityChatConverter             [implementado]
 Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
 Share → FTSTikFinityShareConverter           [implementado en 4E.1]
-Like → FTSTikFinityLikeConverter             [implementado localmente en 4F.1]
+Like → FTSTikFinityLikeConverter             [publicado en 4F.1]
 otros tres → converters tipados              [pendientes]
         ↓
 FTS*Input portable                            [Chat, Follow, Share y Like implementados]
@@ -104,8 +104,8 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat, Follow y Share disponen del recorrido portable completo
-hasta Host y lifecycle. Like dispone localmente de conversión y decisión familiar
-directa; Gift, Member y RoomUser continúan sin implementación semántica.
+hasta Host y lifecycle. Like dispone del Pipeline completo hasta lifecycle, pero aún no
+entra al Host; Gift, Member y RoomUser continúan sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -149,9 +149,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → FTSChatInput portable                             [conversión implementada]
 → familia interpreta payload y elige flujo          [Chat, Follow, Share y Like]
 → decisión familiar / candidato de admisión tipado  [Chat, Follow, Share y Like]
-→ coordinador inserta payload provisional            [Chat, Follow y Share]
-→ repositorio tipado de payloads                     [Chat, Follow y Share]
-→ FTSEnqueueRequest                                  [Chat, Follow y Share llaman Core.Enqueue]
+→ coordinador inserta payload provisional            [Chat, Follow, Share y Like]
+→ repositorio tipado de payloads                     [Chat, Follow, Share y Like]
+→ FTSEnqueueRequest                                  [Chat, Follow, Share y Like llaman Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -159,22 +159,22 @@ texto JSON TikFinity                                [implementado en Adapter]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
-→ binding externo EmissionId → PayloadHandle          [Chat, Follow y Share conectados]
-→ lifecycle de Enqueue libera binding y payload       [generalizado Chat/Follow/Share]
+→ binding externo EmissionId → PayloadHandle          [Chat, Follow, Share y Like conectados]
+→ lifecycle de Enqueue libera binding y payload       [generalizado en cuatro familias]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-→ coordinador captura ready global de un solo uso       [Chat, Follow y Share]
-→ Begin*Processing produce copia propietaria            [Chat, Follow y Share]
-→ binding externo Bound → Processing                    [Chat, Follow y Share]
-→ coordinador entrega despacho tipado propietario       [Chat, Follow y Share]
+→ coordinador captura ready global de un solo uso       [Chat, Follow, Share y Like]
+→ Begin*Processing produce copia propietaria            [Chat, Follow, Share y Like]
+→ binding externo Bound → Processing                    [Chat, Follow, Share y Like]
+→ coordinador entrega despacho tipado propietario       [Chat, Follow, Share y Like]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-→ Succeeded coordina Confirm                            [Chat, Follow y Share]
-→ Cancelled / Failed coordinan CancelInFlight           [Chat, Follow y Share]
-→ lifecycle terminal enruta y limpia payload tipado     [Chat, Follow y Share]
+→ Succeeded coordina Confirm                            [Chat, Follow, Share y Like]
+→ Cancelled / Failed coordinan CancelInFlight           [Chat, Follow, Share y Like]
+→ lifecycle terminal enruta y limpia payload tipado     [Chat, Follow, Share y Like]
 → Confirm captura el siguiente ready multi-familia      [implementado]
-→ Pump y expiración se exponen por el coordinador       [Chat, Follow y Share]
+→ Pump y expiración se exponen por el coordinador       [Chat, Follow, Share y Like]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
@@ -197,15 +197,17 @@ texto JSON TikFinity                                [implementado en Adapter]
 → lifecycle mixto Chat/Follow/Share                        [generalizado en 4E.2]
 → Host compartido Chat/Follow/Share                        [publicado en 4E.3]
 → certificación JSON Share → Host                          [publicada en 4E.3]
-→ FTSTikFinityLikeConverter                                [implementado localmente en 4F.1]
-→ FTSLikePayload y candidato directo Flow Like             [implementados localmente en 4F.1]
+→ FTSTikFinityLikeConverter                                [publicado en 4F.1]
+→ FTSLikePayload y candidato directo Flow Like             [publicados en 4F.1]
+→ repositorio, binding y admisión Like                     [implementados localmente en 4F.2]
+→ dispatch y completion Like                               [implementados localmente en 4F.2]
+→ lifecycle mixto Chat/Follow/Share/Like                   [generalizado localmente en 4F.2]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
-Chat A → B → C                                             [completo]
-Follow A → B → C                                           [completo]
-Share A → B → C                                            [completo]
-Like A                                                     [completo localmente]
-Like B                                                     [pendiente]
-Like C                                                     [pendiente]
+Chat    A → B → C                                          [completo]
+Follow  A → B → C                                          [completo]
+Share   A → B → C                                          [completo]
+Like    A → B                                              [completo localmente]
+Like    C                                                  [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -242,7 +244,8 @@ propietario certificó 118 PASS / 0 FAIL.
 La Fase 4E.1 fue publicada en `f2527b2`; el propietario certificó el baseline completo
 con 127 PASS / 0 FAIL. La Fase 4E.2 fue publicada en `b890407` y su certificación manual
 terminó con 139 PASS / 0 FAIL. La Fase 4E.3 fue publicada en `3321a2a`; el propietario
-certificó 148 PASS / 0 FAIL. La Fase 4F.1 implementa localmente Like A, sin compilación
+certificó 148 PASS / 0 FAIL. La Fase 4F.1 fue publicada en `0081ee8`; el propietario
+certificó 158 PASS / 0 FAIL. La Fase 4F.2 implementa localmente Like B, sin compilación
 ni ejecución de pruebas por el agente.
 
 ## 4. Contratos públicos actuales
@@ -387,8 +390,15 @@ convirtiéndose mediante `FTSTikFinityDecodedUserConverter`.
 estado y produce exclusivamente `FamilyKind = Like`, `Flow = Like`, prioridad cero,
 sin override de TTL ni protección especial. Los contadores permanecen como datos del
 snapshot: no calculan prioridad, acumulación, umbrales ni una segunda emisión.
-`LikeUser` permanece reservado y todavía no existen repositorio, Coordinator, dispatch,
-completion, Host ni integración vertical Like.
+`FTSLikePayloadRepository` es un alias del repositorio genérico,
+`FTSLikeProcessingDispatch` es un alias del dispatch genérico y
+`FTSLikeProcessingCompletionResult` reutiliza el completion común. El Coordinator
+admite Like sólo mediante la pareja `Like / Like`: `SubmitLike` coordina admisión y
+binding, `BeginLikeProcessing` entrega un snapshot propietario y
+`CompleteLikeProcessing` usa `Confirm` para `Succeeded` o `CancelInFlight` para
+`Cancelled` y `Failed`. Like participa en el lifecycle compartido sin crear otro Core,
+ready, `InFlight` o `BindingRegistry`. `LikeUser` permanece reservado. Host e
+integración vertical Like todavía no existen.
 
 ### Repositorios tipados de payloads
 
@@ -401,13 +411,13 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 - `Erase(Handle)`, que sólo tiene éxito una vez por entrada;
 - `Size()` y `Empty()`.
 
-`FTSChatPayloadRepository`, `FTSFollowPayloadRepository` y
-`FTSSharePayloadRepository` son aliases tipados de instancias independientes. Ninguno
-conoce identidades de emisión, flujos, familias, bindings, lifecycle events ni
-procesadores. El handle sólo identifica una entrada de su instancia; varios
-repositorios pueden asignar el mismo valor numérico porque `FamilyKind` enruta la
-autoridad correcta. Los tres conservan autoridad exclusiva y no pueden copiarse ni
-moverse.
+`FTSChatPayloadRepository`, `FTSFollowPayloadRepository`,
+`FTSSharePayloadRepository` y `FTSLikePayloadRepository` son aliases tipados de
+instancias independientes. Ninguno conoce identidades de emisión, flujos, familias,
+bindings, lifecycle events ni procesadores. El handle sólo identifica una entrada de
+su instancia; varios repositorios pueden asignar el mismo valor numérico porque
+`FamilyKind` enruta la autoridad correcta. Los cuatro conservan autoridad exclusiva y
+no pueden copiarse ni moverse.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
 condición que sólo existe desde la perspectiva de la coordinación externa durante este
@@ -441,17 +451,17 @@ Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, tran
 condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
 registro no almacena payloads, no conoce repositorios o familias concretas y no replica
 los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa para crear
-el binding Chat después de una admisión aceptada. Como autoridad estable de los bindings
-por `EmissionId`, no puede copiarse, asignarse ni moverse.
+bindings Chat, Follow, Share y Like después de cada admisión aceptada. Como autoridad
+estable de los bindings por `EmissionId`, no puede copiarse, asignarse ni moverse.
 
-### Coordinador de admisión Chat, Follow y Share
+### Coordinador de admisión Chat, Follow, Share y Like
 
 `FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, los
-repositorios Chat/Follow/Share y el registro de bindings. Es no copiable y no movible,
-y no expone referencias mutables a ninguna autoridad.
+repositorios Chat/Follow/Share/Like y el registro de bindings. Es no copiable y no
+movible, y no expone referencias mutables a ninguna autoridad.
 
-`SubmitChat`, `SubmitFollow` y `SubmitShare` conservan este orden mediante una guarda
-provisional templada:
+`SubmitChat`, `SubmitFollow`, `SubmitShare` y `SubmitLike` conservan este orden mediante
+una guarda provisional templada:
 
 ```text
 familia tipada::Decide
@@ -472,21 +482,21 @@ Ante aceptación, el payload permanece en la misma entrada y el binding existe a
 exponer un posible `AutoPumpOutcome`. Un fallo posterior se trata como
 invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
 
-El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share. Valida primero
-toda la tanda, incluida la pareja familia/flujo y la existencia del payload en su
-repositorio; después aplica en orden `TerminalPendingHandling`, borrado tipado y borrado
-del binding. Una familia todavía no integrada produce `std::logic_error`.
+El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share/Like. Valida
+primero toda la tanda, incluida la pareja familia/flujo y la existencia del payload en
+su repositorio; después aplica en orden `TerminalPendingHandling`, borrado tipado y
+borrado del binding. Una familia todavía no integrada produce `std::logic_error`.
 
-La inspección pública permite visitar bindings y payloads Chat/Follow/Share mediante
-`EmissionId`, además de consultar sus conteos, sin exponer ownership ni referencias
-mutables.
+La inspección pública permite visitar bindings y payloads Chat/Follow/Share/Like
+mediante `EmissionId`, además de consultar sus conteos, sin exponer ownership ni
+referencias mutables.
 
-### Despacho autorizado de Chat, Follow y Share
+### Despacho autorizado de Chat, Follow, Share y Like
 
 El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
-`PendingReadyEmission`, compartida por Chat, Follow y Share porque el core sólo posee
-un `InFlight`. Es una notificación de despacho pendiente, no una réplica del estado
-autoritativo.
+`PendingReadyEmission`, compartida por Chat, Follow, Share y Like porque el core sólo
+posee un `InFlight`. Es una notificación de despacho pendiente, no una réplica del
+estado autoritativo.
 
 `CaptureCorePumpOutcome` ignora `NotRequested`, `QueueEmpty` y `Busy` sin eliminar una
 notificación previa. Para `EmissionReady`, valida identidad, binding, pareja
@@ -494,9 +504,9 @@ familia/flujo soportada y estado `Bound`; nunca sobrescribe otro ready pendiente
 `AutoPumpOutcome` que permanece dentro de `FTSEnqueueResult` es diagnóstico y no autoriza
 un despacho creado por código externo.
 
-`BeginChatProcessing()`, `BeginFollowProcessing()` y `BeginShareProcessing()` sólo
-autorizan su propia familia. Si el ready pertenece a otra, devuelven
-`NoEmissionReady` y preservan ready, binding y payload.
+`BeginChatProcessing()`, `BeginFollowProcessing()`, `BeginShareProcessing()` y
+`BeginLikeProcessing()` sólo autorizan su propia familia. Si el ready pertenece a otra,
+devuelven `NoEmissionReady` y preservan ready, binding y payload.
 `PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni autorizar
 procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
 
@@ -506,13 +516,13 @@ permanecen intactos y la operación puede reintentarse. Después de una transici
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
 almacenados mientras la emisión permanece `Processing`.
 
-### Finalización y lifecycle completo de Chat, Follow y Share
+### Finalización y lifecycle completo de Chat, Follow, Share y Like
 
-`CompleteChatProcessing`, `CompleteFollowProcessing` y `CompleteShareProcessing`
-conservan wrappers públicos tipados sobre un helper común. Validan identidad, ausencia
-de cualquier ready pendiente, familia, flujo, handle, estado y payload antes de
-solicitar una transición terminal al core. `Succeeded` llama a `Confirm`; `Cancelled`
-y `Failed` llaman a `CancelInFlight`, sin retry implícito.
+`CompleteChatProcessing`, `CompleteFollowProcessing`, `CompleteShareProcessing` y
+`CompleteLikeProcessing` conservan wrappers públicos tipados sobre un helper común.
+Validan identidad, ausencia de cualquier ready pendiente, familia, flujo, handle,
+estado y payload antes de solicitar una transición terminal al core. `Succeeded` llama
+a `Confirm`; `Cancelled` y `Failed` llaman a `CancelInFlight`, sin retry implícito.
 
 El resultado portable conserva el `ETSProcessingResult` comunicado por el procesador y
 expone exactamente uno de los resultados del core: `ConfirmResult` para `Succeeded` o
@@ -799,9 +809,9 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat, Follow, Share
-  y Like, y coordinador Chat/Follow/Share de admisión, despacho y finalización; publica
-  `Pipeline/Public` y enlaza públicamente sólo con Core. Like todavía no entra al
-  Coordinator.
+  y Like, y coordinador Chat/Follow/Share/Like de admisión, despacho y finalización;
+  publica `Pipeline/Public` y enlaza públicamente sólo con Core. Like todavía no entra
+  al Host.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
   propietario de Chat/Follow/Share; publica `Host/Public`, enlaza públicamente con
   Pipeline y privadamente con `Threads::Threads`.
@@ -834,8 +844,8 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. Después de 4F.1, Pipeline, Host, Adapter y Vertical registran localmente
-respectivamente 58, 25, 32 y 3 casos.
+automático. Después de 4F.2, Pipeline, Host, Adapter y Vertical registran localmente
+respectivamente 70, 25, 32 y 3 casos.
 
 La estructura familiar queda así:
 
@@ -843,7 +853,7 @@ La estructura familiar queda así:
 Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
-Tests/Like/ → converter Adapter y familia Pipeline directa
+Tests/Like/ → converter Adapter y Pipeline completo hasta lifecycle
 Tests/Gift|Member|RoomUser/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -925,10 +935,12 @@ casos Coordinator Share para admisión, ready global, dispatch, completion, inte
 con Chat/Follow y expiración; fue publicada en `b890407` y certificada con 139 PASS / 0
 FAIL. La Fase 4E.3 añadió ocho casos Host Share y una certificación JSON Share → Host;
 fue publicada en `3321a2a` y certificada con 148 PASS / 0 FAIL. La cobertura local de
-4F.1 añade dos casos de familia Pipeline Like y ocho casos Adapter Like. Sin ejecutar
-los runners durante esta implementación, el resultado esperado para la validación
-manual es: Core 10, Pipeline 58, Host 25, Adapter 32, JSON Decoder 20, Checklist 10 y
-Vertical Integration 3; 158 casos.
+4F.2 conserva los dos casos de familia Pipeline Like y añade doce casos Coordinator
+Like para admisión, ready compartido, dispatch, completion, interacción con
+Chat/Follow/Share y expiración. La Fase 4F.1 fue publicada en `0081ee8` y certificada
+manualmente con 158 PASS / 0 FAIL. Sin ejecutar los runners durante esta implementación,
+el resultado esperado para la validación manual de 4F.2 es: Core 10, Pipeline 70, Host
+25, Adapter 32, JSON Decoder 20, Checklist 10 y Vertical Integration 3; 170 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1448,13 +1460,29 @@ Vertical Integration 3; 158 casos.
   `FamilyKind = Like` y `Flow = Like` con los defaults de admisión.
 - Mantiene `LikeUser` reservado y no añade repositorio, Coordinator, Host, acumulación,
   umbral ni lifecycle Like.
-- Añade dos casos Pipeline y ocho casos Adapter. Los cambios permanecen locales y sin
-  commit; no se compiló ni se ejecutaron pruebas durante la implementación.
+- Añade dos casos Pipeline y ocho casos Adapter.
+- Fue publicada en `0081ee8` como
+  `feat(like): add conversion and direct family decision`.
+- El propietario certificó 158 PASS / 0 FAIL: Core 10, Pipeline 58, Host 25, Adapter
+  32, JSON Decoder 20, Checklist 10 y Vertical Integration 3.
+
+### Fase 4F.2 — Like B: lifecycle completo en el Pipeline compartido
+
+- Añade aliases tipados para repositorio, dispatch y resultado de completion Like.
+- Integra `SubmitLike`, `BeginLikeProcessing`, `CompleteLikeProcessing`, visita por
+  `EmissionId` y conteo de payloads en el Coordinator existente.
+- Generaliza el routing de payload y las tres rutas de lifecycle para la pareja
+  exclusiva `Like / Like`, sin crear otro Core, ready, `InFlight` o `BindingRegistry`.
+- Añade doce escenarios Coordinator Like; Pipeline registra localmente 70 casos y el
+  total esperado para certificación manual es 170 PASS / 0 FAIL.
+- Mantiene `LikeUser` reservado y no añade Host ni integración vertical Like.
+- Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
+  durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `3321a2a` más los cambios locales de 4F.1.
+  `0081ee8` más los cambios locales de 4F.2.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1478,7 +1506,8 @@ Vertical Integration 3; 158 casos.
 - La Fase 4E.1 publicó Share A y fue certificada con 127 PASS / 0 FAIL. La Fase 4E.2
   publicó Share B en `b890407` y fue certificada con 139 PASS / 0 FAIL. La Fase 4E.3
   publicó Share C en `3321a2a` y fue certificada con 148 PASS / 0 FAIL. La Fase 4F.1
-  completa localmente Like A; no anticipar Like B o Like C ni diseñar otra familia.
+  publicó Like A en `0081ee8` y fue certificada con 158 PASS / 0 FAIL. La Fase 4F.2
+  completa localmente Like B; Like C continúa pendiente.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

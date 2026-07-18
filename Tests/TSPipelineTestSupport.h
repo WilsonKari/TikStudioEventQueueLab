@@ -307,6 +307,42 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeLikeSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* LikeSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Like);
+        Require(LikeSettings != nullptr, "Like settings must be available");
+        LikeSettings->bEnabled = bEnabled;
+        LikeSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalLikeSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{10000},
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        // Se usa capacidad amplia para escenarios operativos con más de una
+        // admisión. La prueba específica de capacidad fija MaxSlots = 1.
+        FTSEventQueueSettings Settings = MakeLikeSettings(true, 10);
+        FTSFlowQueueSettings* LikeSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Like);
+        Require(LikeSettings != nullptr, "Like settings must be available");
+        LikeSettings->TTL = TTL;
+        LikeSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -376,6 +412,29 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedLike(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSLikeInput Input = MakeCompleteLikeInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitLike(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Like admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Like admission must have a valid identity"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -416,6 +475,21 @@ namespace TikStudio::Tests
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready Share must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyLike(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSLikeDispatchResult Dispatch =
+            Coordinator.BeginLikeProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Like must produce a dispatch"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }
