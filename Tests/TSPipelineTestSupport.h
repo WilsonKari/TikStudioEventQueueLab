@@ -110,6 +110,15 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireShareInputEqual(
+        const FTSShareInput& Actual,
+        const FTSShareInput& Expected,
+        const std::string& Context
+    )
+    {
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSChatInput MakeCompleteInput()
     {
@@ -139,6 +148,23 @@ namespace TikStudio::Tests
         Input.User = MakeCompleteInput().User;
         Input.User.UniqueId = "follow-user-42";
         Input.User.Nickname = "Follow User";
+        return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSShareInput MakeCompleteShareInput()
+    {
+        FTSShareInput Input;
+        Input.User.UniqueId = "share-user-42";
+        Input.User.Nickname = "Share User";
+        Input.User.ProfilePictureUrl = "https://example.test/share.png";
+        Input.User.FollowRole = 3;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 7;
+        Input.User.GifterLevel = 11;
+        Input.User.TeamMemberLevel = 13;
         return Input;
     }
 
