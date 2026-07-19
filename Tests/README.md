@@ -1,10 +1,9 @@
 # Organización de pruebas
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
-Share, Like y RoomUser tienen completos Adapter tipado, familia directa, Pipeline,
-Host, lifecycle e integración vertical JSON → Host. Gift dispone de Adapter tipado,
-familia directa y Pipeline completo; su Host e integración vertical permanecen
-pendientes. Member conserva sólo su directorio.
+Share, Like, RoomUser y Gift tienen completos Adapter tipado, familia directa,
+Pipeline, Host, lifecycle e integración vertical JSON → Host. Member conserva sólo su
+directorio.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -41,9 +40,10 @@ Gift conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como datos cru
 produce exclusivamente `ETSEventFlow::Gift`. Ninguno de esos metadatos activa
 `GiftCombo`, que permanece reservado hasta que una fase posterior defina su semántica.
 Su repositorio, admisión, dispatch, completion y lifecycle comparten el Coordinator y
-las autoridades globales existentes. Host e integración vertical Gift continúan
-pendientes. El runner Pipeline registra 98 casos con los doce escenarios Coordinator
-Gift añadidos localmente.
+las autoridades globales existentes. `PostGift` y `PostGiftCompletion` usan el FIFO,
+owner thread, ready e `InFlight` compartidos; el dispatch variant incorpora la copia
+propietaria Gift. La certificación vertical recorre JSON Gift → converter → Host. El
+runner Pipeline registra 98 casos, Host 49 y Vertical Integration 6.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

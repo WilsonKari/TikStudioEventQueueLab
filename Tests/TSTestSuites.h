@@ -29,11 +29,13 @@ namespace TikStudio::Tests
     void RegisterShareHostTests(FTSTestCases& Tests);
     void RegisterLikeHostTests(FTSTestCases& Tests);
     void RegisterRoomUserHostTests(FTSTestCases& Tests);
+    void RegisterGiftHostTests(FTSTestCases& Tests);
     void RegisterChatVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterFollowVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterShareVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterLikeVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterRoomUserVerticalIntegrationTests(FTSTestCases& Tests);
+    void RegisterGiftVerticalIntegrationTests(FTSTestCases& Tests);
 
     void RegisterTikFinityChatAdapterTests(FTSTestCases& Tests);
     void RegisterTikFinityFollowAdapterTests(FTSTestCases& Tests);

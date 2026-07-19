@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `0a75fb8`
-(`feat(gift): add conversion and direct family decision`).
+rama `main`, partiendo de HEAD `427578b`
+(`feat(gift): complete pipeline lifecycle`).
 
-Los cambios de la Fase 4H.2 permanecen locales y sin commit.
+Los cambios de la Fase 4H.3 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -82,11 +82,11 @@ Member → converter tipado                    [pendiente]
         ↓
 FTS*Input portable                            [Chat, Follow, Share, Like, RoomUser y Gift implementados]
         ↓
-composición externa → Event Host             [Chat, Follow, Share, Like y RoomUser implementados]
+composición externa → Event Host             [Chat, Follow, Share, Like, RoomUser y Gift implementados]
 ```
 
 El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON
-Chat/Follow/Share/Like/RoomUser → converter → Host existen sólo en el runner vertical;
+Chat/Follow/Share/Like/RoomUser/Gift → converter → Host existen sólo en el runner vertical;
 no hay dependencia Adapter → Host en producción.
 
 ## 2. Datos entrantes y familias portables
@@ -105,10 +105,8 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
-interpreta ni almacena. Chat, Follow, Share, Like y RoomUser disponen del recorrido
-portable completo hasta Host y lifecycle. Gift dispone del recorrido Pipeline completo
-localmente, pero todavía no de Host ni integración vertical; Member continúa sin
-implementación semántica.
+interpreta ni almacena. Chat, Follow, Share, Like, RoomUser y Gift disponen del recorrido
+portable completo hasta Host y lifecycle. Member continúa sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -218,17 +216,19 @@ texto JSON TikFinity                                [implementado en Adapter]
 → certificación JSON RoomUser → Host                       [publicada en 4G.3]
 → FTSTikFinityGiftConverter                                [publicado en 4H.1]
 → FTSGiftPayload y candidato directo Flow Gift             [publicados en 4H.1]
-→ repositorio, binding y admisión Gift                     [implementados localmente en 4H.2]
-→ dispatch y completion Gift                               [implementados localmente en 4H.2]
-→ lifecycle mixto de seis familias                         [generalizado localmente en 4H.2]
+→ repositorio, binding y admisión Gift                     [publicados en 4H.2]
+→ dispatch y completion Gift                               [publicados en 4H.2]
+→ lifecycle mixto de seis familias                         [generalizado en 4H.2]
+→ PostGift y PostGiftCompletion en Host                    [implementados localmente en 4H.3]
+→ Gift en FIFO global, owner y dispatch variant            [implementado localmente en 4H.3]
+→ certificación JSON Gift → Host                           [implementada localmente en 4H.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
-Gift A → B                                                  [completo localmente]
-Gift C                                                      [pendiente]
+Gift A → B → C                                              [completo localmente]
 Member                                                      [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -277,8 +277,9 @@ Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 fue publicada en
 Host 41, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5. La Fase
 4H.1 fue publicada en `0a75fb8`; el propietario certificó Core 10, Pipeline 86, Host
 41, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 5: 224 PASS / 0
-FAIL. La Fase 4H.2 implementa localmente el Pipeline completo Gift; no se compiló ni se
-ejecutaron pruebas durante esta implementación.
+FAIL. La Fase 4H.2 fue publicada en `427578b`. La Fase 4H.3 implementa localmente el
+Host y la certificación vertical Gift; no se compiló ni se ejecutaron pruebas durante
+esta implementación.
 
 ## 4. Contratos públicos actuales
 
@@ -487,8 +488,16 @@ Gift B añade `FTSGiftPayloadRepository`, `FTSGiftProcessingDispatch` y
 `CompleteGiftProcessing`, visita por `EmissionId` y conteo tipado en el Coordinator.
 Sólo admite la pareja `Gift / Gift`; conserva los metadatos de repetición dentro del
 snapshot y generaliza las rutas Pending, Confirm y Cancel sin introducir estado de
-combo. Gift comparte el único Core, BindingRegistry, ready e `InFlight`. Host e
-integración vertical Gift permanecen pendientes.
+combo. Gift comparte el único Core, BindingRegistry, ready e `InFlight`.
+
+Gift C añade `PostGift` y `PostGiftCompletion` al Host compartido, incorpora input y
+completion al único FIFO y ejecuta `SubmitGift`/`CompleteGiftProcessing` sólo desde el
+owner thread. `FTSGiftProcessingDispatch` es la sexta alternativa propietaria del
+dispatch variant. La certificación vertical recorre JSON Gift → decoder → converter →
+Host → Pipeline → Core y confirma el terminal sin interpretar metadatos de repetición.
+El mantenimiento de expiraciones precede al comando del ciclo para liberar capacidad
+vencida antes de una nueva admisión. El Host sólo acepta `Flow = Gift`; `GiftCombo`
+continúa reservado.
 
 ### Repositorios tipados de payloads
 
@@ -907,8 +916,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   Chat/Follow/Share/Like/RoomUser/Gift;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
-  propietario de Chat/Follow/Share/Like/RoomUser; publica `Host/Public`, enlaza públicamente
-  con Pipeline y privadamente con `Threads::Threads`.
+  propietario de Chat/Follow/Share/Like/RoomUser/Gift; publica `Host/Public`, enlaza
+  públicamente con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
   checklist y converters Chat/Follow/Share/Like/RoomUser/Gift; enlaza públicamente sólo con
@@ -924,8 +933,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   comportamiento desde inputs normalizados; está registrado en CTest mediante
   `add_test`.
 - `TikStudioVerticalIntegrationTests` (executable): compone Adapter y Host sólo para
-  certificar los recorridos JSON Chat/Follow/Share/Like/RoomUser → converter → Host → Pipeline
-  → Core; está registrado en CTest mediante `add_test`.
+  certificar los recorridos JSON Chat/Follow/Share/Like/RoomUser/Gift → converter →
+  Host → Pipeline → Core; está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
@@ -938,9 +947,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4H.1, Pipeline, Host, Adapter y Vertical
-registran respectivamente 86, 41, 52 y 5 casos. Los cambios locales de 4H.2 elevan
-Pipeline a 98, sin modificar Host, Adapter ni Vertical.
+automático. En el baseline publicado de 4H.2, Pipeline, Host, Adapter y Vertical
+registran respectivamente 98, 41, 52 y 5 casos. Los cambios locales de 4H.3 elevan Host
+a 49 y Vertical a 6, sin modificar Pipeline ni Adapter.
 
 La estructura familiar queda así:
 
@@ -950,7 +959,7 @@ Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
-Tests/Gift/ → familia, Coordinator Pipeline y Adapter Gift directo
+Tests/Gift/ → Pipeline, Host, Adapter y certificación vertical Gift
 Tests/Member/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -1047,10 +1056,12 @@ con 212 PASS / 0 FAIL: Core 10, Pipeline 84, Host 41, Adapter 42, JSON Decoder 2
 Checklist 10 y Vertical Integration 5. La Fase 4H.1 añadió diez escenarios Adapter
 Gift y dos casos de familia Pipeline Gift; fue publicada en `0a75fb8` y certificada con
 224 PASS / 0 FAIL: Core 10, Pipeline 86, Host 41, Adapter 52, JSON Decoder 20,
-Checklist 10 y Vertical Integration 5. La cobertura local de 4H.2 añade doce escenarios
-Coordinator Gift. Sin ejecutar los runners durante esta implementación, el resultado
-esperado es: Core 10, Pipeline 98, Host 41, Adapter 52, JSON Decoder 20, Checklist 10 y
-Vertical Integration 5; 236 casos.
+Checklist 10 y Vertical Integration 5. La Fase 4H.2 añadió doce escenarios Coordinator
+Gift y fue publicada en `427578b`; Pipeline registra 98 casos. La cobertura local de
+4H.3 añade ocho escenarios Host Gift y una certificación JSON Gift → Host. Sin ejecutar
+los runners durante esta implementación, el resultado esperado es: Core 10, Pipeline
+98, Host 49, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6; 245
+casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1688,13 +1699,26 @@ Vertical Integration 5; 236 casos.
 - Añade doce escenarios Coordinator Gift; Pipeline registra 98 casos y el total
   esperado queda en 236.
 - Host e integración vertical Gift permanecen pendientes; Member permanece intacto.
+- Fue publicada en `427578b` como `feat(gift): complete pipeline lifecycle`.
+
+### Fase 4H.3 — Gift C: Host compartido e integración vertical
+
+- Añade `PostGift` y `PostGiftCompletion` al `FTSEventExecutionHost` existente.
+- Incorpora input y completion Gift a la única bandeja FIFO y al visitor del owner
+  thread, sin crear otro Host, Coordinator, Core, ready o `InFlight`.
+- Amplía append-only el enum de comandos, el variant privado y el dispatch variant
+  público con la ruta exclusiva `Gift / Gift`.
+- Añade ocho casos Host Gift y una certificación JSON Gift → decoder → converter → Host
+  → completion; Host registra 49 casos y Vertical Integration 6.
+- Conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` sin interpretación;
+  `GiftCombo` continúa reservado y Member permanece pendiente.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `0a75fb8` más los cambios locales de 4H.2.
+  `427578b` más los cambios locales de 4H.3.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1725,7 +1749,8 @@ Vertical Integration 5; 236 casos.
   4G.2 publicó RoomUser B en `14b9357` y fue certificada con 203 PASS / 0 FAIL. La Fase
   4G.3 publicó RoomUser C en `f103f75` y fue certificada con 212 PASS / 0 FAIL. La Fase
   4H.1 publicó Gift A en `0a75fb8` y fue certificada con 224 PASS / 0 FAIL. La Fase
-  4H.2 implementa localmente Gift B; no continuar automáticamente con Gift C.
+  4H.2 publicó Gift B en `427578b`. La Fase 4H.3 implementa localmente Gift C; no
+  continuar automáticamente con Member.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

@@ -142,6 +142,17 @@ namespace
         }
     }
 
+    void ValidateOwnedDispatch(
+        const FTSGiftProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::Gift)
+        {
+            throw std::logic_error("Invalid owned Gift dispatch");
+        }
+    }
+
     [[nodiscard]]
     FTSEmissionId GetDispatchEmissionId(
         const FTSEventProcessingDispatch& Dispatch
@@ -195,6 +206,12 @@ public:
 
     [[nodiscard]]
     bool PostRoomUser(FTSRoomUserInput Input)
+    {
+        return PostCommand(std::move(Input));
+    }
+
+    [[nodiscard]]
+    bool PostGift(FTSGiftInput Input)
     {
         return PostCommand(std::move(Input));
     }
@@ -265,6 +282,18 @@ public:
     }
 
     [[nodiscard]]
+    bool PostGiftCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedGiftCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
     FTSEventHostCycleResult RunOneCycle()
     {
         if (std::this_thread::get_id() != OwnerThreadId)
@@ -285,12 +314,14 @@ public:
         }
 
         FTSEventHostCycleResult Result;
+        // El mantenimiento precede a la admisión para que un slot vencido pueda
+        // reutilizarse por el único comando procesado en este mismo ciclo.
+        Result.DueExpirations = Coordinator.ProcessDueExpirations();
+
         if (PostedCommand.has_value())
         {
             ProcessPostedCommand(std::move(*PostedCommand), Result);
         }
-
-        Result.DueExpirations = Coordinator.ProcessDueExpirations();
 
         Result.Dispatch = TryBeginPendingDispatch();
         if (!Result.Dispatch.has_value())
@@ -385,6 +416,13 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedGiftCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     using FPostedCommand = std::variant<
         FTSChatInput,
         FTSFollowInput,
@@ -395,7 +433,9 @@ private:
         FTSLikeInput,
         FPostedLikeCompletion,
         FTSRoomUserInput,
-        FPostedRoomUserCompletion
+        FPostedRoomUserCompletion,
+        FTSGiftInput,
+        FPostedGiftCompletion
     >;
 
     static_assert(
@@ -511,6 +551,25 @@ private:
                         ETSEventHostCommandKind::RoomUserCompletion;
                     Result.CompletionResult.emplace(
                         Coordinator.CompleteRoomUserProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
+                },
+                [&](FTSGiftInput& Input)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::GiftInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitGift(std::move(Input))
+                    );
+                },
+                [&](const FPostedGiftCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::GiftCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteGiftProcessing(
                             Completion.EmissionId,
                             Completion.ProcessingResult
                         )
@@ -645,6 +704,28 @@ private:
             return Dispatch;
         }
 
+        case ETSEventFamilyKind::Gift:
+        {
+            FTSGiftDispatchResult DispatchResult =
+                Coordinator.BeginGiftProcessing();
+            ValidateDispatchResult(DispatchResult);
+            if (DispatchResult.Status !=
+                ETSPipelineDispatchStatus::Dispatched)
+            {
+                throw std::logic_error(
+                    "Peeked Gift ready did not produce a dispatch"
+                );
+            }
+
+            ValidateOwnedDispatch(*DispatchResult.Dispatch);
+            std::optional<FTSEventProcessingDispatch> Dispatch;
+            Dispatch.emplace(
+                std::in_place_type<FTSGiftProcessingDispatch>,
+                std::move(*DispatchResult.Dispatch)
+            );
+            return Dispatch;
+        }
+
         default:
             throw std::logic_error(
                 "Pending ready belongs to an unsupported Host family"
@@ -696,6 +777,11 @@ bool FTSEventExecutionHost::PostRoomUser(FTSRoomUserInput Input)
     return Impl->PostRoomUser(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostGift(FTSGiftInput Input)
+{
+    return Impl->PostGift(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostChatCompletion(
     FTSEmissionId EmissionId,
     ETSProcessingResult ProcessingResult
@@ -734,6 +820,17 @@ bool FTSEventExecutionHost::PostRoomUserCompletion(
 )
 {
     return Impl->PostRoomUserCompletion(
+        EmissionId,
+        ProcessingResult
+    );
+}
+
+bool FTSEventExecutionHost::PostGiftCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostGiftCompletion(
         EmissionId,
         ProcessingResult
     );

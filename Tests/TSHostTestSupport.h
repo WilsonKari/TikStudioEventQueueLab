@@ -140,6 +140,33 @@ namespace TikStudio::Tests
         return Input;
     }
 
+    [[nodiscard]]
+    inline FTSGiftInput MakeGiftInput(const std::string& Label)
+    {
+        FTSGiftInput Input;
+        Input.GiftId = 5655;
+        Input.GiftName = Label + " Gift";
+        Input.GiftPictureUrl = "https://example.test/gift.png";
+        Input.DiamondCount = 20;
+        Input.RepeatCount = 7;
+        Input.GiftType = 1;
+        Input.Describe = Label + " portable Gift";
+        Input.bRepeatEnd = true;
+        Input.GroupId = Label + "-gift-group";
+        Input.User.UniqueId = Label + "-user";
+        Input.User.Nickname = Label + " nickname";
+        Input.User.ProfilePictureUrl =
+            "https://example.test/gift-user.png";
+        Input.User.FollowRole = 4;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 8;
+        Input.User.GifterLevel = 12;
+        Input.User.TeamMemberLevel = 14;
+        return Input;
+    }
+
     inline void RequireUserEqual(
         const FTSUserSnapshot& Actual,
         const FTSUserSnapshot& Expected,
@@ -299,6 +326,36 @@ namespace TikStudio::Tests
         }
     }
 
+    inline void RequireGiftInputEqual(
+        const FTSGiftInput& Actual,
+        const FTSGiftInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.GiftId == Expected.GiftId, Context + ": GiftId");
+        Require(Actual.GiftName == Expected.GiftName, Context + ": GiftName");
+        Require(
+            Actual.GiftPictureUrl == Expected.GiftPictureUrl,
+            Context + ": GiftPictureUrl"
+        );
+        Require(
+            Actual.DiamondCount == Expected.DiamondCount,
+            Context + ": DiamondCount"
+        );
+        Require(
+            Actual.RepeatCount == Expected.RepeatCount,
+            Context + ": RepeatCount"
+        );
+        Require(Actual.GiftType == Expected.GiftType, Context + ": GiftType");
+        Require(Actual.Describe == Expected.Describe, Context + ": Describe");
+        Require(
+            Actual.bRepeatEnd == Expected.bRepeatEnd,
+            Context + ": bRepeatEnd"
+        );
+        Require(Actual.GroupId == Expected.GroupId, Context + ": GroupId");
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSEventQueueSettings MakeChatSettings(
         std::uint32_t MaxSlots = 10,
@@ -399,6 +456,27 @@ namespace TikStudio::Tests
         RoomUserSettings->MaxSlots = MaxSlots;
         RoomUserSettings->TTL = TTL;
         RoomUserSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeGiftSettings(
+        std::uint32_t MaxSlots = 10,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{45000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* GiftSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Gift);
+        Require(GiftSettings != nullptr, "Gift settings must exist");
+        GiftSettings->bEnabled = true;
+        GiftSettings->MaxSlots = MaxSlots;
+        GiftSettings->TTL = TTL;
+        GiftSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
         Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
         Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
         return Settings;
@@ -510,6 +588,32 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeChatGiftSettings(
+        std::uint32_t ChatMaxSlots = 10,
+        std::uint32_t GiftMaxSlots = 1,
+        std::chrono::milliseconds ChatTTL = std::chrono::milliseconds{8000},
+        std::chrono::milliseconds GiftTTL = std::chrono::milliseconds{45000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(
+            ChatMaxSlots,
+            ChatTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* GiftSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Gift);
+        Require(GiftSettings != nullptr, "Gift settings must exist");
+        GiftSettings->bEnabled = true;
+        GiftSettings->MaxSlots = GiftMaxSlots;
+        GiftSettings->TTL = GiftTTL;
+        GiftSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId RequireAcceptedAdmission(
         const FTSEventHostCycleResult& Cycle,
         ETSEventHostCommandKind ExpectedCommand,
@@ -603,6 +707,19 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedGiftAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        return RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::GiftInput,
+            Context
+        );
+    }
+
+    [[nodiscard]]
     inline const FTSChatProcessingDispatch& RequireChatDispatch(
         const FTSEventHostCycleResult& Cycle,
         const std::string& Context
@@ -691,6 +808,24 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::RoomUser,
             Context + ": RoomUser dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSGiftProcessingDispatch& RequireGiftDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSGiftProcessingDispatch* Dispatch =
+            std::get_if<FTSGiftProcessingDispatch>(&*Cycle.Dispatch);
+        Require(Dispatch != nullptr, Context + ": Gift dispatch expected");
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::Gift,
+            Context + ": Gift dispatch identity and flow"
         );
         return *Dispatch;
     }
