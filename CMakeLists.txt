@@ -62,6 +62,7 @@ add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/Families/TSFollowFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSShareFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSLikeFamily.cpp
+  Pipeline/Private/EventPipeline/Families/TSRoomUserFamily.cpp
 )
 
 target_include_directories(TikStudioEventPipeline
@@ -111,6 +112,7 @@ add_library(TikStudioTikFinityAdapter STATIC
   Adapters/TikFinity/Private/TikFinity/TSTikFinityFollowConverter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityShareConverter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityLikeConverter.cpp
+  Adapters/TikFinity/Private/TikFinity/TSTikFinityRoomUserConverter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityJsonEventDecoder.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinityMappedEventFormatter.cpp
   Adapters/TikFinity/Private/TikFinity/TSTikFinitySevenEventChecklist.cpp
@@ -163,6 +165,7 @@ add_executable(TikStudioEventPipelineTests
   Tests/Follow/TSFollowPipelineTests.cpp
   Tests/Share/TSSharePipelineTests.cpp
   Tests/Like/TSLikePipelineTests.cpp
+  Tests/RoomUser/TSRoomUserPipelineTests.cpp
 )
 
 target_include_directories(TikStudioEventPipelineTests
@@ -233,6 +236,7 @@ add_executable(TikStudioTikFinityAdapterTests
   Tests/Follow/TSTikFinityFollowAdapterTests.cpp
   Tests/Share/TSTikFinityShareAdapterTests.cpp
   Tests/Like/TSTikFinityLikeAdapterTests.cpp
+  Tests/RoomUser/TSTikFinityRoomUserAdapterTests.cpp
 )
 
 target_include_directories(TikStudioTikFinityAdapterTests

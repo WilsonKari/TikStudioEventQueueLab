@@ -136,6 +136,65 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireRoomUserTopViewerEqual(
+        const FTSRoomUserTopViewer& Actual,
+        const FTSRoomUserTopViewer& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.UniqueId == Expected.UniqueId, Context + ": UniqueId");
+        Require(Actual.Nickname == Expected.Nickname, Context + ": Nickname");
+        Require(
+            Actual.ProfilePictureUrl == Expected.ProfilePictureUrl,
+            Context + ": ProfilePictureUrl"
+        );
+        Require(Actual.CoinCount == Expected.CoinCount, Context + ": CoinCount");
+        Require(
+            Actual.bIsModerator == Expected.bIsModerator,
+            Context + ": bIsModerator"
+        );
+        Require(
+            Actual.bIsSubscriber == Expected.bIsSubscriber,
+            Context + ": bIsSubscriber"
+        );
+        Require(
+            Actual.GifterLevel == Expected.GifterLevel,
+            Context + ": GifterLevel"
+        );
+        Require(
+            Actual.TeamMemberLevel == Expected.TeamMemberLevel,
+            Context + ": TeamMemberLevel"
+        );
+    }
+
+    inline void RequireRoomUserInputEqual(
+        const FTSRoomUserInput& Actual,
+        const FTSRoomUserInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(
+            Actual.ViewerCount == Expected.ViewerCount,
+            Context + ": ViewerCount"
+        );
+        Require(
+            Actual.TopGifterRank == Expected.TopGifterRank,
+            Context + ": TopGifterRank"
+        );
+        Require(
+            Actual.TopViewers.size() == Expected.TopViewers.size(),
+            Context + ": TopViewers size"
+        );
+        for (std::size_t Index = 0; Index < Expected.TopViewers.size(); ++Index)
+        {
+            RequireRoomUserTopViewerEqual(
+                Actual.TopViewers[Index],
+                Expected.TopViewers[Index],
+                Context + ": TopViewer " + std::to_string(Index)
+            );
+        }
+    }
+
     [[nodiscard]]
     inline FTSChatInput MakeCompleteInput()
     {
@@ -201,6 +260,37 @@ namespace TikStudio::Tests
         Input.User.TopGifterRank = 7;
         Input.User.GifterLevel = 11;
         Input.User.TeamMemberLevel = 13;
+        return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSRoomUserInput MakeCompleteRoomUserInput()
+    {
+        FTSRoomUserInput Input;
+        Input.ViewerCount = 123;
+        Input.TopGifterRank = 7;
+        Input.TopViewers = {
+            FTSRoomUserTopViewer{
+                "room-viewer-a",
+                "Room Viewer A",
+                "https://example.test/room-a.png",
+                1000,
+                true,
+                false,
+                11,
+                13
+            },
+            FTSRoomUserTopViewer{
+                "room-viewer-b",
+                "Room Viewer B",
+                "https://example.test/room-b.png",
+                500,
+                false,
+                true,
+                17,
+                19
+            }
+        };
         return Input;
     }
 
