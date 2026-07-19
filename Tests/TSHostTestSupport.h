@@ -109,6 +109,37 @@ namespace TikStudio::Tests
         return Input;
     }
 
+    [[nodiscard]]
+    inline FTSRoomUserInput MakeRoomUserInput(const std::string& Label)
+    {
+        FTSRoomUserInput Input;
+        Input.ViewerCount = 123;
+        Input.TopGifterRank = 7;
+        Input.TopViewers = {
+            FTSRoomUserTopViewer{
+                Label + "-viewer-a",
+                Label + " Viewer A",
+                "https://example.test/room-a.png",
+                1000,
+                true,
+                false,
+                11,
+                13
+            },
+            FTSRoomUserTopViewer{
+                Label + "-viewer-b",
+                Label + " Viewer B",
+                "https://example.test/room-b.png",
+                500,
+                false,
+                true,
+                17,
+                19
+            }
+        };
+        return Input;
+    }
+
     inline void RequireUserEqual(
         const FTSUserSnapshot& Actual,
         const FTSUserSnapshot& Expected,
@@ -209,6 +240,65 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireRoomUserTopViewerEqual(
+        const FTSRoomUserTopViewer& Actual,
+        const FTSRoomUserTopViewer& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.UniqueId == Expected.UniqueId, Context + ": UniqueId");
+        Require(Actual.Nickname == Expected.Nickname, Context + ": Nickname");
+        Require(
+            Actual.ProfilePictureUrl == Expected.ProfilePictureUrl,
+            Context + ": ProfilePictureUrl"
+        );
+        Require(Actual.CoinCount == Expected.CoinCount, Context + ": CoinCount");
+        Require(
+            Actual.bIsModerator == Expected.bIsModerator,
+            Context + ": bIsModerator"
+        );
+        Require(
+            Actual.bIsSubscriber == Expected.bIsSubscriber,
+            Context + ": bIsSubscriber"
+        );
+        Require(
+            Actual.GifterLevel == Expected.GifterLevel,
+            Context + ": GifterLevel"
+        );
+        Require(
+            Actual.TeamMemberLevel == Expected.TeamMemberLevel,
+            Context + ": TeamMemberLevel"
+        );
+    }
+
+    inline void RequireRoomUserInputEqual(
+        const FTSRoomUserInput& Actual,
+        const FTSRoomUserInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(
+            Actual.ViewerCount == Expected.ViewerCount,
+            Context + ": ViewerCount"
+        );
+        Require(
+            Actual.TopGifterRank == Expected.TopGifterRank,
+            Context + ": TopGifterRank"
+        );
+        Require(
+            Actual.TopViewers.size() == Expected.TopViewers.size(),
+            Context + ": TopViewers size"
+        );
+        for (std::size_t Index = 0; Index < Expected.TopViewers.size(); ++Index)
+        {
+            RequireRoomUserTopViewerEqual(
+                Actual.TopViewers[Index],
+                Expected.TopViewers[Index],
+                Context + ": TopViewer " + std::to_string(Index)
+            );
+        }
+    }
+
     [[nodiscard]]
     inline FTSEventQueueSettings MakeChatSettings(
         std::uint32_t MaxSlots = 10,
@@ -294,6 +384,27 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeRoomUserSettings(
+        std::uint32_t MaxSlots = 10,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{15000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* RoomUserSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::RoomUser);
+        Require(RoomUserSettings != nullptr, "RoomUser settings must exist");
+        RoomUserSettings->bEnabled = true;
+        RoomUserSettings->MaxSlots = MaxSlots;
+        RoomUserSettings->TTL = TTL;
+        RoomUserSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeChatFollowSettings(
         std::uint32_t ChatMaxSlots = 10,
         std::uint32_t FollowMaxSlots = 10,
@@ -368,6 +479,33 @@ namespace TikStudio::Tests
         LikeSettings->MaxSlots = LikeMaxSlots;
         LikeSettings->TTL = LikeTTL;
         LikeSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeChatRoomUserSettings(
+        std::uint32_t ChatMaxSlots = 10,
+        std::uint32_t RoomUserMaxSlots = 1,
+        std::chrono::milliseconds ChatTTL = std::chrono::milliseconds{8000},
+        std::chrono::milliseconds RoomUserTTL =
+            std::chrono::milliseconds{15000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(
+            ChatMaxSlots,
+            ChatTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* RoomUserSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::RoomUser);
+        Require(RoomUserSettings != nullptr, "RoomUser settings must exist");
+        RoomUserSettings->bEnabled = true;
+        RoomUserSettings->MaxSlots = RoomUserMaxSlots;
+        RoomUserSettings->TTL = RoomUserTTL;
+        RoomUserSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
         return Settings;
     }
 
@@ -452,6 +590,19 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedRoomUserAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        return RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::RoomUserInput,
+            Context
+        );
+    }
+
+    [[nodiscard]]
     inline const FTSChatProcessingDispatch& RequireChatDispatch(
         const FTSEventHostCycleResult& Cycle,
         const std::string& Context
@@ -519,6 +670,27 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::Like,
             Context + ": Like dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSRoomUserProcessingDispatch& RequireRoomUserDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSRoomUserProcessingDispatch* Dispatch =
+            std::get_if<FTSRoomUserProcessingDispatch>(&*Cycle.Dispatch);
+        Require(
+            Dispatch != nullptr,
+            Context + ": RoomUser dispatch expected"
+        );
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::RoomUser,
+            Context + ": RoomUser dispatch identity and flow"
         );
         return *Dispatch;
     }

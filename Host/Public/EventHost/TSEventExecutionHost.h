@@ -17,7 +17,9 @@ enum class ETSEventHostCommandKind : std::uint8_t
     ShareInput,
     ShareCompletion,
     LikeInput,
-    LikeCompletion
+    LikeCompletion,
+    RoomUserInput,
+    RoomUserCompletion
 };
 
 // El variant sólo transporta el resultado propietario fuera del Host; no forma parte
@@ -26,7 +28,8 @@ using FTSEventProcessingDispatch = std::variant<
     FTSChatProcessingDispatch,
     FTSFollowProcessingDispatch,
     FTSShareProcessingDispatch,
-    FTSLikeProcessingDispatch
+    FTSLikeProcessingDispatch,
+    FTSRoomUserProcessingDispatch
 >;
 
 struct FTSEventHostCycleResult
@@ -77,6 +80,9 @@ public:
     bool PostLike(FTSLikeInput Input);
 
     [[nodiscard]]
+    bool PostRoomUser(FTSRoomUserInput Input);
+
+    [[nodiscard]]
     bool PostChatCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
@@ -96,6 +102,12 @@ public:
 
     [[nodiscard]]
     bool PostLikeCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    bool PostRoomUserCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
     );

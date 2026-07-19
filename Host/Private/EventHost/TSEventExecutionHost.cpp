@@ -131,6 +131,17 @@ namespace
         }
     }
 
+    void ValidateOwnedDispatch(
+        const FTSRoomUserProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::RoomUser)
+        {
+            throw std::logic_error("Invalid owned RoomUser dispatch");
+        }
+    }
+
     [[nodiscard]]
     FTSEmissionId GetDispatchEmissionId(
         const FTSEventProcessingDispatch& Dispatch
@@ -178,6 +189,12 @@ public:
 
     [[nodiscard]]
     bool PostLike(FTSLikeInput Input)
+    {
+        return PostCommand(std::move(Input));
+    }
+
+    [[nodiscard]]
+    bool PostRoomUser(FTSRoomUserInput Input)
     {
         return PostCommand(std::move(Input));
     }
@@ -231,6 +248,19 @@ public:
         ValidateCompletionArguments(EmissionId, ProcessingResult);
         return PostCommand(
             FPostedLikeCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
+    bool PostRoomUserCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        // La familia del ID se valida en el owner thread.
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedRoomUserCompletion{EmissionId, ProcessingResult}
         );
     }
 
@@ -348,6 +378,13 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedRoomUserCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     using FPostedCommand = std::variant<
         FTSChatInput,
         FTSFollowInput,
@@ -356,7 +393,9 @@ private:
         FTSShareInput,
         FPostedShareCompletion,
         FTSLikeInput,
-        FPostedLikeCompletion
+        FPostedLikeCompletion,
+        FTSRoomUserInput,
+        FPostedRoomUserCompletion
     >;
 
     static_assert(
@@ -453,6 +492,25 @@ private:
                         ETSEventHostCommandKind::LikeCompletion;
                     Result.CompletionResult.emplace(
                         Coordinator.CompleteLikeProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
+                },
+                [&](FTSRoomUserInput& Input)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::RoomUserInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitRoomUser(std::move(Input))
+                    );
+                },
+                [&](const FPostedRoomUserCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::RoomUserCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteRoomUserProcessing(
                             Completion.EmissionId,
                             Completion.ProcessingResult
                         )
@@ -565,6 +623,28 @@ private:
             return Dispatch;
         }
 
+        case ETSEventFamilyKind::RoomUser:
+        {
+            FTSRoomUserDispatchResult DispatchResult =
+                Coordinator.BeginRoomUserProcessing();
+            ValidateDispatchResult(DispatchResult);
+            if (DispatchResult.Status !=
+                ETSPipelineDispatchStatus::Dispatched)
+            {
+                throw std::logic_error(
+                    "Peeked RoomUser ready did not produce a dispatch"
+                );
+            }
+
+            ValidateOwnedDispatch(*DispatchResult.Dispatch);
+            std::optional<FTSEventProcessingDispatch> Dispatch;
+            Dispatch.emplace(
+                std::in_place_type<FTSRoomUserProcessingDispatch>,
+                std::move(*DispatchResult.Dispatch)
+            );
+            return Dispatch;
+        }
+
         default:
             throw std::logic_error(
                 "Pending ready belongs to an unsupported Host family"
@@ -611,6 +691,11 @@ bool FTSEventExecutionHost::PostLike(FTSLikeInput Input)
     return Impl->PostLike(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostRoomUser(FTSRoomUserInput Input)
+{
+    return Impl->PostRoomUser(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostChatCompletion(
     FTSEmissionId EmissionId,
     ETSProcessingResult ProcessingResult
@@ -641,6 +726,17 @@ bool FTSEventExecutionHost::PostLikeCompletion(
 )
 {
     return Impl->PostLikeCompletion(EmissionId, ProcessingResult);
+}
+
+bool FTSEventExecutionHost::PostRoomUserCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostRoomUserCompletion(
+        EmissionId,
+        ProcessingResult
+    );
 }
 
 FTSEventHostCycleResult FTSEventExecutionHost::RunOneCycle()

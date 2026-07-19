@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `e02f306`
-(`feat(room-user): add conversion and direct family decision`).
+rama `main`, partiendo de HEAD `14b9357`
+(`feat(room-user): complete pipeline lifecycle`).
 
-Los cambios de la Fase 4G.2 permanecen locales y sin commit.
+Los cambios de la Fase 4G.3 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -81,12 +81,12 @@ otros dos → converters tipados               [pendientes]
         ↓
 FTS*Input portable                            [Chat, Follow, Share, Like y RoomUser implementados]
         ↓
-composición externa → Event Host             [Chat, Follow, Share y Like implementados]
+composición externa → Event Host             [Chat, Follow, Share, Like y RoomUser implementados]
 ```
 
 El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON
-Chat/Follow/Share/Like → converter → Host existen sólo en el runner vertical; no hay
-dependencia Adapter → Host en producción.
+Chat/Follow/Share/Like/RoomUser → converter → Host existen sólo en el runner vertical;
+no hay dependencia Adapter → Host en producción.
 
 ## 2. Datos entrantes y familias portables
 
@@ -105,9 +105,8 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat, Follow, Share y Like disponen del recorrido portable
-completo hasta Host y lifecycle. RoomUser dispone localmente del Pipeline completo
-hasta lifecycle, pero todavía no de Host; Gift y Member continúan sin implementación
-semántica.
+completo hasta Host y lifecycle. RoomUser completa localmente el mismo recorrido A → B
+→ C; Gift y Member continúan sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -209,16 +208,18 @@ texto JSON TikFinity                                [implementado en Adapter]
 → certificación JSON Like → Host                           [publicada en 4F.3]
 → FTSTikFinityRoomUserConverter                            [publicado en 4G.1]
 → FTSRoomUserPayload y candidato directo Flow RoomUser     [publicados en 4G.1]
-→ repositorio, binding y admisión RoomUser                 [implementados localmente en 4G.2]
-→ dispatch y completion RoomUser                           [implementados localmente en 4G.2]
-→ lifecycle mixto Chat/Follow/Share/Like/RoomUser          [generalizado localmente en 4G.2]
+→ repositorio, binding y admisión RoomUser                 [publicados en 4G.2]
+→ dispatch y completion RoomUser                           [publicados en 4G.2]
+→ lifecycle mixto Chat/Follow/Share/Like/RoomUser          [generalizado en 4G.2]
+→ PostRoomUser y PostRoomUserCompletion en Host            [implementados localmente en 4G.3]
+→ RoomUser en FIFO global, owner y dispatch variant        [implementado localmente en 4G.3]
+→ certificación JSON RoomUser → Host                       [implementada localmente en 4G.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
-RoomUser A → B                                              [completo localmente]
-RoomUser C                                                  [pendiente]
+RoomUser A → B → C                                          [completo localmente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -259,8 +260,11 @@ certificó 148 PASS / 0 FAIL. La Fase 4F.1 fue publicada en `0081ee8`; el propie
 certificó 158 PASS / 0 FAIL. La Fase 4F.2 fue publicada en `46fdc41`; el propietario
 certificó 170 PASS / 0 FAIL. La Fase 4F.3 fue publicada en `14bd28f`; el propietario
 certificó 179 PASS / 0 FAIL. La Fase 4G.1 fue publicada en `e02f306`; el propietario
-certificó 191 PASS / 0 FAIL. La Fase 4G.2 implementa localmente el Pipeline completo de
-RoomUser, sin compilación ni ejecución de pruebas por el agente.
+certificó 191 PASS / 0 FAIL. La Fase 4G.2 fue publicada en `14b9357`; su certificación
+manual terminó con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42, JSON
+Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 completa localmente el
+Host y la certificación vertical de RoomUser, sin compilación ni ejecución de pruebas
+por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -441,8 +445,13 @@ En 4G.2, `FTSRoomUserPayloadRepository`, `FTSRoomUserProcessingDispatch` y
 Coordinator admite únicamente la pareja `RoomUser / RoomUser`, conserva el snapshot
 completo durante admisión y procesamiento, y enruta sus terminales por las mismas
 rutas Pending, Confirm y Cancel que las otras familias. RoomUser comparte el único
-ready global, `InFlight`, Core y BindingRegistry; Host e integración vertical continúan
-pendientes.
+ready global, `InFlight`, Core y BindingRegistry.
+
+En 4G.3, `PostRoomUser` y `PostRoomUserCompletion` incorporan RoomUser al Host
+compartido. Input y completion usan la única bandeja FIFO y se ejecutan en el mismo
+owner thread sobre el mismo Coordinator y Core. `FTSRoomUserProcessingDispatch` se
+añade al dispatch variant existente, y la certificación JSON RoomUser → converter →
+Host comprueba el snapshot profundo y el lifecycle terminal sin añadir rutas derivadas.
 
 ### Repositorios tipados de payloads
 
@@ -859,7 +868,7 @@ Targets explícitos, sin `file(GLOB ...)`:
   finalización;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
-  propietario de Chat/Follow/Share/Like; publica `Host/Public`, enlaza públicamente
+  propietario de Chat/Follow/Share/Like/RoomUser; publica `Host/Public`, enlaza públicamente
   con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
@@ -876,7 +885,7 @@ Targets explícitos, sin `file(GLOB ...)`:
   comportamiento desde inputs normalizados; está registrado en CTest mediante
   `add_test`.
 - `TikStudioVerticalIntegrationTests` (executable): compone Adapter y Host sólo para
-  certificar los recorridos JSON Chat/Follow/Share/Like → converter → Host → Pipeline
+  certificar los recorridos JSON Chat/Follow/Share/Like/RoomUser → converter → Host → Pipeline
   → Core; está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
@@ -890,9 +899,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4G.1, Pipeline, Host, Adapter y Vertical
-registran respectivamente 72, 33, 42 y 4 casos. Los cambios locales de 4G.2 elevan
-Pipeline a 84, sin modificar Host, Adapter ni Vertical.
+automático. En el baseline publicado de 4G.2, Pipeline, Host, Adapter y Vertical
+registran respectivamente 84, 33, 42 y 4 casos. Los cambios locales de 4G.3 elevan Host
+a 41 y Vertical a 5, sin modificar Pipeline ni Adapter.
 
 La estructura familiar queda así:
 
@@ -901,7 +910,7 @@ Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
-Tests/RoomUser/ → Adapter, familia y lifecycle Pipeline RoomUser
+Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
 Tests/Gift|Member/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -989,11 +998,13 @@ Host; fue publicada en `14bd28f` y certificada con 179 PASS / 0 FAIL: Core 10, P
 70, Host 33, Adapter 32, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La
 Fase 4G.1 añadió diez casos Adapter RoomUser y dos casos de familia Pipeline RoomUser;
 fue publicada en `e02f306` y certificada con 191 PASS / 0 FAIL: Core 10, Pipeline 72,
-Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La
-cobertura local de 4G.2 añade doce escenarios Coordinator RoomUser. Sin ejecutar los
-runners durante esta implementación, el resultado esperado para la validación manual
-es: Core 10, Pipeline 84, Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical
-Integration 4; 203 casos.
+Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La Fase
+4G.2 añadió doce escenarios Coordinator RoomUser, fue publicada en `14b9357` y fue
+certificada con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42, JSON
+Decoder 20, Checklist 10 y Vertical Integration 4. La cobertura local de 4G.3 añade
+ocho escenarios Host y una certificación JSON RoomUser → Host. Sin ejecutar los runners
+durante esta implementación, el resultado esperado es: Core 10, Pipeline 84, Host 41,
+Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 212 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1573,16 +1584,34 @@ Integration 4; 203 casos.
 - Generaliza validación y limpieza de lifecycle en las rutas Pending, Confirm y Cancel
   para la pareja exclusiva `RoomUser / RoomUser`.
 - Comparte con las otras familias el único Core, BindingRegistry, ready e `InFlight`.
-- Añade doce escenarios Coordinator RoomUser; Pipeline registra localmente 84 casos.
+- Añade doce escenarios Coordinator RoomUser; Pipeline registra 84 casos.
 - Mantiene reservados `RoomUserMilestone` y `RoomUserTop1Change`, sin añadir Host ni
   integración vertical RoomUser.
+- Fue publicada en `14b9357` como `feat(room-user): complete pipeline lifecycle`.
+- El propietario certificó 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter
+  42, JSON Decoder 20, Checklist 10 y Vertical Integration 4.
+
+### Fase 4G.3 — RoomUser C: Host compartido e integración vertical
+
+- Añade `PostRoomUser` y `PostRoomUserCompletion` al `FTSEventExecutionHost` existente.
+- Incorpora input y completion RoomUser a la única FIFO global y al visitor del owner
+  thread, sin crear otro Host, Coordinator, Core, ready o `InFlight`.
+- Amplía de forma append-only el enum de comandos, el variant privado de comandos y el
+  dispatch variant público con la ruta exclusiva `RoomUser / RoomUser`.
+- Enruta el ready mediante `PeekPendingReadyFamilyKind()` y
+  `BeginRoomUserProcessing()`, y valida la familia de completions en el Coordinator.
+- Añade ocho casos Host RoomUser y una certificación JSON RoomUser → converter → Host
+  → completion. El resultado esperado queda en Host 41, Vertical Integration 5 y 212
+  casos totales.
+- Mantiene `RoomUserMilestone` y `RoomUserTop1Change` reservados; no añade comparación
+  de snapshots, historial, acumulación, deduplicación ni lógica derivada.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `e02f306` más los cambios locales de 4G.2.
+  `14b9357` más los cambios locales de 4G.3.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1610,7 +1639,8 @@ Integration 4; 203 casos.
   publicó Like B en `46fdc41` y fue certificada con 170 PASS / 0 FAIL. La Fase 4F.3
   publicó Like C en `14bd28f` y fue certificada con 179 PASS / 0 FAIL. La Fase 4G.1
   publicó RoomUser A en `e02f306` y fue certificada con 191 PASS / 0 FAIL. La Fase
-  4G.2 implementa localmente RoomUser B; no anticipar su fase C.
+  4G.2 publicó RoomUser B en `14b9357` y fue certificada con 203 PASS / 0 FAIL. La Fase
+  4G.3 completa localmente RoomUser C; no anunciar automáticamente otra familia.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,
