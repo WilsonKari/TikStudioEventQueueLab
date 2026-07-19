@@ -2,10 +2,11 @@
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
 Share y Like tienen completos Adapter tipado, familia directa, Pipeline, Host,
-lifecycle e integración vertical JSON → Host. RoomUser tiene completos el Adapter
-directo, el payload y la decisión familiar directa; Coordinator, Host e integración
-vertical permanecen pendientes. Gift y Member conservan sólo su directorio hasta que
-exista comportamiento para probar.
+lifecycle e integración vertical JSON → Host. RoomUser tiene completos converter,
+payload, familia directa, repositorio tipado, admisión, binding, dispatch, completion y
+lifecycle mediante el Coordinator compartido; Host e integración vertical permanecen
+pendientes. Gift y Member conservan sólo su directorio hasta que exista comportamiento
+para probar.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core

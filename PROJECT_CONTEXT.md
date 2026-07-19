@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `14bd28f`
-(`feat(host): complete like vertical integration`).
+rama `main`, partiendo de HEAD `e02f306`
+(`feat(room-user): add conversion and direct family decision`).
 
-Los cambios de la Fase 4G.1 permanecen locales y sin commit.
+Los cambios de la Fase 4G.2 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -76,7 +76,7 @@ Chat → FTSTikFinityChatConverter             [implementado]
 Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
 Share → FTSTikFinityShareConverter           [implementado en 4E.1]
 Like → FTSTikFinityLikeConverter             [publicado en 4F.1]
-RoomUser → FTSTikFinityRoomUserConverter     [implementado localmente en 4G.1]
+RoomUser → FTSTikFinityRoomUserConverter     [publicado en 4G.1]
 otros dos → converters tipados               [pendientes]
         ↓
 FTS*Input portable                            [Chat, Follow, Share, Like y RoomUser implementados]
@@ -105,8 +105,9 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat, Follow, Share y Like disponen del recorrido portable
-completo hasta Host y lifecycle. RoomUser dispone localmente de conversión y decisión
-familiar directa; Gift y Member continúan sin implementación semántica.
+completo hasta Host y lifecycle. RoomUser dispone localmente del Pipeline completo
+hasta lifecycle, pero todavía no de Host; Gift y Member continúan sin implementación
+semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -150,9 +151,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → FTSChatInput portable                             [conversión implementada]
 → familia interpreta payload y elige flujo          [Chat, Follow, Share, Like y RoomUser]
 → decisión familiar / candidato de admisión tipado  [Chat, Follow, Share, Like y RoomUser]
-→ coordinador inserta payload provisional            [Chat, Follow, Share y Like]
-→ repositorio tipado de payloads                     [Chat, Follow, Share y Like]
-→ FTSEnqueueRequest                                  [Chat, Follow, Share y Like llaman Core.Enqueue]
+→ coordinador inserta payload provisional            [Chat, Follow, Share, Like y RoomUser]
+→ repositorio tipado de payloads                     [Chat, Follow, Share, Like y RoomUser]
+→ FTSEnqueueRequest                                  [cinco familias llaman Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -160,22 +161,22 @@ texto JSON TikFinity                                [implementado en Adapter]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
-→ binding externo EmissionId → PayloadHandle          [Chat, Follow, Share y Like conectados]
-→ lifecycle de Enqueue libera binding y payload       [generalizado en cuatro familias]
+→ binding externo EmissionId → PayloadHandle          [cinco familias conectadas]
+→ lifecycle de Enqueue libera binding y payload       [generalizado en cinco familias]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-→ coordinador captura ready global de un solo uso       [Chat, Follow, Share y Like]
-→ Begin*Processing produce copia propietaria            [Chat, Follow, Share y Like]
-→ binding externo Bound → Processing                    [Chat, Follow, Share y Like]
-→ coordinador entrega despacho tipado propietario       [Chat, Follow, Share y Like]
+→ coordinador captura ready global de un solo uso       [cinco familias]
+→ Begin*Processing produce copia propietaria            [cinco familias]
+→ binding externo Bound → Processing                    [cinco familias]
+→ coordinador entrega despacho tipado propietario       [cinco familias]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-→ Succeeded coordina Confirm                            [Chat, Follow, Share y Like]
-→ Cancelled / Failed coordinan CancelInFlight           [Chat, Follow, Share y Like]
-→ lifecycle terminal enruta y limpia payload tipado     [Chat, Follow, Share y Like]
+→ Succeeded coordina Confirm                            [cinco familias]
+→ Cancelled / Failed coordinan CancelInFlight           [cinco familias]
+→ lifecycle terminal enruta y limpia payload tipado     [cinco familias]
 → Confirm captura el siguiente ready multi-familia      [implementado]
-→ Pump y expiración se exponen por el coordinador       [Chat, Follow, Share y Like]
+→ Pump y expiración se exponen por el coordinador       [cinco familias]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
@@ -206,15 +207,18 @@ texto JSON TikFinity                                [implementado en Adapter]
 → PostLike y PostLikeCompletion en Host compartido         [publicados en 4F.3]
 → Like en FIFO global y dispatch variant                   [publicado en 4F.3]
 → certificación JSON Like → Host                           [publicada en 4F.3]
-→ FTSTikFinityRoomUserConverter                            [implementado localmente en 4G.1]
-→ FTSRoomUserPayload y candidato directo Flow RoomUser     [implementados localmente en 4G.1]
+→ FTSTikFinityRoomUserConverter                            [publicado en 4G.1]
+→ FTSRoomUserPayload y candidato directo Flow RoomUser     [publicados en 4G.1]
+→ repositorio, binding y admisión RoomUser                 [implementados localmente en 4G.2]
+→ dispatch y completion RoomUser                           [implementados localmente en 4G.2]
+→ lifecycle mixto Chat/Follow/Share/Like/RoomUser          [generalizado localmente en 4G.2]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
-RoomUser A                                                  [completo localmente]
-RoomUser B → C                                              [pendiente]
+RoomUser A → B                                              [completo localmente]
+RoomUser C                                                  [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -254,8 +258,9 @@ terminó con 139 PASS / 0 FAIL. La Fase 4E.3 fue publicada en `3321a2a`; el prop
 certificó 148 PASS / 0 FAIL. La Fase 4F.1 fue publicada en `0081ee8`; el propietario
 certificó 158 PASS / 0 FAIL. La Fase 4F.2 fue publicada en `46fdc41`; el propietario
 certificó 170 PASS / 0 FAIL. La Fase 4F.3 fue publicada en `14bd28f`; el propietario
-certificó 179 PASS / 0 FAIL. La Fase 4G.1 implementa localmente la conversión y decisión
-directa de RoomUser, sin compilación ni ejecución de pruebas por el agente.
+certificó 179 PASS / 0 FAIL. La Fase 4G.1 fue publicada en `e02f306`; el propietario
+certificó 191 PASS / 0 FAIL. La Fase 4G.2 implementa localmente el Pipeline completo de
+RoomUser, sin compilación ni ejecución de pruebas por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -429,7 +434,15 @@ valores exactos: no ordenan, deduplican, truncan ni derivan significado adiciona
 `FTSRoomUserFamily::Decide` es sin estado y produce exclusivamente
 `FamilyKind = RoomUser`, `Flow = RoomUser`, prioridad cero, sin override de TTL ni
 protección especial. `RoomUserMilestone` y `RoomUserTop1Change` permanecen reservados;
-4G.1 no añade repositorio, Coordinator, Host, lifecycle ni integración vertical.
+4G.1 no añadió estado específico ni flujos derivados.
+
+En 4G.2, `FTSRoomUserPayloadRepository`, `FTSRoomUserProcessingDispatch` y
+`FTSRoomUserProcessingCompletionResult` reutilizan las plantillas genéricas. El
+Coordinator admite únicamente la pareja `RoomUser / RoomUser`, conserva el snapshot
+completo durante admisión y procesamiento, y enruta sus terminales por las mismas
+rutas Pending, Confirm y Cancel que las otras familias. RoomUser comparte el único
+ready global, `InFlight`, Core y BindingRegistry; Host e integración vertical continúan
+pendientes.
 
 ### Repositorios tipados de payloads
 
@@ -443,11 +456,12 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 - `Size()` y `Empty()`.
 
 `FTSChatPayloadRepository`, `FTSFollowPayloadRepository`,
-`FTSSharePayloadRepository` y `FTSLikePayloadRepository` son aliases tipados de
+`FTSSharePayloadRepository`, `FTSLikePayloadRepository` y
+`FTSRoomUserPayloadRepository` son aliases tipados de
 instancias independientes. Ninguno conoce identidades de emisión, flujos, familias,
 bindings, lifecycle events ni procesadores. El handle sólo identifica una entrada de
 su instancia; varios repositorios pueden asignar el mismo valor numérico porque
-`FamilyKind` enruta la autoridad correcta. Los cuatro conservan autoridad exclusiva y
+`FamilyKind` enruta la autoridad correcta. Los cinco conservan autoridad exclusiva y
 no pueden copiarse ni moverse.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
@@ -482,17 +496,17 @@ Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, tran
 condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
 registro no almacena payloads, no conoce repositorios o familias concretas y no replica
 los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa para crear
-bindings Chat, Follow, Share y Like después de cada admisión aceptada. Como autoridad
+bindings Chat, Follow, Share, Like y RoomUser después de cada admisión aceptada. Como autoridad
 estable de los bindings por `EmissionId`, no puede copiarse, asignarse ni moverse.
 
-### Coordinador de admisión Chat, Follow, Share y Like
+### Coordinador de admisión Chat, Follow, Share, Like y RoomUser
 
 `FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, los
-repositorios Chat/Follow/Share/Like y el registro de bindings. Es no copiable y no
+repositorios Chat/Follow/Share/Like/RoomUser y el registro de bindings. Es no copiable y no
 movible, y no expone referencias mutables a ninguna autoridad.
 
-`SubmitChat`, `SubmitFollow`, `SubmitShare` y `SubmitLike` conservan este orden mediante
-una guarda provisional templada:
+`SubmitChat`, `SubmitFollow`, `SubmitShare`, `SubmitLike` y `SubmitRoomUser` conservan
+este orden mediante una guarda provisional templada:
 
 ```text
 familia tipada::Decide
@@ -513,19 +527,19 @@ Ante aceptación, el payload permanece en la misma entrada y el binding existe a
 exponer un posible `AutoPumpOutcome`. Un fallo posterior se trata como
 invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
 
-El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share/Like. Valida
+El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share/Like/RoomUser. Valida
 primero toda la tanda, incluida la pareja familia/flujo y la existencia del payload en
 su repositorio; después aplica en orden `TerminalPendingHandling`, borrado tipado y
 borrado del binding. Una familia todavía no integrada produce `std::logic_error`.
 
-La inspección pública permite visitar bindings y payloads Chat/Follow/Share/Like
+La inspección pública permite visitar bindings y payloads Chat/Follow/Share/Like/RoomUser
 mediante `EmissionId`, además de consultar sus conteos, sin exponer ownership ni
 referencias mutables.
 
-### Despacho autorizado de Chat, Follow, Share y Like
+### Despacho autorizado de Chat, Follow, Share, Like y RoomUser
 
 El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
-`PendingReadyEmission`, compartida por Chat, Follow, Share y Like porque el core sólo
+`PendingReadyEmission`, compartida por las cinco familias porque el core sólo
 posee un `InFlight`. Es una notificación de despacho pendiente, no una réplica del
 estado autoritativo.
 
@@ -535,9 +549,9 @@ familia/flujo soportada y estado `Bound`; nunca sobrescribe otro ready pendiente
 `AutoPumpOutcome` que permanece dentro de `FTSEnqueueResult` es diagnóstico y no autoriza
 un despacho creado por código externo.
 
-`BeginChatProcessing()`, `BeginFollowProcessing()`, `BeginShareProcessing()` y
-`BeginLikeProcessing()` sólo autorizan su propia familia. Si el ready pertenece a otra,
-devuelven `NoEmissionReady` y preservan ready, binding y payload.
+`BeginChatProcessing()`, `BeginFollowProcessing()`, `BeginShareProcessing()`,
+`BeginLikeProcessing()` y `BeginRoomUserProcessing()` sólo autorizan su propia familia.
+Si el ready pertenece a otra, devuelven `NoEmissionReady` y preservan ready, binding y payload.
 `PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni autorizar
 procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
 
@@ -547,10 +561,11 @@ permanecen intactos y la operación puede reintentarse. Después de una transici
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
 almacenados mientras la emisión permanece `Processing`.
 
-### Finalización y lifecycle completo de Chat, Follow, Share y Like
+### Finalización y lifecycle completo de Chat, Follow, Share, Like y RoomUser
 
-`CompleteChatProcessing`, `CompleteFollowProcessing`, `CompleteShareProcessing` y
-`CompleteLikeProcessing` conservan wrappers públicos tipados sobre un helper común.
+`CompleteChatProcessing`, `CompleteFollowProcessing`, `CompleteShareProcessing`,
+`CompleteLikeProcessing` y `CompleteRoomUserProcessing` conservan wrappers públicos
+tipados sobre un helper común.
 Validan identidad, ausencia de cualquier ready pendiente, familia, flujo, handle,
 estado y payload antes de solicitar una transición terminal al core. `Succeeded` llama
 a `Confirm`; `Cancelled` y `Failed` llaman a `CancelInFlight`, sin retry implícito.
@@ -840,7 +855,7 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat, Follow, Share,
-  Like y RoomUser, y coordinador Chat/Follow/Share/Like de admisión, despacho y
+  Like y RoomUser, y coordinador Chat/Follow/Share/Like/RoomUser de admisión, despacho y
   finalización;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
@@ -875,9 +890,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4F.3, Pipeline, Host, Adapter y Vertical
-registran respectivamente 70, 33, 32 y 4 casos. Los cambios locales de 4G.1 elevan
-Pipeline a 72 y Adapter a 42, sin modificar Host ni Vertical.
+automático. En el baseline publicado de 4G.1, Pipeline, Host, Adapter y Vertical
+registran respectivamente 72, 33, 42 y 4 casos. Los cambios locales de 4G.2 elevan
+Pipeline a 84, sin modificar Host, Adapter ni Vertical.
 
 La estructura familiar queda así:
 
@@ -886,7 +901,7 @@ Tests/Chat/  → Pipeline, Host, Adapter y certificación vertical Chat
 Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
-Tests/RoomUser/ → Adapter y familia Pipeline directa RoomUser
+Tests/RoomUser/ → Adapter, familia y lifecycle Pipeline RoomUser
 Tests/Gift|Member/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -972,10 +987,13 @@ doce casos Coordinator Like y fue publicada en `46fdc41`; el propietario certifi
 PASS / 0 FAIL. La Fase 4F.3 añadió ocho casos Host Like y una certificación JSON Like →
 Host; fue publicada en `14bd28f` y certificada con 179 PASS / 0 FAIL: Core 10, Pipeline
 70, Host 33, Adapter 32, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La
-cobertura local de 4G.1 añade diez casos Adapter RoomUser y dos casos de familia
-Pipeline RoomUser. Sin ejecutar los runners durante esta implementación, el resultado
-esperado para la validación manual es: Core 10, Pipeline 72, Host 33, Adapter 42, JSON
-Decoder 20, Checklist 10 y Vertical Integration 4; 191 casos.
+Fase 4G.1 añadió diez casos Adapter RoomUser y dos casos de familia Pipeline RoomUser;
+fue publicada en `e02f306` y certificada con 191 PASS / 0 FAIL: Core 10, Pipeline 72,
+Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La
+cobertura local de 4G.2 añade doce escenarios Coordinator RoomUser. Sin ejecutar los
+runners durante esta implementación, el resultado esperado para la validación manual
+es: Core 10, Pipeline 84, Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical
+Integration 4; 203 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1540,15 +1558,31 @@ Decoder 20, Checklist 10 y Vertical Integration 4; 191 casos.
   `FamilyKind = RoomUser` y `Flow = RoomUser` con los defaults de admisión.
 - Mantiene `RoomUserMilestone` y `RoomUserTop1Change` reservados; no añade repositorio,
   Coordinator, Host, lifecycle ni integración vertical RoomUser.
-- Añade diez escenarios Adapter y dos escenarios Pipeline; se esperan localmente 191
-  casos totales para validación manual.
+- Añade diez escenarios Adapter y dos escenarios Pipeline; Pipeline registra 72 casos
+  y el total certificado alcanza 191.
+- Fue publicada en `e02f306` como
+  `feat(room-user): add conversion and direct family decision`.
+- El propietario certificó 191 PASS / 0 FAIL: Core 10, Pipeline 72, Host 33, Adapter
+  42, JSON Decoder 20, Checklist 10 y Vertical Integration 4.
+
+### Fase 4G.2 — RoomUser B: lifecycle completo en el Pipeline compartido
+
+- Añade aliases tipados para repositorio, dispatch y resultado de completion RoomUser.
+- Integra `SubmitRoomUser`, `BeginRoomUserProcessing`, `CompleteRoomUserProcessing`,
+  visita por `EmissionId` y conteo de payloads en el Coordinator existente.
+- Generaliza validación y limpieza de lifecycle en las rutas Pending, Confirm y Cancel
+  para la pareja exclusiva `RoomUser / RoomUser`.
+- Comparte con las otras familias el único Core, BindingRegistry, ready e `InFlight`.
+- Añade doce escenarios Coordinator RoomUser; Pipeline registra localmente 84 casos.
+- Mantiene reservados `RoomUserMilestone` y `RoomUserTop1Change`, sin añadir Host ni
+  integración vertical RoomUser.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `14bd28f` más los cambios locales de 4G.1.
+  `e02f306` más los cambios locales de 4G.2.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1575,7 +1609,8 @@ Decoder 20, Checklist 10 y Vertical Integration 4; 191 casos.
   publicó Like A en `0081ee8` y fue certificada con 158 PASS / 0 FAIL. La Fase 4F.2
   publicó Like B en `46fdc41` y fue certificada con 170 PASS / 0 FAIL. La Fase 4F.3
   publicó Like C en `14bd28f` y fue certificada con 179 PASS / 0 FAIL. La Fase 4G.1
-  implementa localmente RoomUser A; no anticipar sus fases B o C.
+  publicó RoomUser A en `e02f306` y fue certificada con 191 PASS / 0 FAIL. La Fase
+  4G.2 implementa localmente RoomUser B; no anticipar su fase C.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

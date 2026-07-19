@@ -433,6 +433,46 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeRoomUserSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* RoomUserSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::RoomUser);
+        Require(
+            RoomUserSettings != nullptr,
+            "RoomUser settings must be available"
+        );
+        RoomUserSettings->bEnabled = bEnabled;
+        RoomUserSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalRoomUserSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{15000},
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeRoomUserSettings(true, 10);
+        FTSFlowQueueSettings* RoomUserSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::RoomUser);
+        Require(
+            RoomUserSettings != nullptr,
+            "RoomUser settings must be available"
+        );
+        RoomUserSettings->TTL = TTL;
+        RoomUserSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -525,6 +565,33 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedRoomUser(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& FirstViewerUniqueId
+    )
+    {
+        FTSRoomUserInput Input = MakeCompleteRoomUserInput();
+        Require(
+            !Input.TopViewers.empty(),
+            "Complete RoomUser input must contain a TopViewer"
+        );
+        Input.TopViewers[0].UniqueId = FirstViewerUniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitRoomUser(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "RoomUser admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted RoomUser admission must have a valid identity"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -580,6 +647,21 @@ namespace TikStudio::Tests
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready Like must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyRoomUser(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSRoomUserDispatchResult Dispatch =
+            Coordinator.BeginRoomUserProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready RoomUser must produce a dispatch"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }
