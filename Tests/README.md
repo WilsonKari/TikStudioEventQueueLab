@@ -2,8 +2,9 @@
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
 Share, Like y RoomUser tienen completos Adapter tipado, familia directa, Pipeline,
-Host, lifecycle e integración vertical JSON → Host. Gift y Member conservan sólo su
-directorio hasta que exista comportamiento para probar.
+Host, lifecycle e integración vertical JSON → Host. Gift dispone de Adapter tipado,
+payload y decisión familiar directa; su Coordinator, Host e integración vertical
+permanecen pendientes. Member conserva sólo su directorio.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -35,6 +36,11 @@ certificación vertical JSON → Host. Preserva `TopViewers` por valor, en orden
 deduplicación, y produce exclusivamente `ETSEventFlow::RoomUser`.
 `RoomUserMilestone` y `RoomUserTop1Change` permanecen reservados y no están
 implementados.
+
+Gift conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como datos crudos y
+produce exclusivamente `ETSEventFlow::Gift`. Ninguno de esos metadatos activa
+`GiftCombo`, que permanece reservado hasta que una fase posterior defina su semántica.
+El Coordinator, Host, lifecycle e integración vertical Gift continúan pendientes.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `14b9357`
-(`feat(room-user): complete pipeline lifecycle`).
+rama `main`, partiendo de HEAD `f103f75`
+(`feat(host): complete room-user vertical integration`).
 
-Los cambios de la Fase 4G.3 permanecen locales y sin commit.
+Los cambios de la Fase 4H.1 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -77,9 +77,10 @@ Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
 Share → FTSTikFinityShareConverter           [implementado en 4E.1]
 Like → FTSTikFinityLikeConverter             [publicado en 4F.1]
 RoomUser → FTSTikFinityRoomUserConverter     [publicado en 4G.1]
-otros dos → converters tipados               [pendientes]
+Gift → FTSTikFinityGiftConverter             [implementado localmente en 4H.1]
+Member → converter tipado                    [pendiente]
         ↓
-FTS*Input portable                            [Chat, Follow, Share, Like y RoomUser implementados]
+FTS*Input portable                            [Chat, Follow, Share, Like, RoomUser y Gift implementados]
         ↓
 composición externa → Event Host             [Chat, Follow, Share, Like y RoomUser implementados]
 ```
@@ -104,9 +105,9 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
-interpreta ni almacena. Chat, Follow, Share y Like disponen del recorrido portable
-completo hasta Host y lifecycle. RoomUser completa localmente el mismo recorrido A → B
-→ C; Gift y Member continúan sin implementación semántica.
+interpreta ni almacena. Chat, Follow, Share, Like y RoomUser disponen del recorrido
+portable completo hasta Host y lifecycle. Gift dispone localmente de converter, payload
+y decisión directa; Member continúa sin implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -134,8 +135,8 @@ Share    → Share | ShareMilestone
 ```
 
 Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat,
-Follow, Share, Like y RoomUser producen sus flujos directos; todavía no existe lógica
-para los flujos derivados ni para Gift o Member. Los siete archivos de
+Follow, Share, Like, RoomUser y Gift producen sus flujos directos; todavía no existe
+lógica para los flujos derivados ni para Member. Los siete archivos de
 `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
 implementación.
 
@@ -145,11 +146,11 @@ El recorrido previsto y el punto exacto alcanzado son:
 texto JSON TikFinity                                [implementado en Adapter]
 → decoder tipado de siete eventos                   [implementado]
 → FTSTikFinityMappedEvent                           [implementado]
-→ contratos decodificados Chat, Follow, Share, Like y RoomUser [implementados]
+→ contratos decodificados Chat, Follow, Share, Like, RoomUser y Gift [implementados]
 → FTSTikFinityChatConverter                         [implementado]
 → FTSChatInput portable                             [conversión implementada]
-→ familia interpreta payload y elige flujo          [Chat, Follow, Share, Like y RoomUser]
-→ decisión familiar / candidato de admisión tipado  [Chat, Follow, Share, Like y RoomUser]
+→ familia interpreta payload y elige flujo          [Chat, Follow, Share, Like, RoomUser y Gift]
+→ decisión familiar / candidato de admisión tipado  [Chat, Follow, Share, Like, RoomUser y Gift]
 → coordinador inserta payload provisional            [Chat, Follow, Share, Like y RoomUser]
 → repositorio tipado de payloads                     [Chat, Follow, Share, Like y RoomUser]
 → FTSEnqueueRequest                                  [cinco familias llaman Core.Enqueue]
@@ -211,15 +212,20 @@ texto JSON TikFinity                                [implementado en Adapter]
 → repositorio, binding y admisión RoomUser                 [publicados en 4G.2]
 → dispatch y completion RoomUser                           [publicados en 4G.2]
 → lifecycle mixto Chat/Follow/Share/Like/RoomUser          [generalizado en 4G.2]
-→ PostRoomUser y PostRoomUserCompletion en Host            [implementados localmente en 4G.3]
-→ RoomUser en FIFO global, owner y dispatch variant        [implementado localmente en 4G.3]
-→ certificación JSON RoomUser → Host                       [implementada localmente en 4G.3]
+→ PostRoomUser y PostRoomUserCompletion en Host            [publicados en 4G.3]
+→ RoomUser en FIFO global, owner y dispatch variant        [publicado en 4G.3]
+→ certificación JSON RoomUser → Host                       [publicada en 4G.3]
+→ FTSTikFinityGiftConverter                                [implementado localmente en 4H.1]
+→ FTSGiftPayload y candidato directo Flow Gift             [implementados localmente en 4H.1]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
-RoomUser A → B → C                                          [completo localmente]
+RoomUser A → B → C                                          [completo]
+Gift A                                                      [completo localmente]
+Gift B → C                                                  [pendiente]
+Member                                                      [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -262,9 +268,11 @@ certificó 170 PASS / 0 FAIL. La Fase 4F.3 fue publicada en `14bd28f`; el propie
 certificó 179 PASS / 0 FAIL. La Fase 4G.1 fue publicada en `e02f306`; el propietario
 certificó 191 PASS / 0 FAIL. La Fase 4G.2 fue publicada en `14b9357`; su certificación
 manual terminó con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42, JSON
-Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 completa localmente el
-Host y la certificación vertical de RoomUser, sin compilación ni ejecución de pruebas
-por el agente.
+Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 fue publicada en
+`f103f75`; su certificación manual terminó con 212 PASS / 0 FAIL: Core 10, Pipeline 84,
+Host 41, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5. La Fase
+4H.1 implementa localmente la conversión y decisión directa Gift, sin compilación ni
+ejecución de pruebas por el agente.
 
 ## 4. Contratos públicos actuales
 
@@ -452,6 +460,22 @@ compartido. Input y completion usan la única bandeja FIFO y se ejecutan en el m
 owner thread sobre el mismo Coordinator y Core. `FTSRoomUserProcessingDispatch` se
 añade al dispatch variant existente, y la certificación JSON RoomUser → converter →
 Host comprueba el snapshot profundo y el lifecycle terminal sin añadir rutas derivadas.
+
+### Sexta familia semántica: Gift
+
+Gift A es una integración directa sin semántica derivada específica de la familia.
+`FTSTikFinityGiftConverter` exige envelope Gift, data, usuario e identidad, además de
+`GiftId`, `GiftName` no vacío y `DiamondCount`. Los campos numéricos Gift y del usuario
+deben ser no negativos y representables como `int32_t`; el converter reutiliza
+`FTSTikFinityDecodedUserConverter` y conserva strings sin trim ni normalización.
+
+`FTSGiftPayload` posee el `FTSGiftInput` completo por valor. `FTSGiftFamily::Decide`
+produce exclusivamente `FamilyKind = Gift` y `Flow = Gift`, con prioridad cero, sin
+override de TTL ni protección especial. `RepeatCount`, `GiftType`, `bRepeatEnd` y
+`GroupId` se preservan como datos crudos: no agrupan, acumulan ni activan `GiftCombo`.
+`GiftCombo` permanece reservado hasta una fase específica que defina estado,
+agrupación y cierre. Gift aún no dispone de repositorio, Coordinator, dispatch,
+lifecycle, Host ni integración vertical.
 
 ### Repositorios tipados de payloads
 
@@ -863,16 +887,16 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
-- `TikStudioEventPipeline` (STATIC): contratos portables, familias Chat, Follow, Share,
-  Like y RoomUser, y coordinador Chat/Follow/Share/Like/RoomUser de admisión, despacho y
-  finalización;
+- `TikStudioEventPipeline` (STATIC): contratos portables y familias Chat, Follow, Share,
+  Like, RoomUser y Gift; el coordinador de admisión, despacho y finalización continúa
+  limitado a Chat/Follow/Share/Like/RoomUser;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
   propietario de Chat/Follow/Share/Like/RoomUser; publica `Host/Public`, enlaza públicamente
   con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
-  checklist y converters Chat/Follow/Share/Like/RoomUser; enlaza públicamente sólo con
+  checklist y converters Chat/Follow/Share/Like/RoomUser/Gift; enlaza públicamente sólo con
   Core y privadamente con `nlohmann_json::nlohmann_json`. El cliente de transporte
   sigue siendo placeholder.
 - `TikStudioEventConsole` (executable): enlaza los tres targets; actualmente sólo
@@ -899,9 +923,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4G.2, Pipeline, Host, Adapter y Vertical
-registran respectivamente 84, 33, 42 y 4 casos. Los cambios locales de 4G.3 elevan Host
-a 41 y Vertical a 5, sin modificar Pipeline ni Adapter.
+automático. En el baseline publicado de 4G.3, Pipeline, Host, Adapter y Vertical
+registran respectivamente 84, 41, 42 y 5 casos. Los cambios locales de 4H.1 elevan
+Pipeline a 86 y Adapter a 52, sin modificar Host ni Vertical.
 
 La estructura familiar queda así:
 
@@ -911,7 +935,8 @@ Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
-Tests/Gift|Member/ → sólo .gitkeep
+Tests/Gift/ → familia Pipeline y Adapter Gift directo
+Tests/Member/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
 
@@ -1001,10 +1026,13 @@ fue publicada en `e02f306` y certificada con 191 PASS / 0 FAIL: Core 10, Pipelin
 Host 33, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 4. La Fase
 4G.2 añadió doce escenarios Coordinator RoomUser, fue publicada en `14b9357` y fue
 certificada con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42, JSON
-Decoder 20, Checklist 10 y Vertical Integration 4. La cobertura local de 4G.3 añade
-ocho escenarios Host y una certificación JSON RoomUser → Host. Sin ejecutar los runners
-durante esta implementación, el resultado esperado es: Core 10, Pipeline 84, Host 41,
-Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 212 casos.
+Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 añadió ocho escenarios
+Host y una certificación JSON RoomUser → Host; fue publicada en `f103f75` y certificada
+con 212 PASS / 0 FAIL: Core 10, Pipeline 84, Host 41, Adapter 42, JSON Decoder 20,
+Checklist 10 y Vertical Integration 5. La cobertura local de 4H.1 añade diez escenarios
+Adapter Gift y dos casos de familia Pipeline Gift. Sin ejecutar los runners durante
+esta implementación, el resultado esperado es: Core 10, Pipeline 86, Host 41, Adapter
+52, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 224 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1605,13 +1633,32 @@ Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 212 casos.
   casos totales.
 - Mantiene `RoomUserMilestone` y `RoomUserTop1Change` reservados; no añade comparación
   de snapshots, historial, acumulación, deduplicación ni lógica derivada.
+- Fue publicada en `f103f75` como
+  `feat(host): complete room-user vertical integration`.
+- El propietario certificó 212 PASS / 0 FAIL: Core 10, Pipeline 84, Host 41, Adapter
+  42, JSON Decoder 20, Checklist 10 y Vertical Integration 5.
+
+### Fase 4H.1 — Gift A: conversión y decisión familiar directa
+
+- Añade contratos y converter Gift con precedencia explícita para envelope, data,
+  usuario, identidad, campos obligatorios y representación numérica.
+- Reutiliza el converter del usuario común y preserva strings, booleanos y metadatos de
+  repetición sin trim, normalización ni inferencias.
+- Añade `FTSGiftPayload` y una familia sin estado que produce exclusivamente
+  `FamilyKind = Gift` y `Flow = Gift` con los defaults de admisión.
+- Conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como datos crudos;
+  `GiftCombo` continúa reservado y no existe estado de combo.
+- Añade diez escenarios Adapter Gift y dos escenarios Pipeline Gift. Los resultados
+  esperados quedan en Adapter 52, Pipeline 86 y 224 casos totales.
+- No añade repositorio, Coordinator, dispatch, completion, lifecycle, Host ni
+  integración vertical Gift; Member permanece intacto.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `14b9357` más los cambios locales de 4G.3.
+  `f103f75` más los cambios locales de 4H.1.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1640,7 +1687,8 @@ Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 212 casos.
   publicó Like C en `14bd28f` y fue certificada con 179 PASS / 0 FAIL. La Fase 4G.1
   publicó RoomUser A en `e02f306` y fue certificada con 191 PASS / 0 FAIL. La Fase
   4G.2 publicó RoomUser B en `14b9357` y fue certificada con 203 PASS / 0 FAIL. La Fase
-  4G.3 completa localmente RoomUser C; no anunciar automáticamente otra familia.
+  4G.3 publicó RoomUser C en `f103f75` y fue certificada con 212 PASS / 0 FAIL. La Fase
+  4H.1 implementa localmente Gift A; no continuar automáticamente con Gift B.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

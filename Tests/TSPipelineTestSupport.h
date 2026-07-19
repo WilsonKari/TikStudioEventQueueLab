@@ -195,6 +195,36 @@ namespace TikStudio::Tests
         }
     }
 
+    inline void RequireGiftInputEqual(
+        const FTSGiftInput& Actual,
+        const FTSGiftInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.GiftId == Expected.GiftId, Context + ": GiftId");
+        Require(Actual.GiftName == Expected.GiftName, Context + ": GiftName");
+        Require(
+            Actual.GiftPictureUrl == Expected.GiftPictureUrl,
+            Context + ": GiftPictureUrl"
+        );
+        Require(
+            Actual.DiamondCount == Expected.DiamondCount,
+            Context + ": DiamondCount"
+        );
+        Require(
+            Actual.RepeatCount == Expected.RepeatCount,
+            Context + ": RepeatCount"
+        );
+        Require(Actual.GiftType == Expected.GiftType, Context + ": GiftType");
+        Require(Actual.Describe == Expected.Describe, Context + ": Describe");
+        Require(
+            Actual.bRepeatEnd == Expected.bRepeatEnd,
+            Context + ": bRepeatEnd"
+        );
+        Require(Actual.GroupId == Expected.GroupId, Context + ": GroupId");
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSChatInput MakeCompleteInput()
     {
@@ -291,6 +321,33 @@ namespace TikStudio::Tests
                 19
             }
         };
+        return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSGiftInput MakeCompleteGiftInput()
+    {
+        FTSGiftInput Input;
+        Input.GiftId = 5655;
+        Input.GiftName = "Rose";
+        Input.GiftPictureUrl = "https://example.test/gift.png";
+        Input.DiamondCount = 20;
+        Input.RepeatCount = 7;
+        Input.GiftType = 1;
+        Input.Describe = "Complete portable Gift";
+        Input.bRepeatEnd = true;
+        Input.GroupId = "gift-group-42";
+        Input.User.UniqueId = "gift-user-42";
+        Input.User.Nickname = "Gift User";
+        Input.User.ProfilePictureUrl =
+            "https://example.test/gift-user.png";
+        Input.User.FollowRole = 3;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 7;
+        Input.User.GifterLevel = 11;
+        Input.User.TeamMemberLevel = 13;
         return Input;
     }
 
