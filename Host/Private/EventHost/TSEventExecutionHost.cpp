@@ -153,6 +153,17 @@ namespace
         }
     }
 
+    void ValidateOwnedDispatch(
+        const FTSMemberProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::MemberIdentity)
+        {
+            throw std::logic_error("Invalid owned Member dispatch");
+        }
+    }
+
     [[nodiscard]]
     FTSEmissionId GetDispatchEmissionId(
         const FTSEventProcessingDispatch& Dispatch
@@ -212,6 +223,12 @@ public:
 
     [[nodiscard]]
     bool PostGift(FTSGiftInput Input)
+    {
+        return PostCommand(std::move(Input));
+    }
+
+    [[nodiscard]]
+    bool PostMember(FTSMemberInput Input)
     {
         return PostCommand(std::move(Input));
     }
@@ -290,6 +307,18 @@ public:
         ValidateCompletionArguments(EmissionId, ProcessingResult);
         return PostCommand(
             FPostedGiftCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
+    bool PostMemberCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedMemberCompletion{EmissionId, ProcessingResult}
         );
     }
 
@@ -424,6 +453,13 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedMemberCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     using FPostedCommand = std::variant<
         FTSChatInput,
         FTSFollowInput,
@@ -436,7 +472,9 @@ private:
         FTSRoomUserInput,
         FPostedRoomUserCompletion,
         FTSGiftInput,
-        FPostedGiftCompletion
+        FPostedGiftCompletion,
+        FTSMemberInput,
+        FPostedMemberCompletion
     >;
 
     static_assert(
@@ -571,6 +609,25 @@ private:
                         ETSEventHostCommandKind::GiftCompletion;
                     Result.CompletionResult.emplace(
                         Coordinator.CompleteGiftProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
+                },
+                [&](FTSMemberInput& Input)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::MemberInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitMember(std::move(Input))
+                    );
+                },
+                [&](const FPostedMemberCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::MemberCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteMemberProcessing(
                             Completion.EmissionId,
                             Completion.ProcessingResult
                         )
@@ -727,6 +784,28 @@ private:
             return Dispatch;
         }
 
+        case ETSEventFamilyKind::Member:
+        {
+            FTSMemberDispatchResult DispatchResult =
+                Coordinator.BeginMemberProcessing();
+            ValidateDispatchResult(DispatchResult);
+            if (DispatchResult.Status !=
+                ETSPipelineDispatchStatus::Dispatched)
+            {
+                throw std::logic_error(
+                    "Peeked Member ready did not produce a dispatch"
+                );
+            }
+
+            ValidateOwnedDispatch(*DispatchResult.Dispatch);
+            std::optional<FTSEventProcessingDispatch> Dispatch;
+            Dispatch.emplace(
+                std::in_place_type<FTSMemberProcessingDispatch>,
+                std::move(*DispatchResult.Dispatch)
+            );
+            return Dispatch;
+        }
+
         default:
             throw std::logic_error(
                 "Pending ready belongs to an unsupported Host family"
@@ -783,6 +862,11 @@ bool FTSEventExecutionHost::PostGift(FTSGiftInput Input)
     return Impl->PostGift(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostMember(FTSMemberInput Input)
+{
+    return Impl->PostMember(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostChatCompletion(
     FTSEmissionId EmissionId,
     ETSProcessingResult ProcessingResult
@@ -832,6 +916,17 @@ bool FTSEventExecutionHost::PostGiftCompletion(
 )
 {
     return Impl->PostGiftCompletion(
+        EmissionId,
+        ProcessingResult
+    );
+}
+
+bool FTSEventExecutionHost::PostMemberCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostMemberCompletion(
         EmissionId,
         ProcessingResult
     );

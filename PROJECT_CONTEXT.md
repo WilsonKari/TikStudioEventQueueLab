@@ -3,11 +3,11 @@
 Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `51cba3a`
-(`feat(member): add identity conversion and direct family decision`).
+rama `main`, partiendo de HEAD `7e2d226`
+(`feat(member): complete identity pipeline lifecycle`).
 
-El propietario certificó este baseline con 265 PASS / 0 FAIL. Los cambios de
-MemberIdentity B permanecen locales y sin commit; durante su implementación no se
+El propietario certificó este baseline con 277 PASS / 0 FAIL. Los cambios de
+MemberIdentity C permanecen locales y sin commit; durante su implementación no se
 compiló ni se ejecutaron pruebas.
 
 ## 1. Objetivo general
@@ -84,11 +84,11 @@ Member → FTSTikFinityMemberConverter         [publicado en 4I.1]
         ↓
 FTS*Input portable                            [las siete familias tienen conversión tipada]
         ↓
-composición externa → Event Host             [Chat, Follow, Share, Like, RoomUser y Gift implementados]
+composición externa → Event Host             [las siete familias implementadas]
 ```
 
-El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON
-Chat/Follow/Share/Like/RoomUser/Gift → converter → Host existen sólo en el runner vertical;
+El adaptador todavía no depende de Host o Pipeline. Las composiciones JSON de las siete
+familias → converter → Host existen sólo en el runner vertical;
 no hay dependencia Adapter → Host en producción.
 
 ## 2. Datos entrantes y familias portables
@@ -107,10 +107,8 @@ También existen contratos auxiliares tipados como `FTSUserSnapshot`, `FTSEmoteI
 y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
-interpreta ni almacena. Chat, Follow, Share, Like, RoomUser y Gift disponen del recorrido
-portable completo hasta Host y lifecycle. Member dispone localmente de conversión,
-payload, repositorio y lifecycle completo dentro del Pipeline; Host e integración
-vertical siguen pendientes.
+interpreta ni almacena. Las siete familias disponen del recorrido portable completo
+hasta Host y lifecycle; MemberIdentity C completa localmente el último tramo de Member.
 
 Decisión arquitectónica aprobada:
 
@@ -137,10 +135,10 @@ RoomUser → RoomUser | RoomUserMilestone | RoomUserTop1Change
 Share    → Share | ShareMilestone
 ```
 
-Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat,
-Follow, Share, Like, RoomUser y Gift producen sus flujos directos completos. Member
-produce sólo `MemberIdentity` y completa localmente su Pipeline; todavía no existe
-lógica para ninguno de los flujos derivados, incluido `MemberNormalized`. Los siete archivos de
+Son “flujos sintéticos” porque representan una decisión semántica de la familia. Las
+siete familias producen sus flujos directos completos. Member produce sólo
+`MemberIdentity`; todavía no existe lógica para ninguno de los flujos derivados,
+incluido `MemberNormalized`. Los siete archivos de
 `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
 implementación.
 
@@ -229,9 +227,12 @@ texto JSON TikFinity                                [implementado en Adapter]
 → certificación JSON Gift → Host                           [publicada en 4H.3]
 → FTSTikFinityMemberConverter                              [publicado en 4I.1]
 → FTSMemberPayload y candidato directo MemberIdentity      [publicados en 4I.1]
-→ repositorio, binding y admisión MemberIdentity           [implementados localmente en 4I.2]
-→ dispatch y completion MemberIdentity                     [implementados localmente en 4I.2]
-→ lifecycle mixto de siete familias                        [generalizado localmente en 4I.2]
+→ repositorio, binding y admisión MemberIdentity           [publicados en 4I.2]
+→ dispatch y completion MemberIdentity                     [publicados en 4I.2]
+→ lifecycle mixto de siete familias                        [generalizado en 4I.2]
+→ PostMember y PostMemberCompletion en Host                [implementados localmente en 4I.3]
+→ Member en FIFO global, owner y dispatch variant          [implementado localmente en 4I.3]
+→ certificación JSON Member → Host                         [implementada localmente en 4I.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
@@ -239,8 +240,7 @@ Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
 Gift A → B → C                                              [completo y publicado]
-MemberIdentity A → B                                        [completo; B local]
-Member C                                                    [pendiente]
+MemberIdentity A → B → C                                    [completo; C local]
 MemberNormalized                                            [reservado]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -296,8 +296,10 @@ auditoría fue publicado en `51d73b5`; el propietario certificó Core 10, Pipeli
 Host 57, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6: 253 PASS /
 0 FAIL. MemberIdentity A fue publicado en `51cba3a`; el propietario certificó Core 10,
 Pipeline 100, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration
-6: 265 PASS / 0 FAIL. MemberIdentity B está implementado localmente y no fue compilado
-ni ejecutado.
+6: 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226`; el propietario
+certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y
+Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C está implementado
+localmente y no fue compilado ni ejecutado.
 
 ## 4. Contratos públicos actuales
 
@@ -668,15 +670,15 @@ sincronizar `BindingRegistry`, repositorio y ready. Resolver esa garantía requi
 fase de diseño independiente; este hardening no añade rollback ni modifica
 `SubmitDecision`, `CompleteProcessing` o lifecycle.
 
-### Host portable compartido de ejecución de seis familias
+### Host portable compartido de ejecución de siete familias
 
 `FTSEventExecutionHost` es una biblioteca separada que posee un único coordinador y Core
 mediante un PImpl no copiable ni movible. Su API pública permite `PostChat`,
-`PostFollow`, `PostShare`, `PostLike`, `PostRoomUser`, `PostGift` y sus completions
-tipadas desde cualquier hilo, pero reserva `RunOneCycle` al hilo que construyó la
-instancia. El Host no expone mutexes, bandeja, thread ID ni el coordinador.
+`PostFollow`, `PostShare`, `PostLike`, `PostRoomUser`, `PostGift`, `PostMember` y sus
+completions tipadas desde cualquier hilo, pero reserva `RunOneCycle` al hilo que
+construyó la instancia. El Host no expone mutexes, bandeja, thread ID ni el coordinador.
 
-Una sola bandeja privada conserva inputs y finalizaciones de las seis familias bajo el
+Una sola bandeja privada conserva inputs y finalizaciones de las siete familias bajo el
 mismo mutex. Así, el FIFO global queda definido por el orden efectivo de inserción entre
 familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El booleano
 de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que la
@@ -687,8 +689,13 @@ intacta y sólo después retira como máximo un comando del frente. Así, un fal
 `NowProvider` o del mantenimiento no consume el comando y una expiración puede liberar
 capacidad antes de la admisión. Después procesa el comando, consume cualquier ready ya
 capturado, llama Pump una vez si no hubo dispatch, consulta el próximo wake y comunica
-si quedan comandos. El variant propietario cubre Chat, Follow, Share, Like, RoomUser y
-Gift, y la política continúa siendo work-conserving.
+si quedan comandos. El variant propietario cubre las siete familias y la política
+continúa siendo work-conserving.
+
+`MemberInput`, `MemberCompletion` y el dispatch Member se añadieron al final de sus
+enums y variants para preservar los valores e índices de las seis alternativas
+publicadas previamente. El Host sólo enruta `MemberIdentity`; no existe una rama para
+`MemberNormalized`.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
 procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
@@ -939,12 +946,11 @@ Targets explícitos, sin `file(GLOB ...)`:
 
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
-- `TikStudioEventPipeline` (STATIC): contratos portables y familias Chat, Follow, Share,
-  Like, RoomUser y Gift; el coordinador de admisión, despacho y finalización cubre
-  Chat/Follow/Share/Like/RoomUser/Gift;
+- `TikStudioEventPipeline` (STATIC): contratos portables y las siete familias; el
+  coordinador de admisión, despacho y finalización cubre sus flujos directos;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
-  propietario de Chat/Follow/Share/Like/RoomUser/Gift; publica `Host/Public`, enlaza
+  propietario de las siete familias; publica `Host/Public`, enlaza
   públicamente con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
@@ -961,8 +967,8 @@ Targets explícitos, sin `file(GLOB ...)`:
   comportamiento desde inputs normalizados; está registrado en CTest mediante
   `add_test`.
 - `TikStudioVerticalIntegrationTests` (executable): compone Adapter y Host sólo para
-  certificar los recorridos JSON Chat/Follow/Share/Like/RoomUser/Gift → converter →
-  Host → Pipeline → Core; está registrado en CTest mediante `add_test`.
+  certificar los recorridos JSON de las siete familias → converter → Host → Pipeline →
+  Core; está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityAdapterTests` (executable): enlaza únicamente con el adaptador
   TikFinity y está registrado en CTest mediante `add_test`.
 - `TikStudioTikFinityJsonDecoderTests` y `TikStudioTikFinityChecklistTests`
@@ -975,9 +981,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. El baseline publicado y certificado en `51cba3a` registra Pipeline 100,
-Host 57, Adapter 62 y Vertical Integration 6. MemberIdentity B añade localmente doce
-casos Pipeline, sin modificar los demás runners.
+automático. El baseline publicado y certificado en `7e2d226` registra Pipeline 112,
+Host 57, Adapter 62 y Vertical Integration 6. MemberIdentity C añade localmente nueve
+casos Host y una certificación vertical, sin modificar los demás runners.
 
 La estructura familiar queda así:
 
@@ -988,7 +994,7 @@ Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
 Tests/Gift/ → Pipeline, Host, Adapter y certificación vertical Gift
-Tests/Member/ → Adapter, familia y Coordinator MemberIdentity A → B
+Tests/Member/ → Adapter, familia, Coordinator, Host y certificación vertical A → B → C
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
 
@@ -1095,9 +1101,12 @@ publicado en `51d73b5` y el propietario certificó Core 10, Pipeline 98, Host 57
 Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6; 253 PASS / 0 FAIL.
 MemberIdentity A fue publicado en `51cba3a` y el propietario certificó Core 10,
 Pipeline 100, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration
-6; 265 PASS / 0 FAIL. MemberIdentity B añade localmente doce escenarios Coordinator.
-Sin ejecución local, los runners registran Core 10, Pipeline 112, Host 57, Adapter 62,
-JSON Decoder 20, Checklist 10 y Vertical Integration 6; 277 casos.
+6; 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226`; el propietario
+certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y
+Vertical Integration 6; 277 PASS / 0 FAIL. MemberIdentity C añade localmente nueve
+escenarios Host y una certificación vertical. Sin ejecución local, los runners registran
+Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
+Integration 7; 287 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1793,14 +1802,31 @@ JSON Decoder 20, Checklist 10 y Vertical Integration 6; 277 casos.
   preservando binding, payload y ready global hasta sus transiciones autorizadas.
 - Añade doce escenarios Coordinator Member, incluidas ambas direcciones de completion
   de familia incorrecta y las interacciones Member ↔ Chat.
-- Pipeline registra localmente 112 casos y el total general 277; no se compiló ni se
-  ejecutaron pruebas.
-- Los cambios permanecen locales y sin commit; Member C continúa pendiente.
+- Pipeline registra 112 casos y el total general 277.
+- Fue publicada en `7e2d226` como
+  `feat(member): complete identity pipeline lifecycle`.
+- El propietario certificó 277 PASS / 0 FAIL: Core 10, Pipeline 112, Host 57, Adapter
+  62, JSON Decoder 20, Checklist 10 y Vertical Integration 6.
+
+### Fase 4I.3 — MemberIdentity C
+
+- Añade `PostMember` y `PostMemberCompletion` a la bandeja compartida del Host sin
+  cambiar owner thread, FIFO, mantenimiento, Pump, wake ni el máximo de un comando por
+  ciclo.
+- Añade `FTSMemberProcessingDispatch` al final del variant propietario y enruta sólo la
+  pareja `Member / MemberIdentity`; `MemberNormalized` permanece sin rama operativa.
+- Añade nueve escenarios Host, incluida la prueba acumulativa de siete familias sin
+  sustituir la certificación histórica de seis, y una certificación vertical JSON
+  Member → converter → Host → Pipeline → Core.
+- Host registra localmente 66 casos, Vertical Integration 7 y el total general 287;
+  no se compiló ni se ejecutaron pruebas.
+- Los cambios permanecen locales y sin commit. Las siete familias completan A → B → C,
+  pero los flujos derivados continúan fuera de alcance.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `51cba3a` más los cambios locales de MemberIdentity B.
+  `7e2d226` más los cambios locales de MemberIdentity C.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1834,8 +1860,9 @@ JSON Decoder 20, Checklist 10 y Vertical Integration 6; 277 casos.
   4H.2 publicó Gift B en `427578b`. La Fase 4H.3 publicó Gift C en `ba71fbc` y fue
   certificada con 245 PASS / 0 FAIL. El hardening fue publicado en `51d73b5` y
   certificado con 253 PASS / 0 FAIL. MemberIdentity A fue publicado en `51cba3a` y
-  certificado con 265 PASS / 0 FAIL. MemberIdentity B permanece local; no continuar
-  automáticamente con Member C.
+  certificado con 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226` y
+  certificado con 277 PASS / 0 FAIL. MemberIdentity C permanece local; no continuar
+  automáticamente con `MemberNormalized` ni otros flujos derivados.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

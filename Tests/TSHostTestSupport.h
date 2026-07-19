@@ -169,6 +169,25 @@ namespace TikStudio::Tests
         return Input;
     }
 
+    [[nodiscard]]
+    inline FTSMemberInput MakeMemberInput(const std::string& Label)
+    {
+        FTSMemberInput Input;
+        Input.ActionId = 73;
+        Input.User.UniqueId = Label + "-user";
+        Input.User.Nickname = Label + " nickname";
+        Input.User.ProfilePictureUrl =
+            "https://example.test/member-user.png";
+        Input.User.FollowRole = 4;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 8;
+        Input.User.GifterLevel = 12;
+        Input.User.TeamMemberLevel = 14;
+        return Input;
+    }
+
     inline void RequireUserEqual(
         const FTSUserSnapshot& Actual,
         const FTSUserSnapshot& Expected,
@@ -355,6 +374,16 @@ namespace TikStudio::Tests
             Context + ": bRepeatEnd"
         );
         Require(Actual.GroupId == Expected.GroupId, Context + ": GroupId");
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
+    inline void RequireMemberInputEqual(
+        const FTSMemberInput& Actual,
+        const FTSMemberInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.ActionId == Expected.ActionId, Context + ": ActionId");
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
@@ -722,6 +751,27 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedMemberAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        const FTSEmissionId EmissionId = RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::MemberInput,
+            Context
+        );
+        Require(
+            Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.Flow ==
+                    ETSEventFlow::MemberIdentity &&
+                Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.Flow !=
+                    ETSEventFlow::MemberNormalized,
+            Context + ": MemberIdentity admission flow"
+        );
+        return EmissionId;
+    }
+
+    [[nodiscard]]
     inline const FTSChatProcessingDispatch& RequireChatDispatch(
         const FTSEventHostCycleResult& Cycle,
         const std::string& Context
@@ -828,6 +878,25 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::Gift,
             Context + ": Gift dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSMemberProcessingDispatch& RequireMemberDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSMemberProcessingDispatch* Dispatch =
+            std::get_if<FTSMemberProcessingDispatch>(&*Cycle.Dispatch);
+        Require(Dispatch != nullptr, Context + ": Member dispatch expected");
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::MemberIdentity &&
+                Dispatch->Emission.Flow != ETSEventFlow::MemberNormalized,
+            Context + ": Member dispatch identity and flow"
         );
         return *Dispatch;
     }

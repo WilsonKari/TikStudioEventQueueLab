@@ -6,7 +6,7 @@ int main()
     using namespace TikStudio::Tests;
 
     FTSTestCases Tests;
-    Tests.reserve(6);
+    Tests.reserve(7);
 
     RegisterChatVerticalIntegrationTests(Tests);
     RegisterFollowVerticalIntegrationTests(Tests);
@@ -14,6 +14,7 @@ int main()
     RegisterLikeVerticalIntegrationTests(Tests);
     RegisterRoomUserVerticalIntegrationTests(Tests);
     RegisterGiftVerticalIntegrationTests(Tests);
+    RegisterMemberVerticalIntegrationTests(Tests);
 
     return RunTests(Tests);
 }

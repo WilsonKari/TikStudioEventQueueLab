@@ -1,10 +1,9 @@
 # Organización de pruebas
 
-`Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
-Share, Like, RoomUser y Gift tienen completos Adapter tipado, familia directa,
-Pipeline, Host, lifecycle e integración vertical JSON → Host. MemberIdentity A está
-publicado y MemberIdentity B completa localmente repositorio, admisión, dispatch,
-completion y lifecycle dentro del Pipeline; Member C permanece pendiente.
+`Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
+familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
+integración vertical JSON → Host. MemberIdentity A y B están publicados; C completa
+localmente el Host y la certificación vertical.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -43,18 +42,18 @@ produce exclusivamente `ETSEventFlow::Gift`. Ninguno de esos metadatos activa
 Su repositorio, admisión, dispatch, completion y lifecycle comparten el Coordinator y
 las autoridades globales existentes. `PostGift` y `PostGiftCompletion` usan el FIFO,
 owner thread, ready e `InFlight` compartidos; el dispatch variant incorpora la copia
-propietaria Gift. La certificación vertical recorre JSON Gift → converter → Host. El
-runner Pipeline registra 98 casos, Host 57 y Vertical Integration 6. El Host añade
-cobertura simétrica de `Failed` para las seis familias, conserva el FIFO si falla el
-mantenimiento previo al comando y certifica la separación entre `DueExpirations` y el
-lifecycle de una completion.
+propietaria Gift. La certificación vertical recorre JSON Gift → converter → Host. Al
+publicarse el hardening posterior a Gift, Pipeline registraba 98 casos, Host 57 y
+Vertical Integration 6; esa cobertura conserva el FIFO si falla el mantenimiento y
+certifica la separación entre `DueExpirations` y el lifecycle de una completion.
 
 Member conserva `ActionId` y el usuario portable completo y produce exclusivamente
 `ETSEventFlow::MemberIdentity`. `MemberNormalized` permanece reservado: no existe
 normalización, deduplicación, acumulación ni estado entre decisiones. El baseline
-publicado `51cba3a` fue certificado por el propietario con 265 PASS / 0 FAIL. Los doce
-casos Coordinator de MemberIdentity B elevan Pipeline a 112 y el total registrado a
-277; no se compilaron ni ejecutaron durante la implementación.
+publicado `7e2d226` fue certificado por el propietario con 277 PASS / 0 FAIL. Los nueve
+casos Host y la certificación vertical de MemberIdentity C elevan Host a 66, Vertical
+Integration a 7 y el total registrado a 287; no se compilaron ni ejecutaron durante la
+implementación.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa
