@@ -667,6 +667,35 @@ namespace
             "Replacement Follow cleanup"
         );
     }
+
+    void TestFollowFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeFollowInput("failed-follow"),
+            MakeFollowInput("after-failed-follow"),
+            ETSEventHostCommandKind::FollowCompletion,
+            [](FTSEventExecutionHost& Host, FTSFollowInput Input)
+            {
+                return Host.PostFollow(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostFollowCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedFollowAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireFollowDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "Follow Failed"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -681,5 +710,6 @@ namespace TikStudio::Tests
         Tests.push_back({"Follow cancel advances with explicit Pump", &TestFollowCancelAdvancesWithExplicitPump});
         Tests.push_back({"Wrong-family completion fails before Core mutation", &TestWrongFamilyCompletionFailsBeforeCoreMutation});
         Tests.push_back({"Pending Follow expires while Chat is Processing", &TestPendingFollowExpiresWhileChatIsProcessing});
+        Tests.push_back({"Follow Failed completion is terminal and Host recovers", &TestFollowFailedCompletionIsTerminalAndHostRecovers});
     }
 }

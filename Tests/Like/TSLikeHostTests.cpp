@@ -741,6 +741,35 @@ namespace
             "Replacement Like cleanup"
         );
     }
+
+    void TestLikeFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeLikeInput("failed-like"),
+            MakeLikeInput("after-failed-like"),
+            ETSEventHostCommandKind::LikeCompletion,
+            [](FTSEventExecutionHost& Host, FTSLikeInput Input)
+            {
+                return Host.PostLike(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostLikeCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedLikeAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireLikeDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "Like Failed"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -755,5 +784,6 @@ namespace TikStudio::Tests
         Tests.push_back({"Like cancel advances with explicit Pump", &TestLikeCancelAdvancesWithExplicitPump});
         Tests.push_back({"Wrong-family Like completion fails before Core mutation", &TestWrongFamilyLikeCompletionFailsBeforeCoreMutation});
         Tests.push_back({"Pending Like expires while Chat is Processing", &TestPendingLikeExpiresWhileChatIsProcessing});
+        Tests.push_back({"Like Failed completion is terminal and Host recovers", &TestLikeFailedCompletionIsTerminalAndHostRecovers});
     }
 }

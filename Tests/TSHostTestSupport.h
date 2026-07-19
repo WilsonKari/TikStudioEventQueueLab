@@ -6,7 +6,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 
 namespace TikStudio::Tests
@@ -901,6 +903,126 @@ namespace TikStudio::Tests
                 Completion.CancelResult->LifecycleEvents[0].Reason ==
                     ETSEmissionTerminalReason::Cancelled,
             Context + ": Cancelled lifecycle event"
+        );
+    }
+
+    template <
+        typename TInput,
+        typename TPostInput,
+        typename TPostCompletion,
+        typename TRequireAdmission,
+        typename TRequireDispatch
+    >
+    inline void RunFailedCompletionHostScenario(
+        TInput FailedInput,
+        TInput RecoveryInput,
+        ETSEventHostCommandKind CompletionCommand,
+        TPostInput&& PostInput,
+        TPostCompletion&& PostCompletion,
+        TRequireAdmission&& RequireAdmission,
+        TRequireDispatch&& RequireDispatch,
+        const std::string& Context
+    )
+    {
+        FTSEventExecutionHost Host;
+        Require(
+            PostInput(Host, std::move(FailedInput)),
+            Context + ": initial input must signal"
+        );
+
+        const FTSEventHostCycleResult AdmissionCycle = Host.RunOneCycle();
+        const FTSEmissionId FailedEmissionId =
+            RequireAdmission(AdmissionCycle, Context + " admission");
+        Require(
+            RequireDispatch(AdmissionCycle, Context + " dispatch") ==
+                FailedEmissionId,
+            Context + ": initial dispatch identity"
+        );
+
+        Require(
+            PostCompletion(
+                Host,
+                FailedEmissionId,
+                ETSProcessingResult::Failed
+            ),
+            Context + ": Failed completion must signal"
+        );
+        const FTSEventHostCycleResult FailedCycle = Host.RunOneCycle();
+        const FTSProcessingCompletionResult& FailedCompletion =
+            RequireCompletion(
+                FailedCycle,
+                CompletionCommand,
+                FailedEmissionId,
+                ETSProcessingResult::Failed,
+                Context + " completion"
+            );
+        RequireCancelledCompletion(
+            FailedCompletion,
+            FailedEmissionId,
+            Context + " completion"
+        );
+        Require(
+            !FailedCycle.Dispatch.has_value() &&
+                FailedCycle.PumpResult.has_value() &&
+                FailedCycle.PumpResult->Outcome.Status ==
+                    ETSPumpStatus::QueueEmpty,
+            Context + ": Failed must be terminal without implicit retry"
+        );
+
+        Require(
+            PostCompletion(
+                Host,
+                FailedEmissionId,
+                ETSProcessingResult::Failed
+            ),
+            Context + ": duplicate completion must signal"
+        );
+        bool bDuplicateRejected = false;
+        try
+        {
+            (void)Host.RunOneCycle();
+        }
+        catch (const std::logic_error&)
+        {
+            bDuplicateRejected = true;
+        }
+        Require(
+            bDuplicateRejected,
+            Context + ": terminal binding must be removed exactly once"
+        );
+
+        Require(
+            PostInput(Host, std::move(RecoveryInput)),
+            Context + ": recovery input must signal"
+        );
+        const FTSEventHostCycleResult RecoveryCycle = Host.RunOneCycle();
+        const FTSEmissionId RecoveryEmissionId =
+            RequireAdmission(RecoveryCycle, Context + " recovery admission");
+        Require(
+            RequireDispatch(RecoveryCycle, Context + " recovery dispatch") ==
+                RecoveryEmissionId,
+            Context + ": Host must continue after Failed"
+        );
+
+        Require(
+            PostCompletion(
+                Host,
+                RecoveryEmissionId,
+                ETSProcessingResult::Succeeded
+            ),
+            Context + ": recovery completion must signal"
+        );
+        const FTSEventHostCycleResult CleanupCycle = Host.RunOneCycle();
+        RequireConfirmedCompletion(
+            RequireCompletion(
+                CleanupCycle,
+                CompletionCommand,
+                RecoveryEmissionId,
+                ETSProcessingResult::Succeeded,
+                Context + " recovery completion"
+            ),
+            RecoveryEmissionId,
+            Context + " recovery completion"
         );
     }
 }

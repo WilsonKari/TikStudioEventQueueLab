@@ -1,12 +1,14 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-18.
+Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `427578b`
-(`feat(gift): complete pipeline lifecycle`).
+rama `main`, partiendo de HEAD `ba71fbc`
+(`feat(host): complete gift vertical integration`).
 
-Los cambios de la Fase 4H.3 permanecen locales y sin commit.
+El propietario certificó este baseline con 245 PASS / 0 FAIL. Los cambios del hardening
+posterior a la auditoría permanecen locales y sin commit; durante su implementación no
+se compiló ni se ejecutaron pruebas.
 
 ## 1. Objetivo general
 
@@ -219,16 +221,16 @@ texto JSON TikFinity                                [implementado en Adapter]
 → repositorio, binding y admisión Gift                     [publicados en 4H.2]
 → dispatch y completion Gift                               [publicados en 4H.2]
 → lifecycle mixto de seis familias                         [generalizado en 4H.2]
-→ PostGift y PostGiftCompletion en Host                    [implementados localmente en 4H.3]
-→ Gift en FIFO global, owner y dispatch variant            [implementado localmente en 4H.3]
-→ certificación JSON Gift → Host                           [implementada localmente en 4H.3]
+→ PostGift y PostGiftCompletion en Host                    [publicados en 4H.3]
+→ Gift en FIFO global, owner y dispatch variant            [publicado en 4H.3]
+→ certificación JSON Gift → Host                           [publicada en 4H.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
-Gift A → B → C                                              [completo localmente]
+Gift A → B → C                                              [completo y publicado]
 Member                                                      [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -277,9 +279,9 @@ Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 fue publicada en
 Host 41, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5. La Fase
 4H.1 fue publicada en `0a75fb8`; el propietario certificó Core 10, Pipeline 86, Host
 41, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 5: 224 PASS / 0
-FAIL. La Fase 4H.2 fue publicada en `427578b`. La Fase 4H.3 implementa localmente el
-Host y la certificación vertical Gift; no se compiló ni se ejecutaron pruebas durante
-esta implementación.
+FAIL. La Fase 4H.2 fue publicada en `427578b`. La Fase 4H.3 fue publicada en `ba71fbc`;
+el propietario certificó Core 10, Pipeline 98, Host 49, Adapter 52, JSON Decoder 20,
+Checklist 10 y Vertical Integration 6: 245 PASS / 0 FAIL.
 
 ## 4. Contratos públicos actuales
 
@@ -642,32 +644,40 @@ el host debe llamar `Pump()` explícitamente para avanzar otra emisión. `Pump()
 al core. Expiraciones `Discard` y `Consolidate` eliminan actualmente binding y payload
 de su repositorio tipado; la consolidación semántica continúa fuera de alcance.
 
-### Host portable compartido de ejecución Chat, Follow, Share y Like
+La auditoría posterior a 4H.3 identificó como riesgo pendiente las excepciones que
+ocurran después de que el Core ya comprometió una admisión o terminal, pero antes de
+sincronizar `BindingRegistry`, repositorio y ready. Resolver esa garantía requiere una
+fase de diseño independiente; este hardening no añade rollback ni modifica
+`SubmitDecision`, `CompleteProcessing` o lifecycle.
+
+### Host portable compartido de ejecución de seis familias
 
 `FTSEventExecutionHost` es una biblioteca separada que posee un único coordinador y Core
 mediante un PImpl no copiable ni movible. Su API pública permite `PostChat`,
-`PostFollow`, `PostShare`, `PostLike` y sus completions tipadas desde cualquier hilo,
-pero reserva `RunOneCycle` al hilo que construyó la instancia. El Host no expone
-mutexes, bandeja, thread ID ni el coordinador.
+`PostFollow`, `PostShare`, `PostLike`, `PostRoomUser`, `PostGift` y sus completions
+tipadas desde cualquier hilo, pero reserva `RunOneCycle` al hilo que construyó la
+instancia. El Host no expone mutexes, bandeja, thread ID ni el coordinador.
 
-Una sola bandeja privada conserva inputs y finalizaciones Chat/Follow/Share/Like bajo el
-mismo mutex. Así, el FIFO global queda definido por el orden efectivo de inserción
-entre familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El
-booleano de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que
-la composición externa solicite un ciclo.
+Una sola bandeja privada conserva inputs y finalizaciones de las seis familias bajo el
+mismo mutex. Así, el FIFO global queda definido por el orden efectivo de inserción entre
+familias. El mutex nunca permanece bloqueado durante una llamada a Pipeline. El booleano
+de cada `Post*` sólo indica la transición de bandeja vacía a ocupada para que la
+composición externa solicite un ciclo.
 
-Cada `RunOneCycle` consume como máximo un comando, procesa expiraciones y consulta
-`PeekPendingReadyFamilyKind()` antes de invocar exclusivamente el Begin tipado de Chat,
-Follow, Share o Like. Si no existe ready, llama Pump una vez; un `EmissionReady` se
-enruta y entrega en ese mismo ciclo. El resultado contiene como máximo un dispatch
-propietario dentro de un variant de las cuatro familias que permanece fuera del
-Pipeline y del Core. Después consulta el próximo wake y si quedan comandos. La política
-continúa siendo work-conserving.
+Cada `RunOneCycle` valida primero el owner thread, procesa expiraciones con la bandeja
+intacta y sólo después retira como máximo un comando del frente. Así, un fallo del
+`NowProvider` o del mantenimiento no consume el comando y una expiración puede liberar
+capacidad antes de la admisión. Después procesa el comando, consume cualquier ready ya
+capturado, llama Pump una vez si no hubo dispatch, consulta el próximo wake y comunica
+si quedan comandos. El variant propietario cubre Chat, Follow, Share, Like, RoomUser y
+Gift, y la política continúa siendo work-conserving.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
 procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
 permanecen en la bandeja. La composición propietaria debe solicitar explícitamente otro
-ciclo después de capturar el fallo si desea continuar.
+ciclo después de capturar el fallo si desea continuar. Antes de destruir el Host, todos
+los productores deben detenerse y finalizar; el destructor no coordina publicaciones
+concurrentes ni implementa un protocolo de shutdown.
 
 ### Metadatos
 
@@ -1057,11 +1067,14 @@ Checklist 10 y Vertical Integration 5. La Fase 4H.1 añadió diez escenarios Ada
 Gift y dos casos de familia Pipeline Gift; fue publicada en `0a75fb8` y certificada con
 224 PASS / 0 FAIL: Core 10, Pipeline 86, Host 41, Adapter 52, JSON Decoder 20,
 Checklist 10 y Vertical Integration 5. La Fase 4H.2 añadió doce escenarios Coordinator
-Gift y fue publicada en `427578b`; Pipeline registra 98 casos. La cobertura local de
-4H.3 añade ocho escenarios Host Gift y una certificación JSON Gift → Host. Sin ejecutar
-los runners durante esta implementación, el resultado esperado es: Core 10, Pipeline
-98, Host 49, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6; 245
-casos.
+Gift y fue publicada en `427578b`; Pipeline registra 98 casos. La Fase 4H.3 añadió ocho
+escenarios Host Gift y una certificación JSON Gift → Host, fue publicada en `ba71fbc` y
+el propietario certificó: Core 10, Pipeline 98, Host 49, Adapter 52, JSON Decoder 20,
+Checklist 10 y Vertical Integration 6; 245 PASS / 0 FAIL. El hardening local posterior
+añade ocho casos Host: `Failed` para las seis familias, retención FIFO ante mantenimiento
+lanzable y partición de expiraciones anterior a una completion. Sin ejecución local,
+los runners registran Core 10, Pipeline 98, Host 57, Adapter 52, JSON Decoder 20,
+Checklist 10 y Vertical Integration 6; 253 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1712,13 +1725,26 @@ casos.
   → completion; Host registra 49 casos y Vertical Integration 6.
 - Conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` sin interpretación;
   `GiftCombo` continúa reservado y Member permanece pendiente.
-- Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
-  durante la implementación.
+- Fue publicada en `ba71fbc` como `feat(host): complete gift vertical integration`; el
+  propietario certificó 245 PASS / 0 FAIL.
+
+### Hardening posterior a la auditoría
+
+- Ejecuta mantenimiento antes de retirar el comando del FIFO, de modo que una excepción
+  del reloj o de expiración preserve todo el trabajo pendiente sin cambiar la
+  precedencia expiración → admisión.
+- Añade cobertura Host de `Failed` para las seis familias, sin retry implícito y con
+  recuperación posterior, además de una prueba focalizada de partición de expiraciones.
+- Documenta que todos los productores deben detenerse y finalizar antes de destruir el
+  Host; no añade API ni sincronización de shutdown.
+- Mantiene pendiente para una fase independiente la garantía de excepción entre Core,
+  bindings y repositorios después de un commit autoritativo.
+- Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `427578b` más los cambios locales de 4H.3.
+  `ba71fbc` más los cambios locales del hardening posterior a la auditoría.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1749,8 +1775,8 @@ casos.
   4G.2 publicó RoomUser B en `14b9357` y fue certificada con 203 PASS / 0 FAIL. La Fase
   4G.3 publicó RoomUser C en `f103f75` y fue certificada con 212 PASS / 0 FAIL. La Fase
   4H.1 publicó Gift A en `0a75fb8` y fue certificada con 224 PASS / 0 FAIL. La Fase
-  4H.2 publicó Gift B en `427578b`. La Fase 4H.3 implementa localmente Gift C; no
-  continuar automáticamente con Member.
+  4H.2 publicó Gift B en `427578b`. La Fase 4H.3 publicó Gift C en `ba71fbc` y fue
+  certificada con 245 PASS / 0 FAIL; no continuar automáticamente con Member.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

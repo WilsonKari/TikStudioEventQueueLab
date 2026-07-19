@@ -684,6 +684,35 @@ namespace
             "Replacement Share cleanup"
         );
     }
+
+    void TestShareFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeShareInput("failed-share"),
+            MakeShareInput("after-failed-share"),
+            ETSEventHostCommandKind::ShareCompletion,
+            [](FTSEventExecutionHost& Host, FTSShareInput Input)
+            {
+                return Host.PostShare(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostShareCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedShareAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireShareDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "Share Failed"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -698,5 +727,6 @@ namespace TikStudio::Tests
         Tests.push_back({"Share cancel advances with explicit Pump", &TestShareCancelAdvancesWithExplicitPump});
         Tests.push_back({"Wrong-family Share completion fails before Core mutation", &TestWrongFamilyShareCompletionFailsBeforeCoreMutation});
         Tests.push_back({"Pending Share expires while Chat is Processing", &TestPendingShareExpiresWhileChatIsProcessing});
+        Tests.push_back({"Share Failed completion is terminal and Host recovers", &TestShareFailedCompletionIsTerminalAndHostRecovers});
     }
 }

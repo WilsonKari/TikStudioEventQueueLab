@@ -303,6 +303,12 @@ public:
             );
         }
 
+        FTSEventHostCycleResult Result;
+        // El mantenimiento precede a adquirir ownership del comando: un fallo del
+        // reloj o de expiración deja intacto el FIFO y un slot vencido puede
+        // reutilizarse por el único comando procesado en este mismo ciclo.
+        Result.DueExpirations = Coordinator.ProcessDueExpirations();
+
         std::optional<FPostedCommand> PostedCommand;
         {
             std::lock_guard<std::mutex> Lock(CommandMutex);
@@ -312,11 +318,6 @@ public:
                 PostedCommands.pop_front();
             }
         }
-
-        FTSEventHostCycleResult Result;
-        // El mantenimiento precede a la admisión para que un slot vencido pueda
-        // reutilizarse por el único comando procesado en este mismo ciclo.
-        Result.DueExpirations = Coordinator.ProcessDueExpirations();
 
         if (PostedCommand.has_value())
         {

@@ -62,6 +62,8 @@ public:
         FTSNowProvider NowProvider = {}
     );
 
+    // Los productores deben detenerse y finalizar antes de destruir el Host; el
+    // destructor no coordina publicaciones concurrentes ni implementa shutdown.
     ~FTSEventExecutionHost();
 
     FTSEventExecutionHost(const FTSEventExecutionHost&) = delete;

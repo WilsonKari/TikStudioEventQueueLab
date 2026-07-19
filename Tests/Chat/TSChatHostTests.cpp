@@ -487,6 +487,149 @@ namespace
             "Explicit Pump must dispatch in the same cycle"
         );
     }
+
+    void TestThrowingMaintenancePreservesPendingCommand()
+    {
+        std::size_t NowCallCount = 0;
+        FTSNowProvider NowProvider = [&]() -> FTSEventQueueTimePoint
+        {
+            ++NowCallCount;
+            if (NowCallCount == 1)
+            {
+                throw std::runtime_error("Controlled maintenance failure");
+            }
+
+            return FTSEventQueueTimePoint{};
+        };
+
+        FTSEventExecutionHost Host({}, std::move(NowProvider));
+        const FTSChatInput FirstInput = MakeChatInput("retained-first");
+        const FTSChatInput SecondInput = MakeChatInput("retained-second");
+        Require(Host.PostChat(FirstInput), "Retained first input must signal");
+
+        bool bThrew = false;
+        try
+        {
+            (void)Host.RunOneCycle();
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(
+            bThrew && NowCallCount == 1,
+            "Controlled maintenance failure must propagate"
+        );
+        Require(
+            !Host.PostChat(SecondInput),
+            "Failed maintenance must leave the first command in the FIFO"
+        );
+
+        const FTSEventHostCycleResult FirstCycle = Host.RunOneCycle();
+        const FTSEmissionId FirstId = RequireAcceptedChatAdmission(
+            FirstCycle,
+            "Retained first admission"
+        );
+        RequireChatInputEqual(
+            RequireChatDispatch(FirstCycle, "Retained first dispatch")
+                .Payload.Input,
+            FirstInput,
+            "Retained first payload"
+        );
+        Require(
+            FirstCycle.bMoreCommandsPending,
+            "Second command must remain queued behind the retained first command"
+        );
+
+        const FTSEventHostCycleResult SecondCycle = Host.RunOneCycle();
+        const FTSEmissionId SecondId = RequireAcceptedChatAdmission(
+            SecondCycle,
+            "Retained second admission"
+        );
+        Require(
+            !SecondCycle.Dispatch.has_value() &&
+                SecondCycle.PumpResult.has_value() &&
+                SecondCycle.PumpResult->Outcome.Status == ETSPumpStatus::Busy,
+            "Retained FIFO must admit the second command behind the first"
+        );
+
+        Require(
+            Host.PostChatCompletion(
+                FirstId,
+                ETSProcessingResult::Succeeded
+            ),
+            "Retained first completion must signal"
+        );
+        const FTSEventHostCycleResult FirstCompletionCycle =
+            Host.RunOneCycle();
+        RequireConfirmedCompletion(
+            RequireCompletion(
+                FirstCompletionCycle,
+                ETSEventHostCommandKind::ChatCompletion,
+                FirstId,
+                ETSProcessingResult::Succeeded,
+                "Retained first completion"
+            ),
+            FirstId,
+            "Retained first completion"
+        );
+        Require(
+            RequireChatDispatch(
+                FirstCompletionCycle,
+                "Retained second dispatch"
+            ).Emission.EmissionId == SecondId,
+            "Retained second command must dispatch after the first completes"
+        );
+
+        Require(
+            Host.PostChatCompletion(
+                SecondId,
+                ETSProcessingResult::Succeeded
+            ),
+            "Retained second completion must signal"
+        );
+        const FTSEventHostCycleResult CleanupCycle = Host.RunOneCycle();
+        RequireConfirmedCompletion(
+            RequireCompletion(
+                CleanupCycle,
+                ETSEventHostCommandKind::ChatCompletion,
+                SecondId,
+                ETSProcessingResult::Succeeded,
+                "Retained second cleanup"
+            ),
+            SecondId,
+            "Retained second cleanup"
+        );
+    }
+
+    void TestChatFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeChatInput("failed-chat"),
+            MakeChatInput("after-failed-chat"),
+            ETSEventHostCommandKind::ChatCompletion,
+            [](FTSEventExecutionHost& Host, FTSChatInput Input)
+            {
+                return Host.PostChat(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostChatCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedChatAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireChatDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "Chat Failed"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -502,5 +645,7 @@ namespace TikStudio::Tests
         Tests.push_back({"Pending Chat expires while another is Processing", &TestPendingChatExpiresWhileAnotherIsProcessing});
         Tests.push_back({"RunOneCycle rejects wrong thread before work", &TestRunOneCycleRejectsWrongThreadBeforeWork});
         Tests.push_back({"Explicit Pump works when Auto Pump is disabled", &TestExplicitPumpWorksWhenAutoPumpIsDisabled});
+        Tests.push_back({"Throwing maintenance preserves the pending command", &TestThrowingMaintenancePreservesPendingCommand});
+        Tests.push_back({"Chat Failed completion is terminal and Host recovers", &TestChatFailedCompletionIsTerminalAndHostRecovers});
     }
 }

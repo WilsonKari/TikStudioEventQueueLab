@@ -872,6 +872,35 @@ namespace
             "Replacement RoomUser cleanup"
         );
     }
+
+    void TestRoomUserFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeRoomUserInput("failed-room-user"),
+            MakeRoomUserInput("after-failed-room-user"),
+            ETSEventHostCommandKind::RoomUserCompletion,
+            [](FTSEventExecutionHost& Host, FTSRoomUserInput Input)
+            {
+                return Host.PostRoomUser(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostRoomUserCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedRoomUserAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireRoomUserDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "RoomUser Failed"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -909,6 +938,10 @@ namespace TikStudio::Tests
         Tests.push_back({
             "Pending RoomUser expires while Chat is Processing",
             &TestPendingRoomUserExpiresWhileChatIsProcessing
+        });
+        Tests.push_back({
+            "RoomUser Failed completion is terminal and Host recovers",
+            &TestRoomUserFailedCompletionIsTerminalAndHostRecovers
         });
     }
 }

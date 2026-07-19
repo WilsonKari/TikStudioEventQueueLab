@@ -43,7 +43,10 @@ Su repositorio, admisión, dispatch, completion y lifecycle comparten el Coordin
 las autoridades globales existentes. `PostGift` y `PostGiftCompletion` usan el FIFO,
 owner thread, ready e `InFlight` compartidos; el dispatch variant incorpora la copia
 propietaria Gift. La certificación vertical recorre JSON Gift → converter → Host. El
-runner Pipeline registra 98 casos, Host 49 y Vertical Integration 6.
+runner Pipeline registra 98 casos, Host 57 y Vertical Integration 6. El Host añade
+cobertura simétrica de `Failed` para las seis familias, conserva el FIFO si falla el
+mantenimiento previo al comando y certifica la separación entre `DueExpirations` y el
+lifecycle de una completion.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

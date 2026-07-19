@@ -864,6 +864,145 @@ namespace
             "Replacement Gift cleanup"
         );
     }
+
+    void TestGiftFailedCompletionIsTerminalAndHostRecovers()
+    {
+        RunFailedCompletionHostScenario(
+            MakeGiftInput("failed-gift"),
+            MakeGiftInput("after-failed-gift"),
+            ETSEventHostCommandKind::GiftCompletion,
+            [](FTSEventExecutionHost& Host, FTSGiftInput Input)
+            {
+                return Host.PostGift(std::move(Input));
+            },
+            [](FTSEventExecutionHost& Host,
+               FTSEmissionId EmissionId,
+               ETSProcessingResult Result)
+            {
+                return Host.PostGiftCompletion(EmissionId, Result);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireAcceptedGiftAdmission(Cycle, Context);
+            },
+            [](const FTSEventHostCycleResult& Cycle, const std::string& Context)
+            {
+                return RequireGiftDispatch(Cycle, Context)
+                    .Emission.EmissionId;
+            },
+            "Gift Failed"
+        );
+    }
+
+    void TestExpirationsBeforeCompletionRemainInDueExpirations()
+    {
+        FControlledClock Clock;
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* GiftSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Gift);
+        Require(GiftSettings != nullptr, "Gift settings must exist");
+        GiftSettings->TTL = 5s;
+
+        FTSEventExecutionHost Host(Settings, Clock.MakeProvider());
+        Require(
+            Host.PostChat(MakeChatInput("partition-chat")),
+            "Partition Chat must signal"
+        );
+        const FTSEventHostCycleResult ChatCycle = Host.RunOneCycle();
+        const FTSEmissionId ChatId =
+            RequireAcceptedChatAdmission(ChatCycle, "Partition Chat");
+        (void)RequireChatDispatch(ChatCycle, "Partition Chat");
+
+        Require(
+            Host.PostGift(MakeGiftInput("partition-expiring-gift")),
+            "Partition Gift must signal"
+        );
+        const FTSEventHostCycleResult GiftCycle = Host.RunOneCycle();
+        const FTSEmissionId GiftId =
+            RequireAcceptedGiftAdmission(GiftCycle, "Partition Gift");
+        Require(
+            !GiftCycle.Dispatch.has_value(),
+            "Partition Gift must remain Pending"
+        );
+
+        Require(
+            Host.PostFollow(MakeFollowInput("partition-follow")),
+            "Partition Follow must signal"
+        );
+        const FTSEventHostCycleResult FollowCycle = Host.RunOneCycle();
+        const FTSEmissionId FollowId =
+            RequireAcceptedFollowAdmission(FollowCycle, "Partition Follow");
+        Require(
+            !FollowCycle.Dispatch.has_value(),
+            "Partition Follow must remain Pending"
+        );
+
+        Clock.Advance(6s);
+        Require(
+            Host.PostChatCompletion(ChatId, ETSProcessingResult::Succeeded),
+            "Partition Chat completion must signal"
+        );
+        const FTSEventHostCycleResult CompletionCycle = Host.RunOneCycle();
+        Require(
+            CompletionCycle.DueExpirations.LifecycleEvents.size() == 1 &&
+                CompletionCycle.DueExpirations.LifecycleEvents.front()
+                        .Envelope.EmissionId == GiftId &&
+                CompletionCycle.DueExpirations.LifecycleEvents.front().Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard,
+            "Expired Gift must be reported by pre-command maintenance"
+        );
+
+        const FTSProcessingCompletionResult& Completion = RequireCompletion(
+            CompletionCycle,
+            ETSEventHostCommandKind::ChatCompletion,
+            ChatId,
+            ETSProcessingResult::Succeeded,
+            "Partition Chat completion"
+        );
+        RequireConfirmedCompletion(
+            Completion,
+            ChatId,
+            "Partition Chat completion"
+        );
+        Require(
+            Completion.ConfirmResult->LifecycleEvents.size() == 1,
+            "Pre-command expiration must not be duplicated in Confirm lifecycle"
+        );
+        Require(
+            Completion.ConfirmResult->AutoPumpOutcome.Status ==
+                    ETSPumpStatus::EmissionReady &&
+                Completion.ConfirmResult->AutoPumpOutcome.ReadyEmission
+                        .EmissionId == FollowId,
+            "Confirm Auto Pump must select the surviving Follow"
+        );
+        Require(
+            RequireFollowDispatch(
+                CompletionCycle,
+                "Partition Follow dispatch"
+            ).Emission.EmissionId == FollowId,
+            "Surviving Follow must dispatch in the completion cycle"
+        );
+
+        Require(
+            Host.PostFollowCompletion(
+                FollowId,
+                ETSProcessingResult::Succeeded
+            ),
+            "Partition Follow cleanup must signal"
+        );
+        const FTSEventHostCycleResult CleanupCycle = Host.RunOneCycle();
+        RequireConfirmedCompletion(
+            RequireCompletion(
+                CleanupCycle,
+                ETSEventHostCommandKind::FollowCompletion,
+                FollowId,
+                ETSProcessingResult::Succeeded,
+                "Partition Follow cleanup"
+            ),
+            FollowId,
+            "Partition Follow cleanup"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -901,6 +1040,14 @@ namespace TikStudio::Tests
         Tests.push_back({
             "Pending Gift expires while Chat is Processing",
             &TestPendingGiftExpiresWhileChatIsProcessing
+        });
+        Tests.push_back({
+            "Gift Failed completion is terminal and Host recovers",
+            &TestGiftFailedCompletionIsTerminalAndHostRecovers
+        });
+        Tests.push_back({
+            "Expirations before completion remain in DueExpirations",
+            &TestExpirationsBeforeCompletionRemainInDueExpirations
         });
     }
 }
