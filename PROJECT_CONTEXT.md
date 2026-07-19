@@ -3,10 +3,10 @@
 Última actualización: 2026-07-18.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `f103f75`
-(`feat(host): complete room-user vertical integration`).
+rama `main`, partiendo de HEAD `0a75fb8`
+(`feat(gift): add conversion and direct family decision`).
 
-Los cambios de la Fase 4H.1 permanecen locales y sin commit.
+Los cambios de la Fase 4H.2 permanecen locales y sin commit.
 
 ## 1. Objetivo general
 
@@ -77,7 +77,7 @@ Follow → FTSTikFinityFollowConverter         [implementado en 4D.1]
 Share → FTSTikFinityShareConverter           [implementado en 4E.1]
 Like → FTSTikFinityLikeConverter             [publicado en 4F.1]
 RoomUser → FTSTikFinityRoomUserConverter     [publicado en 4G.1]
-Gift → FTSTikFinityGiftConverter             [implementado localmente en 4H.1]
+Gift → FTSTikFinityGiftConverter             [publicado en 4H.1]
 Member → converter tipado                    [pendiente]
         ↓
 FTS*Input portable                            [Chat, Follow, Share, Like, RoomUser y Gift implementados]
@@ -106,8 +106,9 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat, Follow, Share, Like y RoomUser disponen del recorrido
-portable completo hasta Host y lifecycle. Gift dispone localmente de converter, payload
-y decisión directa; Member continúa sin implementación semántica.
+portable completo hasta Host y lifecycle. Gift dispone del recorrido Pipeline completo
+localmente, pero todavía no de Host ni integración vertical; Member continúa sin
+implementación semántica.
 
 Decisión arquitectónica aprobada:
 
@@ -151,9 +152,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → FTSChatInput portable                             [conversión implementada]
 → familia interpreta payload y elige flujo          [Chat, Follow, Share, Like, RoomUser y Gift]
 → decisión familiar / candidato de admisión tipado  [Chat, Follow, Share, Like, RoomUser y Gift]
-→ coordinador inserta payload provisional            [Chat, Follow, Share, Like y RoomUser]
-→ repositorio tipado de payloads                     [Chat, Follow, Share, Like y RoomUser]
-→ FTSEnqueueRequest                                  [cinco familias llaman Core.Enqueue]
+→ coordinador inserta payload provisional            [seis familias, incluida Gift]
+→ repositorio tipado de payloads                     [seis familias, incluida Gift]
+→ FTSEnqueueRequest                                  [seis familias llaman Core.Enqueue]
 → validar flujo, enabled y TTL efectivo              [implementado en Enqueue]
 → comprobar capacidad por flujo                     [implementado por escaneo O(n)]
 → capturar tiempo / prioridad / expiración / ID      [implementado en Enqueue]
@@ -161,22 +162,22 @@ texto JSON TikFinity                                [implementado en Adapter]
 → crear y almacenar record autoritativo Pending      [implementado]
 → indexar prioridad y expiración finita               [implementado]
 → Auto Pump tras Enqueue aceptado e idle               [implementado]
-→ binding externo EmissionId → PayloadHandle          [cinco familias conectadas]
-→ lifecycle de Enqueue libera binding y payload       [generalizado en cinco familias]
+→ binding externo EmissionId → PayloadHandle          [seis familias conectadas]
+→ lifecycle de Enqueue libera binding y payload       [generalizado en seis familias]
 → GetNextWakeTime consulta próximo vencimiento        [implementado]
 → ProcessDueExpirations elimina Pending vencidos      [implementado]
 → Pump selecciona y cambia Pending a InFlight          [implementado]
-→ coordinador captura ready global de un solo uso       [cinco familias]
-→ Begin*Processing produce copia propietaria            [cinco familias]
-→ binding externo Bound → Processing                    [cinco familias]
-→ coordinador entrega despacho tipado propietario       [cinco familias]
+→ coordinador captura ready global de un solo uso       [seis familias]
+→ Begin*Processing produce copia propietaria            [seis familias]
+→ binding externo Bound → Processing                    [seis familias]
+→ coordinador entrega despacho tipado propietario       [seis familias]
 → Confirm / Cancel elimina InFlight y emite terminal   [implementado]
 → Auto Pump tras Confirm exitoso                       [implementado]
-→ Succeeded coordina Confirm                            [cinco familias]
-→ Cancelled / Failed coordinan CancelInFlight           [cinco familias]
-→ lifecycle terminal enruta y limpia payload tipado     [cinco familias]
+→ Succeeded coordina Confirm                            [seis familias]
+→ Cancelled / Failed coordinan CancelInFlight           [seis familias]
+→ lifecycle terminal enruta y limpia payload tipado     [seis familias]
 → Confirm captura el siguiente ready multi-familia      [implementado]
-→ Pump y expiración se exponen por el coordinador       [cinco familias]
+→ Pump y expiración se exponen por el coordinador       [seis familias]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
@@ -215,16 +216,19 @@ texto JSON TikFinity                                [implementado en Adapter]
 → PostRoomUser y PostRoomUserCompletion en Host            [publicados en 4G.3]
 → RoomUser en FIFO global, owner y dispatch variant        [publicado en 4G.3]
 → certificación JSON RoomUser → Host                       [publicada en 4G.3]
-→ FTSTikFinityGiftConverter                                [implementado localmente en 4H.1]
-→ FTSGiftPayload y candidato directo Flow Gift             [implementados localmente en 4H.1]
+→ FTSTikFinityGiftConverter                                [publicado en 4H.1]
+→ FTSGiftPayload y candidato directo Flow Gift             [publicados en 4H.1]
+→ repositorio, binding y admisión Gift                     [implementados localmente en 4H.2]
+→ dispatch y completion Gift                               [implementados localmente en 4H.2]
+→ lifecycle mixto de seis familias                         [generalizado localmente en 4H.2]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
 Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
-Gift A                                                      [completo localmente]
-Gift B → C                                                  [pendiente]
+Gift A → B                                                  [completo localmente]
+Gift C                                                      [pendiente]
 Member                                                      [pendiente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -271,8 +275,10 @@ manual terminó con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42
 Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 fue publicada en
 `f103f75`; su certificación manual terminó con 212 PASS / 0 FAIL: Core 10, Pipeline 84,
 Host 41, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5. La Fase
-4H.1 implementa localmente la conversión y decisión directa Gift, sin compilación ni
-ejecución de pruebas por el agente.
+4H.1 fue publicada en `0a75fb8`; el propietario certificó Core 10, Pipeline 86, Host
+41, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 5: 224 PASS / 0
+FAIL. La Fase 4H.2 implementa localmente el Pipeline completo Gift; no se compiló ni se
+ejecutaron pruebas durante esta implementación.
 
 ## 4. Contratos públicos actuales
 
@@ -307,8 +313,8 @@ opcionales ausentes permanecen como `nullopt`; strings, booleanos, enteros, arra
 objetos anidados exigen su tipo exacto. Los seis eventos basados en usuario común leen
 los campos directamente desde `data`; `roomUser` conserva la estructura distinta
 `data.topViewers[].user`. El decoder produce los contratos decodificados que consumen
-los converters Chat, Follow, Share, Like y RoomUser; todavía no existen converters para
-Gift y Member.
+los converters Chat, Follow, Share, Like, RoomUser y Gift; todavía no existe converter
+para Member.
 
 `FTSTikFinityMappedEventFormatter` genera una representación estable para diagnóstico.
 `FTSTikFinitySevenEventChecklist` cuenta frames válidos e inválidos por evento y mantiene
@@ -474,8 +480,15 @@ produce exclusivamente `FamilyKind = Gift` y `Flow = Gift`, con prioridad cero, 
 override de TTL ni protección especial. `RepeatCount`, `GiftType`, `bRepeatEnd` y
 `GroupId` se preservan como datos crudos: no agrupan, acumulan ni activan `GiftCombo`.
 `GiftCombo` permanece reservado hasta una fase específica que defina estado,
-agrupación y cierre. Gift aún no dispone de repositorio, Coordinator, dispatch,
-lifecycle, Host ni integración vertical.
+agrupación y cierre.
+
+Gift B añade `FTSGiftPayloadRepository`, `FTSGiftProcessingDispatch` y
+`FTSGiftProcessingCompletionResult`, más `SubmitGift`, `BeginGiftProcessing`,
+`CompleteGiftProcessing`, visita por `EmissionId` y conteo tipado en el Coordinator.
+Sólo admite la pareja `Gift / Gift`; conserva los metadatos de repetición dentro del
+snapshot y generaliza las rutas Pending, Confirm y Cancel sin introducir estado de
+combo. Gift comparte el único Core, BindingRegistry, ready e `InFlight`. Host e
+integración vertical Gift permanecen pendientes.
 
 ### Repositorios tipados de payloads
 
@@ -489,12 +502,12 @@ de forma monotónica, sin reutilizarlos durante la vida de la instancia. Su API 
 - `Size()` y `Empty()`.
 
 `FTSChatPayloadRepository`, `FTSFollowPayloadRepository`,
-`FTSSharePayloadRepository`, `FTSLikePayloadRepository` y
-`FTSRoomUserPayloadRepository` son aliases tipados de
+`FTSSharePayloadRepository`, `FTSLikePayloadRepository`,
+`FTSRoomUserPayloadRepository` y `FTSGiftPayloadRepository` son aliases tipados de
 instancias independientes. Ninguno conoce identidades de emisión, flujos, familias,
 bindings, lifecycle events ni procesadores. El handle sólo identifica una entrada de
 su instancia; varios repositorios pueden asignar el mismo valor numérico porque
-`FamilyKind` enruta la autoridad correcta. Los cinco conservan autoridad exclusiva y
+`FamilyKind` enruta la autoridad correcta. Los seis conservan autoridad exclusiva y
 no pueden copiarse ni moverse.
 
 `Provisional` no es un estado almacenado en el repositorio ni en los contratos. Es una
@@ -529,17 +542,17 @@ Su API ofrece inserción, `Visit` con acceso `const` limitado a la llamada, tran
 condicional por estado esperado, eliminación única y consultas `Size`/`Empty`. El
 registro no almacena payloads, no conoce repositorios o familias concretas y no replica
 los estados internos `Pending`/`InFlight` del core. El coordinador ya lo usa para crear
-bindings Chat, Follow, Share, Like y RoomUser después de cada admisión aceptada. Como autoridad
+bindings Chat, Follow, Share, Like, RoomUser y Gift después de cada admisión aceptada. Como autoridad
 estable de los bindings por `EmissionId`, no puede copiarse, asignarse ni moverse.
 
-### Coordinador de admisión Chat, Follow, Share, Like y RoomUser
+### Coordinador de admisión Chat, Follow, Share, Like, RoomUser y Gift
 
 `FTSEventPipelineCoordinator` posee de forma privada y exclusiva el core, los
-repositorios Chat/Follow/Share/Like/RoomUser y el registro de bindings. Es no copiable y no
-movible, y no expone referencias mutables a ninguna autoridad.
+repositorios Chat/Follow/Share/Like/RoomUser/Gift y el registro de bindings. Es no
+copiable y no movible, y no expone referencias mutables a ninguna autoridad.
 
-`SubmitChat`, `SubmitFollow`, `SubmitShare`, `SubmitLike` y `SubmitRoomUser` conservan
-este orden mediante una guarda provisional templada:
+`SubmitChat`, `SubmitFollow`, `SubmitShare`, `SubmitLike`, `SubmitRoomUser` y
+`SubmitGift` conservan este orden mediante una guarda provisional templada:
 
 ```text
 familia tipada::Decide
@@ -560,19 +573,20 @@ Ante aceptación, el payload permanece en la misma entrada y el binding existe a
 exponer un posible `AutoPumpOutcome`. Un fallo posterior se trata como
 invariante interna mediante `std::logic_error`; nunca se simula rollback del core.
 
-El handler privado de lifecycle acepta tandas mixtas Chat/Follow/Share/Like/RoomUser. Valida
-primero toda la tanda, incluida la pareja familia/flujo y la existencia del payload en
-su repositorio; después aplica en orden `TerminalPendingHandling`, borrado tipado y
-borrado del binding. Una familia todavía no integrada produce `std::logic_error`.
+El handler privado de lifecycle acepta tandas mixtas
+Chat/Follow/Share/Like/RoomUser/Gift. Valida primero toda la tanda, incluida la pareja
+familia/flujo y la existencia del payload en su repositorio; después aplica en orden
+`TerminalPendingHandling`, borrado tipado y borrado del binding. Una familia todavía no
+integrada produce `std::logic_error`.
 
-La inspección pública permite visitar bindings y payloads Chat/Follow/Share/Like/RoomUser
-mediante `EmissionId`, además de consultar sus conteos, sin exponer ownership ni
-referencias mutables.
+La inspección pública permite visitar bindings y payloads
+Chat/Follow/Share/Like/RoomUser/Gift mediante `EmissionId`, además de consultar sus
+conteos, sin exponer ownership ni referencias mutables.
 
-### Despacho autorizado de Chat, Follow, Share, Like y RoomUser
+### Despacho autorizado de Chat, Follow, Share, Like, RoomUser y Gift
 
 El coordinador conserva como máximo una copia privada de `FTSEmissionEnvelope` en
-`PendingReadyEmission`, compartida por las cinco familias porque el core sólo
+`PendingReadyEmission`, compartida por las seis familias porque el core sólo
 posee un `InFlight`. Es una notificación de despacho pendiente, no una réplica del
 estado autoritativo.
 
@@ -583,8 +597,9 @@ familia/flujo soportada y estado `Bound`; nunca sobrescribe otro ready pendiente
 un despacho creado por código externo.
 
 `BeginChatProcessing()`, `BeginFollowProcessing()`, `BeginShareProcessing()`,
-`BeginLikeProcessing()` y `BeginRoomUserProcessing()` sólo autorizan su propia familia.
-Si el ready pertenece a otra, devuelven `NoEmissionReady` y preservan ready, binding y payload.
+`BeginLikeProcessing()`, `BeginRoomUserProcessing()` y `BeginGiftProcessing()` sólo
+autorizan su propia familia. Si el ready pertenece a otra, devuelven `NoEmissionReady`
+y preservan ready, binding y payload.
 `PeekPendingReadyFamilyKind()` inspecciona el enrutamiento sin consumirlo ni autorizar
 procesamiento. Los dispatches siguen siendo copias propietarias tipadas.
 
@@ -594,11 +609,11 @@ permanecen intactos y la operación puede reintentarse. Después de una transici
 exitosa sólo quedan operaciones no lanzables. El payload original y el binding continúan
 almacenados mientras la emisión permanece `Processing`.
 
-### Finalización y lifecycle completo de Chat, Follow, Share, Like y RoomUser
+### Finalización y lifecycle completo de Chat, Follow, Share, Like, RoomUser y Gift
 
 `CompleteChatProcessing`, `CompleteFollowProcessing`, `CompleteShareProcessing`,
-`CompleteLikeProcessing` y `CompleteRoomUserProcessing` conservan wrappers públicos
-tipados sobre un helper común.
+`CompleteLikeProcessing`, `CompleteRoomUserProcessing` y `CompleteGiftProcessing`
+conservan wrappers públicos tipados sobre un helper común.
 Validan identidad, ausencia de cualquier ready pendiente, familia, flujo, handle,
 estado y payload antes de solicitar una transición terminal al core. `Succeeded` llama
 a `Confirm`; `Cancelled` y `Failed` llaman a `CancelInFlight`, sin retry implícito.
@@ -888,8 +903,8 @@ Targets explícitos, sin `file(GLOB ...)`:
 - `TikStudioEventCore` (STATIC): core central, settings y siete translation units de
   familias.
 - `TikStudioEventPipeline` (STATIC): contratos portables y familias Chat, Follow, Share,
-  Like, RoomUser y Gift; el coordinador de admisión, despacho y finalización continúa
-  limitado a Chat/Follow/Share/Like/RoomUser;
+  Like, RoomUser y Gift; el coordinador de admisión, despacho y finalización cubre
+  Chat/Follow/Share/Like/RoomUser/Gift;
   publica `Pipeline/Public` y enlaza públicamente sólo con Core.
 - `TikStudioEventHost` (STATIC): PImpl, bandeja thread-safe compartida y ciclo
   propietario de Chat/Follow/Share/Like/RoomUser; publica `Host/Public`, enlaza públicamente
@@ -923,9 +938,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4G.3, Pipeline, Host, Adapter y Vertical
-registran respectivamente 84, 41, 42 y 5 casos. Los cambios locales de 4H.1 elevan
-Pipeline a 86 y Adapter a 52, sin modificar Host ni Vertical.
+automático. En el baseline publicado de 4H.1, Pipeline, Host, Adapter y Vertical
+registran respectivamente 86, 41, 52 y 5 casos. Los cambios locales de 4H.2 elevan
+Pipeline a 98, sin modificar Host, Adapter ni Vertical.
 
 La estructura familiar queda así:
 
@@ -935,7 +950,7 @@ Tests/Follow/ → Pipeline, Host, Adapter y certificación vertical Follow
 Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
-Tests/Gift/ → familia Pipeline y Adapter Gift directo
+Tests/Gift/ → familia, Coordinator Pipeline y Adapter Gift directo
 Tests/Member/ → sólo .gitkeep
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
@@ -1029,10 +1044,13 @@ certificada con 203 PASS / 0 FAIL: Core 10, Pipeline 84, Host 33, Adapter 42, JS
 Decoder 20, Checklist 10 y Vertical Integration 4. La Fase 4G.3 añadió ocho escenarios
 Host y una certificación JSON RoomUser → Host; fue publicada en `f103f75` y certificada
 con 212 PASS / 0 FAIL: Core 10, Pipeline 84, Host 41, Adapter 42, JSON Decoder 20,
-Checklist 10 y Vertical Integration 5. La cobertura local de 4H.1 añade diez escenarios
-Adapter Gift y dos casos de familia Pipeline Gift. Sin ejecutar los runners durante
-esta implementación, el resultado esperado es: Core 10, Pipeline 86, Host 41, Adapter
-52, JSON Decoder 20, Checklist 10 y Vertical Integration 5; 224 casos.
+Checklist 10 y Vertical Integration 5. La Fase 4H.1 añadió diez escenarios Adapter
+Gift y dos casos de familia Pipeline Gift; fue publicada en `0a75fb8` y certificada con
+224 PASS / 0 FAIL: Core 10, Pipeline 86, Host 41, Adapter 52, JSON Decoder 20,
+Checklist 10 y Vertical Integration 5. La cobertura local de 4H.2 añade doce escenarios
+Coordinator Gift. Sin ejecutar los runners durante esta implementación, el resultado
+esperado es: Core 10, Pipeline 98, Host 41, Adapter 52, JSON Decoder 20, Checklist 10 y
+Vertical Integration 5; 236 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1648,17 +1666,35 @@ esta implementación, el resultado esperado es: Core 10, Pipeline 86, Host 41, A
   `FamilyKind = Gift` y `Flow = Gift` con los defaults de admisión.
 - Conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como datos crudos;
   `GiftCombo` continúa reservado y no existe estado de combo.
-- Añade diez escenarios Adapter Gift y dos escenarios Pipeline Gift. Los resultados
-  esperados quedan en Adapter 52, Pipeline 86 y 224 casos totales.
+- Añade diez escenarios Adapter Gift y dos escenarios Pipeline Gift. La certificación
+  publicada dejó Adapter 52, Pipeline 86 y 224 casos totales.
 - No añade repositorio, Coordinator, dispatch, completion, lifecycle, Host ni
   integración vertical Gift; Member permanece intacto.
+- Fue publicada en `0a75fb8` como
+  `feat(gift): add conversion and direct family decision`.
+- El propietario certificó 224 PASS / 0 FAIL: Core 10, Pipeline 86, Host 41, Adapter
+  52, JSON Decoder 20, Checklist 10 y Vertical Integration 5.
+
+### Fase 4H.2 — Gift B: Pipeline completo y lifecycle
+
+- Añade aliases tipados para repositorio, dispatch y resultado de completion Gift.
+- Integra `SubmitGift`, `BeginGiftProcessing`, `CompleteGiftProcessing`, visita por
+  `EmissionId` y conteo de payloads en el Coordinator existente.
+- Generaliza validación y limpieza de lifecycle Pending, Confirm y Cancel para la
+  pareja exclusiva `Gift / Gift`, compartiendo Core, BindingRegistry, ready e
+  `InFlight` con las otras cinco familias.
+- Preserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como snapshot crudo; no
+  admite ni infiere `GiftCombo`.
+- Añade doce escenarios Coordinator Gift; Pipeline registra 98 casos y el total
+  esperado queda en 236.
+- Host e integración vertical Gift permanecen pendientes; Member permanece intacto.
 - Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas
   durante la implementación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `f103f75` más los cambios locales de 4H.1.
+  `0a75fb8` más los cambios locales de 4H.2.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1688,7 +1724,8 @@ esta implementación, el resultado esperado es: Core 10, Pipeline 86, Host 41, A
   publicó RoomUser A en `e02f306` y fue certificada con 191 PASS / 0 FAIL. La Fase
   4G.2 publicó RoomUser B en `14b9357` y fue certificada con 203 PASS / 0 FAIL. La Fase
   4G.3 publicó RoomUser C en `f103f75` y fue certificada con 212 PASS / 0 FAIL. La Fase
-  4H.1 implementa localmente Gift A; no continuar automáticamente con Gift B.
+  4H.1 publicó Gift A en `0a75fb8` y fue certificada con 224 PASS / 0 FAIL. La Fase
+  4H.2 implementa localmente Gift B; no continuar automáticamente con Gift C.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

@@ -20,6 +20,7 @@ namespace TikStudio::Tests
     void RegisterRoomUserPipelineCoordinatorTests(FTSTestCases& Tests);
 
     void RegisterGiftPipelineFamilyTests(FTSTestCases& Tests);
+    void RegisterGiftPipelineCoordinatorTests(FTSTestCases& Tests);
 
     void RegisterPipelineInfrastructureTests(FTSTestCases& Tests);
 

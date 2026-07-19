@@ -530,6 +530,40 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeGiftSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* GiftSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Gift);
+        Require(GiftSettings != nullptr, "Gift settings must be available");
+        GiftSettings->bEnabled = bEnabled;
+        GiftSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalGiftSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{45000},
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeGiftSettings(true, 10);
+        FTSFlowQueueSettings* GiftSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Gift);
+        Require(GiftSettings != nullptr, "Gift settings must be available");
+        GiftSettings->TTL = TTL;
+        GiftSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -649,6 +683,34 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedGift(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSGiftInput Input = MakeCompleteGiftInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitGift(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Gift admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Gift admission must have a valid identity"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.Flow ==
+                ETSEventFlow::Gift,
+            "Accepted Gift admission must use the direct flow"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -719,6 +781,25 @@ namespace TikStudio::Tests
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready RoomUser must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyGift(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSGiftDispatchResult Dispatch =
+            Coordinator.BeginGiftProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Gift must produce a dispatch"
+        );
+        Require(
+            Dispatch.Dispatch->Emission.Flow == ETSEventFlow::Gift,
+            "A ready Gift must preserve the direct flow"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }

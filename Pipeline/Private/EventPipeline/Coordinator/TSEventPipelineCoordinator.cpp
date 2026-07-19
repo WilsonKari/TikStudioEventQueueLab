@@ -5,6 +5,7 @@
 #include "EventPipeline/Families/TSShareFamily.h"
 #include "EventPipeline/Families/TSLikeFamily.h"
 #include "EventPipeline/Families/TSRoomUserFamily.h"
+#include "EventPipeline/Families/TSGiftFamily.h"
 
 #include <stdexcept>
 #include <type_traits>
@@ -26,6 +27,9 @@ static_assert(
 static_assert(
     std::is_nothrow_move_constructible_v<FTSRoomUserProcessingDispatch>
 );
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSGiftProcessingDispatch>
+);
 static_assert(std::is_nothrow_move_constructible_v<FTSChatDispatchResult>);
 static_assert(std::is_nothrow_move_constructible_v<FTSFollowDispatchResult>);
 static_assert(
@@ -36,6 +40,9 @@ static_assert(
 );
 static_assert(
     std::is_nothrow_move_constructible_v<FTSRoomUserDispatchResult>
+);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSGiftDispatchResult>
 );
 static_assert(
     std::is_nothrow_move_constructible_v<FTSProcessingCompletionResult>
@@ -144,7 +151,9 @@ namespace
             (FamilyKind == ETSEventFamilyKind::Like &&
                 Flow == ETSEventFlow::Like) ||
             (FamilyKind == ETSEventFamilyKind::RoomUser &&
-                Flow == ETSEventFlow::RoomUser);
+                Flow == ETSEventFlow::RoomUser) ||
+            (FamilyKind == ETSEventFamilyKind::Gift &&
+                Flow == ETSEventFlow::Gift);
     }
 
     void ValidateSupportedFamilyFlowPair(
@@ -272,7 +281,8 @@ namespace
         const FTSFollowPayloadRepository& FollowPayloadRepository,
         const FTSSharePayloadRepository& SharePayloadRepository,
         const FTSLikePayloadRepository& LikePayloadRepository,
-        const FTSRoomUserPayloadRepository& RoomUserPayloadRepository
+        const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
+        const FTSGiftPayloadRepository& GiftPayloadRepository
     )
     {
         switch (Binding.FamilyKind)
@@ -317,6 +327,14 @@ namespace
                 }
             );
 
+        case ETSEventFamilyKind::Gift:
+            return GiftPayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [](const FTSGiftPayload&)
+                {
+                }
+            );
+
         default:
             throw std::logic_error(
                 "Lifecycle references an unsupported payload family"
@@ -331,7 +349,8 @@ namespace
         FTSFollowPayloadRepository& FollowPayloadRepository,
         FTSSharePayloadRepository& SharePayloadRepository,
         FTSLikePayloadRepository& LikePayloadRepository,
-        FTSRoomUserPayloadRepository& RoomUserPayloadRepository
+        FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
+        FTSGiftPayloadRepository& GiftPayloadRepository
     )
     {
         switch (Entry.FamilyKind)
@@ -351,6 +370,9 @@ namespace
         case ETSEventFamilyKind::RoomUser:
             return RoomUserPayloadRepository.Erase(Entry.PayloadHandle);
 
+        case ETSEventFamilyKind::Gift:
+            return GiftPayloadRepository.Erase(Entry.PayloadHandle);
+
         default:
             throw std::logic_error(
                 "Lifecycle cleanup references an unsupported payload family"
@@ -365,6 +387,7 @@ namespace
         FTSSharePayloadRepository& SharePayloadRepository,
         FTSLikePayloadRepository& LikePayloadRepository,
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
+        FTSGiftPayloadRepository& GiftPayloadRepository,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
         const FTSEmissionLifecycleEvents& LifecycleEvents,
         ELifecycleBatchKind BatchKind,
@@ -464,7 +487,8 @@ namespace
                     FollowPayloadRepository,
                     SharePayloadRepository,
                     LikePayloadRepository,
-                    RoomUserPayloadRepository
+                    RoomUserPayloadRepository,
+                    GiftPayloadRepository
                 ))
             {
                 throw std::logic_error(
@@ -502,7 +526,8 @@ namespace
                     FollowPayloadRepository,
                     SharePayloadRepository,
                     LikePayloadRepository,
-                    RoomUserPayloadRepository
+                    RoomUserPayloadRepository,
+                    GiftPayloadRepository
                 ))
             {
                 throw std::logic_error(
@@ -672,6 +697,18 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitRoomUser(
         ETSEventFamilyKind::RoomUser,
         ETSEventFlow::RoomUser,
         RoomUserPayloadRepository
+    );
+}
+
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitGift(
+    FTSGiftInput Input
+)
+{
+    return SubmitDecision(
+        FTSGiftFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::Gift,
+        GiftPayloadRepository
     );
 }
 
@@ -849,6 +886,18 @@ FTSEventPipelineCoordinator::BeginRoomUserProcessing()
         ETSEventFamilyKind::RoomUser,
         ETSEventFlow::RoomUser,
         RoomUserPayloadRepository
+    );
+}
+
+FTSGiftDispatchResult FTSEventPipelineCoordinator::BeginGiftProcessing()
+{
+    return BeginProcessing<
+        FTSGiftPayload,
+        FTSGiftProcessingDispatch
+    >(
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::Gift,
+        GiftPayloadRepository
     );
 }
 
@@ -1072,6 +1121,21 @@ FTSEventPipelineCoordinator::CompleteRoomUserProcessing(
     );
 }
 
+FTSGiftProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteGiftProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::Gift,
+        GiftPayloadRepository
+    );
+}
+
 FTSPumpResult FTSEventPipelineCoordinator::Pump()
 {
     FTSPumpResult Result = Core.Pump();
@@ -1135,6 +1199,11 @@ FTSEventPipelineCoordinator::GetRoomUserPayloadCount() const noexcept
     return RoomUserPayloadRepository.Size();
 }
 
+std::size_t FTSEventPipelineCoordinator::GetGiftPayloadCount() const noexcept
+{
+    return GiftPayloadRepository.Size();
+}
+
 void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
     const FTSPumpOutcome& PumpOutcome
 )
@@ -1166,6 +1235,7 @@ void FTSEventPipelineCoordinator::ProcessPendingLifecycleEvents(
         SharePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
+        GiftPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::PendingOnly,
@@ -1185,6 +1255,7 @@ void FTSEventPipelineCoordinator::ProcessConfirmLifecycleEvents(
         SharePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
+        GiftPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::Confirm,
@@ -1204,6 +1275,7 @@ void FTSEventPipelineCoordinator::ProcessCancelLifecycleEvents(
         SharePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
+        GiftPayloadRepository,
         PendingReadyEmission,
         LifecycleEvents,
         ELifecycleBatchKind::Cancel,
