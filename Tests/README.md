@@ -2,9 +2,9 @@
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Chat, Follow,
 Share, Like, RoomUser y Gift tienen completos Adapter tipado, familia directa,
-Pipeline, Host, lifecycle e integración vertical JSON → Host. MemberIdentity A añade
-localmente el Adapter tipado y la decisión familiar directa; Member B y C permanecen
-pendientes.
+Pipeline, Host, lifecycle e integración vertical JSON → Host. MemberIdentity A está
+publicado y MemberIdentity B completa localmente repositorio, admisión, dispatch,
+completion y lifecycle dentro del Pipeline; Member C permanece pendiente.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -51,11 +51,10 @@ lifecycle de una completion.
 
 Member conserva `ActionId` y el usuario portable completo y produce exclusivamente
 `ETSEventFlow::MemberIdentity`. `MemberNormalized` permanece reservado: no existe
-normalización, deduplicación, acumulación ni estado entre decisiones. Con la fase A
-local, los runners registran Pipeline 100 y TikFinity Adapter 62 casos. El baseline
-publicado `51d73b5` fue certificado por el propietario con 253 PASS / 0 FAIL; los doce
-casos nuevos elevan el registro local a 265, pero no se compilaron ni ejecutaron durante
-la implementación.
+normalización, deduplicación, acumulación ni estado entre decisiones. El baseline
+publicado `51cba3a` fue certificado por el propietario con 265 PASS / 0 FAIL. Los doce
+casos Coordinator de MemberIdentity B elevan Pipeline a 112 y el total registrado a
+277; no se compilaron ni ejecutaron durante la implementación.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

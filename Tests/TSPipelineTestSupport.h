@@ -225,6 +225,16 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireMemberInputEqual(
+        const FTSMemberInput& Actual,
+        const FTSMemberInput& Expected,
+        const std::string& Context
+    )
+    {
+        Require(Actual.ActionId == Expected.ActionId, Context + ": ActionId");
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+    }
+
     [[nodiscard]]
     inline FTSChatInput MakeCompleteInput()
     {
@@ -341,6 +351,25 @@ namespace TikStudio::Tests
         Input.User.Nickname = "Gift User";
         Input.User.ProfilePictureUrl =
             "https://example.test/gift-user.png";
+        Input.User.FollowRole = 3;
+        Input.User.bIsModerator = true;
+        Input.User.bIsSubscriber = false;
+        Input.User.bIsNewGifter = true;
+        Input.User.TopGifterRank = 7;
+        Input.User.GifterLevel = 11;
+        Input.User.TeamMemberLevel = 13;
+        return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSMemberInput MakeCompleteMemberInput()
+    {
+        FTSMemberInput Input;
+        Input.ActionId = 73;
+        Input.User.UniqueId = "member-user-42";
+        Input.User.Nickname = "Member User";
+        Input.User.ProfilePictureUrl =
+            "https://example.test/member-user.png";
         Input.User.FollowRole = 3;
         Input.User.bIsModerator = true;
         Input.User.bIsSubscriber = false;
@@ -564,6 +593,40 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeMemberSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* MemberSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::MemberIdentity);
+        Require(MemberSettings != nullptr, "Member settings must be available");
+        MemberSettings->bEnabled = bEnabled;
+        MemberSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalMemberSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{6000},
+        ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings = MakeMemberSettings(true, 10);
+        FTSFlowQueueSettings* MemberSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::MemberIdentity);
+        Require(MemberSettings != nullptr, "Member settings must be available");
+        MemberSettings->TTL = TTL;
+        MemberSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedChat(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& Comment
@@ -711,6 +774,36 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedMember(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSMemberInput Input = MakeCompleteMemberInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitMember(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "Member admission must succeed"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.EmissionId != 0,
+            "Accepted Member admission must have a valid identity"
+        );
+        Require(
+            Admission.EnqueueResult->AdmittedEmission.Flow ==
+                    ETSEventFlow::MemberIdentity &&
+                Admission.EnqueueResult->AdmittedEmission.Flow !=
+                    ETSEventFlow::MemberNormalized,
+            "Accepted Member admission must use the identity flow"
+        );
+        return Admission.EnqueueResult->AdmittedEmission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId BeginReadyChat(
         FTSEventPipelineCoordinator& Coordinator
     )
@@ -800,6 +893,28 @@ namespace TikStudio::Tests
         Require(
             Dispatch.Dispatch->Emission.Flow == ETSEventFlow::Gift,
             "A ready Gift must preserve the direct flow"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyMember(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSMemberDispatchResult Dispatch =
+            Coordinator.BeginMemberProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready Member must produce a dispatch"
+        );
+        Require(
+            Dispatch.Dispatch->Emission.Flow ==
+                    ETSEventFlow::MemberIdentity &&
+                Dispatch.Dispatch->Emission.Flow !=
+                    ETSEventFlow::MemberNormalized,
+            "A ready Member must preserve the identity flow"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }

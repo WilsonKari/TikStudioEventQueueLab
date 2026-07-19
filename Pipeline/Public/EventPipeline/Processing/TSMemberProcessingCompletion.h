@@ -1,0 +1,6 @@
+#pragma once
+
+#include "EventPipeline/Processing/TSProcessingCompletion.h"
+
+using FTSMemberProcessingCompletionResult =
+    FTSProcessingCompletionResult;

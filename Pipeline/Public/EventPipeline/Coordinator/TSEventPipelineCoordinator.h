@@ -13,12 +13,15 @@
 #include "EventPipeline/Processing/TSRoomUserProcessingDispatch.h"
 #include "EventPipeline/Processing/TSGiftProcessingCompletion.h"
 #include "EventPipeline/Processing/TSGiftProcessingDispatch.h"
+#include "EventPipeline/Processing/TSMemberProcessingCompletion.h"
+#include "EventPipeline/Processing/TSMemberProcessingDispatch.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventPipeline/Repositories/TSFollowPayloadRepository.h"
 #include "EventPipeline/Repositories/TSSharePayloadRepository.h"
 #include "EventPipeline/Repositories/TSLikePayloadRepository.h"
 #include "EventPipeline/Repositories/TSRoomUserPayloadRepository.h"
 #include "EventPipeline/Repositories/TSGiftPayloadRepository.h"
+#include "EventPipeline/Repositories/TSMemberPayloadRepository.h"
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
 
 #include <cstddef>
@@ -77,6 +80,9 @@ using FTSRoomUserDispatchResult =
 using FTSGiftDispatchResult =
     TTSPipelineDispatchResult<FTSGiftProcessingDispatch>;
 
+using FTSMemberDispatchResult =
+    TTSPipelineDispatchResult<FTSMemberProcessingDispatch>;
+
 // Orquesta autoridades independientes sin asumir la semántica ni el ownership de ellas.
 class FTSEventPipelineCoordinator final
 {
@@ -115,6 +121,9 @@ public:
     FTSPipelineAdmissionResult SubmitGift(FTSGiftInput Input);
 
     [[nodiscard]]
+    FTSPipelineAdmissionResult SubmitMember(FTSMemberInput Input);
+
+    [[nodiscard]]
     FTSChatDispatchResult BeginChatProcessing();
 
     [[nodiscard]]
@@ -131,6 +140,9 @@ public:
 
     [[nodiscard]]
     FTSGiftDispatchResult BeginGiftProcessing();
+
+    [[nodiscard]]
+    FTSMemberDispatchResult BeginMemberProcessing();
 
     [[nodiscard]]
     FTSChatProcessingCompletionResult CompleteChatProcessing(
@@ -164,6 +176,12 @@ public:
 
     [[nodiscard]]
     FTSGiftProcessingCompletionResult CompleteGiftProcessing(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    FTSMemberProcessingCompletionResult CompleteMemberProcessing(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
     );
@@ -446,6 +464,50 @@ public:
         return true;
     }
 
+    template <typename TCallback>
+    [[nodiscard]]
+    bool VisitMemberPayloadForEmission(
+        FTSEmissionId EmissionId,
+        TCallback&& Callback
+    ) const
+    {
+        FTSEmissionBinding Binding;
+        const bool bFoundBinding = BindingRegistry.Visit(
+            EmissionId,
+            [&](const FTSEmissionBinding& StoredBinding)
+            {
+                Binding = StoredBinding;
+            }
+        );
+
+        if (!bFoundBinding)
+        {
+            return false;
+        }
+
+        if (Binding.FamilyKind != ETSEventFamilyKind::Member ||
+            Binding.ExpectedFlow != ETSEventFlow::MemberIdentity)
+        {
+            throw std::logic_error(
+                "Emission binding is not a Member binding"
+            );
+        }
+
+        const bool bFoundPayload = MemberPayloadRepository.Visit(
+            Binding.PayloadHandle,
+            std::forward<TCallback>(Callback)
+        );
+
+        if (!bFoundPayload)
+        {
+            throw std::logic_error(
+                "Member binding references a missing payload"
+            );
+        }
+
+        return true;
+    }
+
     [[nodiscard]]
     std::size_t GetBindingCount() const noexcept;
 
@@ -466,6 +528,9 @@ public:
 
     [[nodiscard]]
     std::size_t GetGiftPayloadCount() const noexcept;
+
+    [[nodiscard]]
+    std::size_t GetMemberPayloadCount() const noexcept;
 
 private:
     template <typename TPayload, typename TRepository>
@@ -520,8 +585,9 @@ private:
     FTSLikePayloadRepository LikePayloadRepository;
     FTSRoomUserPayloadRepository RoomUserPayloadRepository;
     FTSGiftPayloadRepository GiftPayloadRepository;
+    FTSMemberPayloadRepository MemberPayloadRepository;
     FTSEmissionBindingRegistry BindingRegistry;
-    // Las seis familias operativas comparten el ready porque el core posee un único
+    // Las siete familias operativas comparten el ready porque el core posee un único
     // InFlight.
     std::optional<FTSEmissionEnvelope> PendingReadyEmission;
 };
