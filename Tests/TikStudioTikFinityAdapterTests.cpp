@@ -6,7 +6,7 @@ int main()
     using namespace TikStudio::Tests;
 
     FTSTestCases Tests;
-    Tests.reserve(52);
+    Tests.reserve(62);
 
     RegisterTikFinityChatAdapterTests(Tests);
     RegisterTikFinityFollowAdapterTests(Tests);
@@ -14,6 +14,7 @@ int main()
     RegisterTikFinityLikeAdapterTests(Tests);
     RegisterTikFinityRoomUserAdapterTests(Tests);
     RegisterTikFinityGiftAdapterTests(Tests);
+    RegisterTikFinityMemberAdapterTests(Tests);
 
     return RunTests(Tests);
 }

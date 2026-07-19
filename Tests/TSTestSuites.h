@@ -22,6 +22,8 @@ namespace TikStudio::Tests
     void RegisterGiftPipelineFamilyTests(FTSTestCases& Tests);
     void RegisterGiftPipelineCoordinatorTests(FTSTestCases& Tests);
 
+    void RegisterMemberPipelineTests(FTSTestCases& Tests);
+
     void RegisterPipelineInfrastructureTests(FTSTestCases& Tests);
 
     void RegisterChatHostTests(FTSTestCases& Tests);
@@ -43,4 +45,5 @@ namespace TikStudio::Tests
     void RegisterTikFinityLikeAdapterTests(FTSTestCases& Tests);
     void RegisterTikFinityRoomUserAdapterTests(FTSTestCases& Tests);
     void RegisterTikFinityGiftAdapterTests(FTSTestCases& Tests);
+    void RegisterTikFinityMemberAdapterTests(FTSTestCases& Tests);
 }

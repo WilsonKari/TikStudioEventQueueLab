@@ -3,12 +3,12 @@
 Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `ba71fbc`
-(`feat(host): complete gift vertical integration`).
+rama `main`, partiendo de HEAD `51d73b5`
+(`fix(host): harden cycle exception safety and coverage`).
 
-El propietario certificó este baseline con 245 PASS / 0 FAIL. Los cambios del hardening
-posterior a la auditoría permanecen locales y sin commit; durante su implementación no
-se compiló ni se ejecutaron pruebas.
+El propietario certificó este baseline con 253 PASS / 0 FAIL. Los cambios de
+MemberIdentity A permanecen locales y sin commit; durante su implementación no se
+compiló ni se ejecutaron pruebas.
 
 ## 1. Objetivo general
 
@@ -80,9 +80,9 @@ Share → FTSTikFinityShareConverter           [implementado en 4E.1]
 Like → FTSTikFinityLikeConverter             [publicado en 4F.1]
 RoomUser → FTSTikFinityRoomUserConverter     [publicado en 4G.1]
 Gift → FTSTikFinityGiftConverter             [publicado en 4H.1]
-Member → converter tipado                    [pendiente]
+Member → FTSTikFinityMemberConverter         [implementado localmente en 4I.1]
         ↓
-FTS*Input portable                            [Chat, Follow, Share, Like, RoomUser y Gift implementados]
+FTS*Input portable                            [las siete familias tienen conversión tipada]
         ↓
 composición externa → Event Host             [Chat, Follow, Share, Like, RoomUser y Gift implementados]
 ```
@@ -108,7 +108,8 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Chat, Follow, Share, Like, RoomUser y Gift disponen del recorrido
-portable completo hasta Host y lifecycle. Member continúa sin implementación semántica.
+portable completo hasta Host y lifecycle. Member dispone localmente de conversión,
+payload y decisión directa; repositorio, Coordinator, Host y lifecycle siguen pendientes.
 
 Decisión arquitectónica aprobada:
 
@@ -136,8 +137,9 @@ Share    → Share | ShareMilestone
 ```
 
 Son “flujos sintéticos” porque representan una decisión semántica de la familia. Chat,
-Follow, Share, Like, RoomUser y Gift producen sus flujos directos; todavía no existe
-lógica para los flujos derivados ni para Member. Los siete archivos de
+Follow, Share, Like, RoomUser y Gift producen sus flujos directos completos. Member
+produce localmente sólo `MemberIdentity`; todavía no existe lógica para ninguno de los
+flujos derivados, incluido `MemberNormalized`. Los siete archivos de
 `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
 implementación.
 
@@ -224,6 +226,8 @@ texto JSON TikFinity                                [implementado en Adapter]
 → PostGift y PostGiftCompletion en Host                    [publicados en 4H.3]
 → Gift en FIFO global, owner y dispatch variant            [publicado en 4H.3]
 → certificación JSON Gift → Host                           [publicada en 4H.3]
+→ FTSTikFinityMemberConverter                              [implementado localmente en 4I.1]
+→ FTSMemberPayload y candidato directo MemberIdentity      [implementados localmente en 4I.1]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
@@ -231,7 +235,9 @@ Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
 Gift A → B → C                                              [completo y publicado]
-Member                                                      [pendiente]
+MemberIdentity A                                            [implementado localmente]
+Member B → C                                                [pendiente]
+MemberNormalized                                            [reservado]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -281,7 +287,10 @@ Host 41, Adapter 42, JSON Decoder 20, Checklist 10 y Vertical Integration 5. La 
 41, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 5: 224 PASS / 0
 FAIL. La Fase 4H.2 fue publicada en `427578b`. La Fase 4H.3 fue publicada en `ba71fbc`;
 el propietario certificó Core 10, Pipeline 98, Host 49, Adapter 52, JSON Decoder 20,
-Checklist 10 y Vertical Integration 6: 245 PASS / 0 FAIL.
+Checklist 10 y Vertical Integration 6: 245 PASS / 0 FAIL. El hardening posterior a la
+auditoría fue publicado en `51d73b5`; el propietario certificó Core 10, Pipeline 98,
+Host 57, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6: 253 PASS /
+0 FAIL. MemberIdentity A está implementado localmente y no fue compilado ni ejecutado.
 
 ## 4. Contratos públicos actuales
 
@@ -316,8 +325,8 @@ opcionales ausentes permanecen como `nullopt`; strings, booleanos, enteros, arra
 objetos anidados exigen su tipo exacto. Los seis eventos basados en usuario común leen
 los campos directamente desde `data`; `roomUser` conserva la estructura distinta
 `data.topViewers[].user`. El decoder produce los contratos decodificados que consumen
-los converters Chat, Follow, Share, Like, RoomUser y Gift; todavía no existe converter
-para Member.
+los converters Chat, Follow, Share, Like, RoomUser, Gift y Member. El converter Member
+es local a 4I.1 y no modifica el decoder.
 
 `FTSTikFinityMappedEventFormatter` genera una representación estable para diagnóstico.
 `FTSTikFinitySevenEventChecklist` cuenta frames válidos e inválidos por evento y mantiene
@@ -930,9 +939,9 @@ Targets explícitos, sin `file(GLOB ...)`:
   públicamente con Pipeline y privadamente con `Threads::Threads`.
 - `TikStudioEventSimulator` (STATIC): enlaza con Core; actualmente placeholder.
 - `TikStudioTikFinityAdapter` (STATIC): publica contratos, decoder, formatter,
-  checklist y converters Chat/Follow/Share/Like/RoomUser/Gift; enlaza públicamente sólo con
-  Core y privadamente con `nlohmann_json::nlohmann_json`. El cliente de transporte
-  sigue siendo placeholder.
+  checklist y converters Chat/Follow/Share/Like/RoomUser/Gift/Member; enlaza
+  públicamente sólo con Core y privadamente con `nlohmann_json::nlohmann_json`. El
+  cliente de transporte sigue siendo placeholder.
 - `TikStudioEventConsole` (executable): enlaza los tres targets; actualmente sólo
   imprime `TikStudioEventQueueLab ready.`.
 - `TikStudioEventCoreTests` (executable): enlaza únicamente con Core y está registrado
@@ -957,9 +966,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. En el baseline publicado de 4H.2, Pipeline, Host, Adapter y Vertical
-registran respectivamente 98, 41, 52 y 5 casos. Los cambios locales de 4H.3 elevan Host
-a 49 y Vertical a 6, sin modificar Pipeline ni Adapter.
+automático. El baseline publicado y certificado en `51d73b5` registra Pipeline 98,
+Host 57, Adapter 52 y Vertical Integration 6. MemberIdentity A añade localmente dos
+casos Pipeline y diez Adapter, sin modificar Host ni Vertical Integration.
 
 La estructura familiar queda así:
 
@@ -970,7 +979,7 @@ Tests/Share/ → Pipeline, Host, Adapter y certificación vertical Share
 Tests/Like/ → Pipeline, Host, Adapter y certificación vertical Like
 Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
 Tests/Gift/ → Pipeline, Host, Adapter y certificación vertical Gift
-Tests/Member/ → sólo .gitkeep
+Tests/Member/ → Adapter tipado y decisión familiar MemberIdentity A
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
 ```
 
@@ -1070,11 +1079,14 @@ Checklist 10 y Vertical Integration 5. La Fase 4H.2 añadió doce escenarios Coo
 Gift y fue publicada en `427578b`; Pipeline registra 98 casos. La Fase 4H.3 añadió ocho
 escenarios Host Gift y una certificación JSON Gift → Host, fue publicada en `ba71fbc` y
 el propietario certificó: Core 10, Pipeline 98, Host 49, Adapter 52, JSON Decoder 20,
-Checklist 10 y Vertical Integration 6; 245 PASS / 0 FAIL. El hardening local posterior
-añade ocho casos Host: `Failed` para las seis familias, retención FIFO ante mantenimiento
-lanzable y partición de expiraciones anterior a una completion. Sin ejecución local,
-los runners registran Core 10, Pipeline 98, Host 57, Adapter 52, JSON Decoder 20,
-Checklist 10 y Vertical Integration 6; 253 casos.
+Checklist 10 y Vertical Integration 6; 245 PASS / 0 FAIL. El hardening posterior
+añadió ocho casos Host: `Failed` para las seis familias, retención FIFO ante
+mantenimiento lanzable y partición de expiraciones anterior a una completion. Fue
+publicado en `51d73b5` y el propietario certificó Core 10, Pipeline 98, Host 57,
+Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6; 253 PASS / 0 FAIL.
+MemberIdentity A añade localmente dos casos Pipeline y diez Adapter. Sin ejecución
+local, los runners registran Core 10, Pipeline 100, Host 57, Adapter 62, JSON Decoder
+20, Checklist 10 y Vertical Integration 6; 265 casos.
 
 ## 10. Historial de tareas y commits
 
@@ -1739,12 +1751,29 @@ Checklist 10 y Vertical Integration 6; 253 casos.
   Host; no añade API ni sincronización de shutdown.
 - Mantiene pendiente para una fase independiente la garantía de excepción entre Core,
   bindings y repositorios después de un commit autoritativo.
-- Los cambios permanecen locales y sin commit; no se compiló ni se ejecutaron pruebas.
+- Fue publicado en `51d73b5` como
+  `fix(host): harden cycle exception safety and coverage`.
+- El propietario certificó 253 PASS / 0 FAIL: Core 10, Pipeline 98, Host 57, Adapter
+  52, JSON Decoder 20, Checklist 10 y Vertical Integration 6.
+
+### Fase 4I.1 — MemberIdentity A
+
+- Añade un converter Member sin estado que exige el evento exacto `member`, data,
+  usuario, identidad y `ActionId` no negativo representable como `int32_t`.
+- Reutiliza el converter común de usuario y sólo publica `FTSMemberInput` cuando toda
+  la conversión es válida; los rechazos conservan `Input` vacío.
+- Añade `FTSMemberPayload` y una familia sin estado que produce exclusivamente la
+  pareja `Member / MemberIdentity` con los defaults genéricos de admisión.
+- `MemberNormalized` continúa reservado: no existe normalización, deduplicación,
+  acumulación ni estado entre llamadas. Member B y C permanecen pendientes.
+- Añade diez casos Adapter y dos casos Pipeline. Los runners registran localmente
+  Adapter 62 y Pipeline 100; no se compiló ni se ejecutaron pruebas.
+- Los cambios permanecen locales y sin commit.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `ba71fbc` más los cambios locales del hardening posterior a la auditoría.
+  `51d73b5` más los cambios locales de MemberIdentity A.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1776,7 +1805,9 @@ Checklist 10 y Vertical Integration 6; 253 casos.
   4G.3 publicó RoomUser C en `f103f75` y fue certificada con 212 PASS / 0 FAIL. La Fase
   4H.1 publicó Gift A en `0a75fb8` y fue certificada con 224 PASS / 0 FAIL. La Fase
   4H.2 publicó Gift B en `427578b`. La Fase 4H.3 publicó Gift C en `ba71fbc` y fue
-  certificada con 245 PASS / 0 FAIL; no continuar automáticamente con Member.
+  certificada con 245 PASS / 0 FAIL. El hardening fue publicado en `51d73b5` y
+  certificado con 253 PASS / 0 FAIL. MemberIdentity A permanece local; no continuar
+  automáticamente con Member B.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

@@ -6,7 +6,7 @@ int main()
     using namespace TikStudio::Tests;
 
     FTSTestCases Tests;
-    Tests.reserve(98);
+    Tests.reserve(100);
 
     RegisterChatPipelineFamilyTests(Tests);
     RegisterFollowPipelineFamilyTests(Tests);
@@ -14,6 +14,7 @@ int main()
     RegisterLikePipelineFamilyTests(Tests);
     RegisterRoomUserPipelineFamilyTests(Tests);
     RegisterGiftPipelineFamilyTests(Tests);
+    RegisterMemberPipelineTests(Tests);
 
     RegisterPipelineInfrastructureTests(Tests);
 
