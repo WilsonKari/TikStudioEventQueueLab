@@ -3,15 +3,15 @@
 Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo del baseline publicado `68537d6`
-(`feat(host): complete member identity vertical integration`).
+rama `main`, partiendo del baseline publicado `8528c02`
+(`refactor(pipeline): align member payload layout and shared invariants`).
 
 El propietario certificó este baseline con Core 10, Pipeline 112, Host 66, Adapter 62,
 JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL.
 
-La limpieza final de simetría del payload Member y de comentarios compartidos está
-implementada localmente sobre ese baseline, sin certificar, publicar ni ejecutar
-compilación o pruebas.
+El renombre nominal del flujo directo `MemberIdentity` a `Member` está implementado
+localmente sobre ese baseline, sin certificar, publicar ni ejecutar compilación o
+pruebas. El ordinal, los settings y el comportamiento permanecen intactos.
 
 ## 1. Objetivo general
 
@@ -111,7 +111,8 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Las siete familias disponen del recorrido portable completo
-hasta Host y lifecycle; MemberIdentity C completa el último tramo publicado de Member.
+hasta Host y lifecycle; la fase histórica MemberIdentity C completó el último tramo
+publicado de Member.
 
 Decisión arquitectónica aprobada:
 
@@ -133,15 +134,17 @@ Chat     → Chat
 Gift     → Gift | GiftCombo
 Follow   → Follow
 Like     → Like | LikeUser
-Member   → MemberIdentity | MemberNormalized
+Member   → Member | MemberNormalized
 RoomUser → RoomUser | RoomUserMilestone | RoomUserTop1Change
 Share    → Share | ShareMilestone
 ```
 
 Son “flujos sintéticos” porque representan una decisión semántica de la familia. Las
-siete familias producen sus flujos directos completos. Member produce sólo
-`MemberIdentity`; todavía no existe lógica para ninguno de los flujos derivados,
-incluido `MemberNormalized`. Los siete archivos de
+siete familias producen sus flujos directos completos. Member produce sólo `Member`;
+todavía no existe lógica para ninguno de los flujos derivados, incluido
+`MemberNormalized`. El flujo directo se denominaba `MemberIdentity` durante las fases
+4I.1–4I.3 y fue renombrado posteriormente porque `Member` comunica el evento base,
+mientras “Identity” describía un detalle del payload. Los siete archivos de
 `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
 implementación.
 
@@ -229,9 +232,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → Gift en FIFO global, owner y dispatch variant            [publicado en 4H.3]
 → certificación JSON Gift → Host                           [publicada en 4H.3]
 → FTSTikFinityMemberConverter                              [publicado en 4I.1]
-→ FTSMemberPayload y candidato directo MemberIdentity      [publicados en 4I.1]
-→ repositorio, binding y admisión MemberIdentity           [publicados en 4I.2]
-→ dispatch y completion MemberIdentity                     [publicados en 4I.2]
+→ FTSMemberPayload y candidato directo Member              [publicados originalmente en 4I.1]
+→ repositorio, binding y admisión Member                   [publicados originalmente en 4I.2]
+→ dispatch y completion Member                             [publicados originalmente en 4I.2]
 → lifecycle mixto de siete familias                        [generalizado en 4I.2]
 → PostMember y PostMemberCompletion en Host                [publicados en 4I.3]
 → Member en FIFO global, owner y dispatch variant          [publicado en 4I.3]
@@ -243,7 +246,7 @@ Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
 Gift A → B → C                                              [completo y publicado]
-MemberIdentity A → B → C                                    [completo y publicado]
+Member A → B → C                                            [completo y publicado]
 MemberNormalized                                            [reservado]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -304,7 +307,8 @@ certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklis
 Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6`;
 el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
 Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza final de simetría
-permanece local, sin certificar ni publicar.
+fue publicada en `8528c02`; el renombre nominal a `Member` permanece local, sin
+certificar ni publicar.
 
 ## 4. Contratos públicos actuales
 
@@ -699,7 +703,7 @@ continúa siendo work-conserving.
 
 `MemberInput`, `MemberCompletion` y el dispatch Member se añadieron al final de sus
 enums y variants para preservar los valores e índices de las seis alternativas
-publicadas previamente. El Host sólo enruta `MemberIdentity`; no existe una rama para
+publicadas previamente. El Host sólo enruta `Member`; no existe una rama para
 `MemberNormalized`.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
@@ -804,7 +808,7 @@ GiftCombo:          80, 60000,  1000
 Follow:             60, 30000,    10
 Like:               25, 10000,     1
 LikeUser:           10,  5000,     5
-MemberIdentity:      5,  6000,    10
+Member:              5,  6000,    10
 MemberNormalized:   20, 12000,     1
 RoomUser:           35, 15000,     1
 RoomUserMilestone:  30,  8000,     1
@@ -986,9 +990,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. El baseline publicado y certificado en `68537d6` registra Pipeline 112,
-Host 66, Adapter 62 y Vertical Integration 7. MemberIdentity C aporta nueve casos Host
-y una certificación vertical, sin modificar los demás runners.
+automático. El baseline publicado y certificado en `8528c02` registra Pipeline 112,
+Host 66, Adapter 62 y Vertical Integration 7. La fase histórica MemberIdentity C aporta
+nueve casos Host y una certificación vertical, sin modificar los demás runners.
 
 La estructura familiar queda así:
 
@@ -1110,8 +1114,9 @@ Pipeline 100, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Inte
 certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y
 Vertical Integration 6; 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6`;
 el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
-Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior no
-modifica runners ni conteos y permanece local, sin certificar ni publicar.
+Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior fue
+publicada en `8528c02`, no modificó runners ni conteos y conserva la certificación de
+287 PASS / 0 FAIL. El renombre nominal del flujo permanece local.
 
 ## 10. Historial de tareas y commits
 
@@ -1838,13 +1843,26 @@ modifica runners ni conteos y permanece local, sin certificar ni publicar.
   de autoridad compartidas sin cambiar funciones ni comportamiento.
 - Sincroniza la documentación con el baseline publicado `68537d6` y la certificación
   del propietario de 287 PASS / 0 FAIL.
+- Fue publicada en `8528c02` como
+  `refactor(pipeline): align member payload layout and shared invariants`.
+- El propietario certificó el baseline con 287 PASS / 0 FAIL: Core 10, Pipeline 112,
+  Host 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7.
+
+### Refactor semántico — `MemberIdentity` → `Member`
+
+- Renombra exclusivamente el flujo directo a `Member` en la misma posición del enum;
+  `MemberNormalized`, los settings y los trece valores permanecen intactos.
+- Alinea Core, familia, Coordinator, Host y expectativas de pruebas con la pareja
+  simétrica `Member / Member`, sin cambiar payloads, lifecycle ni conteos.
+- `MemberIdentity` se conserva sólo al narrar las fases y commits donde era el nombre
+  vigente del flujo.
 - Los cambios permanecen locales, sin certificar ni publicar; no se compiló ni se
-  ejecutaron pruebas durante esta limpieza.
+  ejecutaron pruebas durante este refactor.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `68537d6` más la limpieza local de simetría y documentación.
+  `8528c02` más el renombre local del flujo directo `MemberIdentity` a `Member`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1880,8 +1898,9 @@ modifica runners ni conteos y permanece local, sin certificar ni publicar.
   certificado con 253 PASS / 0 FAIL. MemberIdentity A fue publicado en `51cba3a` y
   certificado con 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226` y
   certificado con 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6` y
-  certificado con 287 PASS / 0 FAIL. La limpieza final permanece local; no continuar
-  automáticamente con `MemberNormalized` ni otros flujos derivados.
+  certificado con 287 PASS / 0 FAIL. La limpieza final fue publicada en `8528c02`; el
+  flujo vigente es `Member` y su renombre permanece local. No continuar automáticamente
+  con `MemberNormalized` ni otros flujos derivados.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

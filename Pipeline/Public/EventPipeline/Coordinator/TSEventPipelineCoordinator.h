@@ -486,7 +486,7 @@ public:
         }
 
         if (Binding.FamilyKind != ETSEventFamilyKind::Member ||
-            Binding.ExpectedFlow != ETSEventFlow::MemberIdentity)
+            Binding.ExpectedFlow != ETSEventFlow::Member)
         {
             throw std::logic_error(
                 "Emission binding is not a Member binding"

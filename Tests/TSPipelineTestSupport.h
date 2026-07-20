@@ -600,7 +600,7 @@ namespace TikStudio::Tests
     {
         FTSEventQueueSettings Settings;
         FTSFlowQueueSettings* MemberSettings =
-            Settings.TryGetFlowSettings(ETSEventFlow::MemberIdentity);
+            Settings.TryGetFlowSettings(ETSEventFlow::Member);
         Require(MemberSettings != nullptr, "Member settings must be available");
         MemberSettings->bEnabled = bEnabled;
         MemberSettings->MaxSlots = MaxSlots;
@@ -617,7 +617,7 @@ namespace TikStudio::Tests
     {
         FTSEventQueueSettings Settings = MakeMemberSettings(true, 10);
         FTSFlowQueueSettings* MemberSettings =
-            Settings.TryGetFlowSettings(ETSEventFlow::MemberIdentity);
+            Settings.TryGetFlowSettings(ETSEventFlow::Member);
         Require(MemberSettings != nullptr, "Member settings must be available");
         MemberSettings->TTL = TTL;
         MemberSettings->ExpirePolicy = ExpirePolicy;
@@ -795,7 +795,7 @@ namespace TikStudio::Tests
         );
         Require(
             Admission.EnqueueResult->AdmittedEmission.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Admission.EnqueueResult->AdmittedEmission.Flow !=
                     ETSEventFlow::MemberNormalized,
             "Accepted Member admission must use the identity flow"
@@ -911,7 +911,7 @@ namespace TikStudio::Tests
         );
         Require(
             Dispatch.Dispatch->Emission.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Dispatch.Dispatch->Emission.Flow !=
                     ETSEventFlow::MemberNormalized,
             "A ready Member must preserve the identity flow"

@@ -579,15 +579,15 @@ namespace
 
         {
             FTSEventQueueSettings Settings = MakeSettings(true, false);
-            ConfigureFlow(Settings, ETSEventFlow::MemberIdentity, 0, 0ms, 1);
+            ConfigureFlow(Settings, ETSEventFlow::Member, 0, 0ms, 1);
 
             FControlledClock Clock;
             TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
 
             const FTSEnqueueResult A = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::MemberIdentity)
+                MakeRequest(ETSEventFlow::Member)
             );
-            RequireAccepted(A, ETSEventFlow::MemberIdentity, "Cancel capacity A");
+            RequireAccepted(A, ETSEventFlow::Member, "Cancel capacity A");
             RequireReadyEmission(
                 A.AutoPumpOutcome,
                 A.AdmittedEmission,
@@ -595,7 +595,7 @@ namespace
             );
 
             const FTSEnqueueResult Full = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::MemberIdentity)
+                MakeRequest(ETSEventFlow::Member)
             );
             Require(
                 Full.Status == ETSEnqueueStatus::RejectedAtCapacity,
@@ -611,11 +611,11 @@ namespace
             );
 
             const FTSEnqueueResult AfterCancel = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::MemberIdentity)
+                MakeRequest(ETSEventFlow::Member)
             );
             RequireAccepted(
                 AfterCancel,
-                ETSEventFlow::MemberIdentity,
+                ETSEventFlow::Member,
                 "Capacity after Cancel"
             );
         }

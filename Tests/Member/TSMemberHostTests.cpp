@@ -44,7 +44,7 @@ namespace
             ChatTTL
         );
         FTSFlowQueueSettings* MemberSettings =
-            Settings.TryGetFlowSettings(ETSEventFlow::MemberIdentity);
+            Settings.TryGetFlowSettings(ETSEventFlow::Member);
         Require(MemberSettings != nullptr, "Member settings must exist");
         MemberSettings->bEnabled = true;
         MemberSettings->MaxSlots = MemberMaxSlots;
@@ -104,7 +104,7 @@ namespace
             RequireMemberDispatch(Cycle, "Member Auto Pump");
         Require(
             Dispatch.Emission.EmissionId == EmissionId &&
-                Dispatch.Emission.Flow == ETSEventFlow::MemberIdentity &&
+                Dispatch.Emission.Flow == ETSEventFlow::Member &&
                 Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
             "Member Auto Pump dispatch identity and direct flow"
         );
@@ -410,7 +410,7 @@ namespace
             RequireMemberDispatch(LikeCompletion, "Core selects Member");
         Require(
             MemberDispatch.Emission.EmissionId == MemberId &&
-                MemberDispatch.Emission.Flow == ETSEventFlow::MemberIdentity &&
+                MemberDispatch.Emission.Flow == ETSEventFlow::Member &&
                 MemberDispatch.Emission.Flow !=
                     ETSEventFlow::MemberNormalized,
             "Member must be the final direct-flow dispatch"
@@ -725,12 +725,12 @@ namespace
             Lifecycle.size() == 1 &&
                 Lifecycle.front().Envelope.EmissionId == ExpiringId &&
                 Lifecycle.front().Envelope.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Lifecycle.front().Envelope.Flow !=
                     ETSEventFlow::MemberNormalized &&
                 Lifecycle.front().Reason ==
                     ETSEmissionTerminalReason::ExpiredDiscard,
-            "Replacement cycle must report expired MemberIdentity"
+            "Replacement cycle must report expired Member"
         );
         RequireBusyPendingCycle(
             ReplacementCycle,

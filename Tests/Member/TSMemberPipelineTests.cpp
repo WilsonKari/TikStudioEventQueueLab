@@ -37,7 +37,7 @@ namespace
         return Input;
     }
 
-    void RequireDirectMemberIdentityCandidate(
+    void RequireDirectMemberCandidate(
         const TTSFamilyDecision<FTSMemberPayload>& Decision,
         const FTSMemberInput& ExpectedInput,
         const std::string& Context
@@ -50,7 +50,7 @@ namespace
             Context + ": FamilyKind"
         );
         Require(
-            Candidate.EnqueueRequest.Flow == ETSEventFlow::MemberIdentity,
+            Candidate.EnqueueRequest.Flow == ETSEventFlow::Member,
             Context + ": direct flow"
         );
         Require(
@@ -74,13 +74,13 @@ namespace
         );
     }
 
-    void TestMemberProducesDirectMemberIdentityCandidate()
+    void TestMemberProducesDirectMemberCandidate()
     {
         const FTSMemberInput Input = MakeMemberFamilyInput(73, "direct");
         const TTSFamilyDecision<FTSMemberPayload> Decision =
             FTSMemberFamily::Decide(Input);
 
-        RequireDirectMemberIdentityCandidate(
+        RequireDirectMemberCandidate(
             Decision,
             Input,
             "Member direct candidate"
@@ -100,12 +100,12 @@ namespace
         const TTSFamilyDecision<FTSMemberPayload> SecondDecision =
             FTSMemberFamily::Decide(Second);
 
-        RequireDirectMemberIdentityCandidate(
+        RequireDirectMemberCandidate(
             FirstDecision,
             First,
             "First independent Member decision"
         );
-        RequireDirectMemberIdentityCandidate(
+        RequireDirectMemberCandidate(
             SecondDecision,
             Second,
             "Second independent Member decision"
@@ -139,9 +139,9 @@ namespace
             Admission.EnqueueResult->AdmittedEmission;
         Require(Envelope.EmissionId != 0, Context + ": identity");
         Require(
-            Envelope.Flow == ETSEventFlow::MemberIdentity &&
+            Envelope.Flow == ETSEventFlow::Member &&
                 Envelope.Flow != ETSEventFlow::MemberNormalized,
-            Context + ": MemberIdentity flow"
+            Context + ": Member flow"
         );
         return Envelope.EmissionId;
     }
@@ -180,7 +180,7 @@ namespace
                             Binding.FamilyKind ==
                                 ETSEventFamilyKind::Member &&
                             Binding.ExpectedFlow ==
-                                ETSEventFlow::MemberIdentity &&
+                                ETSEventFlow::Member &&
                             Binding.ExpectedFlow !=
                                 ETSEventFlow::MemberNormalized &&
                             Binding.PayloadHandle.Value != 0 &&
@@ -256,7 +256,7 @@ namespace
         const FTSMemberProcessingDispatch& Dispatch = *Result.Dispatch;
         Require(
             Dispatch.Emission.EmissionId == ExpectedEmissionId &&
-                Dispatch.Emission.Flow == ETSEventFlow::MemberIdentity &&
+                Dispatch.Emission.Flow == ETSEventFlow::Member &&
                 Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
             Context + ": dispatch route"
         );
@@ -288,7 +288,7 @@ namespace
                 Completion.ConfirmResult->LifecycleEvents.front()
                         .Envelope.EmissionId == EmissionId &&
                 Completion.ConfirmResult->LifecycleEvents.front()
-                        .Envelope.Flow == ETSEventFlow::MemberIdentity &&
+                        .Envelope.Flow == ETSEventFlow::Member &&
                 Completion.ConfirmResult->LifecycleEvents.front()
                         .Envelope.Flow != ETSEventFlow::MemberNormalized &&
                 Completion.ConfirmResult->LifecycleEvents.front().Reason ==
@@ -313,7 +313,7 @@ namespace
                 Admission.EnqueueResult->AutoPumpOutcome.ReadyEmission
                         .EmissionId == EmissionId &&
                 Admission.EnqueueResult->AutoPumpOutcome.ReadyEmission.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Coordinator.PeekPendingReadyFamilyKind() ==
                     ETSEventFamilyKind::Member,
             "First Member must Auto Pump"
@@ -472,7 +472,7 @@ namespace
         );
     }
 
-    void TestDisabledMemberIdentityRejectsWithoutLeaks()
+    void TestDisabledMemberRejectsWithoutLeaks()
     {
         FTSEventPipelineCoordinator Coordinator(MakeMemberSettings(false, 1));
         const FTSPipelineAdmissionResult Admission =
@@ -483,7 +483,7 @@ namespace
                 Admission.EnqueueResult.has_value() &&
                 Admission.EnqueueResult->Status ==
                     ETSEnqueueStatus::RejectedDisabled,
-            "Disabled MemberIdentity must reject"
+            "Disabled Member must reject"
         );
         Require(
             Coordinator.GetBindingCount() == 0 &&
@@ -495,7 +495,7 @@ namespace
                 Coordinator.GetRoomUserPayloadCount() == 0 &&
                 Coordinator.GetGiftPayloadCount() == 0 &&
                 !Coordinator.PeekPendingReadyFamilyKind().has_value(),
-            "Disabled MemberIdentity must not leak authorities"
+            "Disabled Member must not leak authorities"
         );
     }
 
@@ -543,7 +543,7 @@ namespace
             PumpResult.Outcome.Status == ETSPumpStatus::EmissionReady &&
                 PumpResult.Outcome.ReadyEmission.EmissionId == FirstId &&
                 PumpResult.Outcome.ReadyEmission.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Coordinator.PeekPendingReadyFamilyKind() ==
                     ETSEventFamilyKind::Member,
             "Explicit Pump must select preserved Member"
@@ -805,7 +805,7 @@ namespace
                             .Envelope.EmissionId == MemberId &&
                     Completion.CancelResult->LifecycleEvents.front()
                             .Envelope.Flow ==
-                        ETSEventFlow::MemberIdentity &&
+                        ETSEventFlow::Member &&
                     Completion.CancelResult->LifecycleEvents.front()
                             .Envelope.Flow !=
                         ETSEventFlow::MemberNormalized &&
@@ -1145,7 +1145,7 @@ namespace
                 ChatCompletion.ConfirmResult->AutoPumpOutcome.ReadyEmission
                         .EmissionId == MemberId &&
                 ChatCompletion.ConfirmResult->AutoPumpOutcome.ReadyEmission
-                        .Flow == ETSEventFlow::MemberIdentity &&
+                        .Flow == ETSEventFlow::Member &&
                 Coordinator.PeekPendingReadyFamilyKind() ==
                     ETSEventFamilyKind::Member,
             "Chat completion must capture pending Member"
@@ -1248,7 +1248,7 @@ namespace
                 Expirations.LifecycleEvents.front().Envelope.EmissionId ==
                     MemberId &&
                 Expirations.LifecycleEvents.front().Envelope.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Expirations.LifecycleEvents.front().Envelope.Flow !=
                     ETSEventFlow::MemberNormalized &&
                 Expirations.LifecycleEvents.front().Reason ==
@@ -1302,8 +1302,8 @@ namespace TikStudio::Tests
     void RegisterMemberPipelineFamilyTests(FTSTestCases& Tests)
     {
         Tests.push_back({
-            "Member produces direct MemberIdentity candidate",
-            &TestMemberProducesDirectMemberIdentityCandidate
+            "Member produces direct Member candidate",
+            &TestMemberProducesDirectMemberCandidate
         });
         Tests.push_back({
             "Member metadata does not activate MemberNormalized",
@@ -1315,7 +1315,7 @@ namespace TikStudio::Tests
     {
         Tests.push_back({"Member first admission Auto Pumps", &TestMemberFirstAdmissionAutoPumps});
         Tests.push_back({"Member second admission while busy", &TestMemberSecondAdmissionWhileBusy});
-        Tests.push_back({"Disabled MemberIdentity rejects without leaks", &TestDisabledMemberIdentityRejectsWithoutLeaks});
+        Tests.push_back({"Disabled Member rejects without leaks", &TestDisabledMemberRejectsWithoutLeaks});
         Tests.push_back({"Member capacity rejection removes provisional payload", &TestMemberCapacityRejectionRemovesProvisionalPayload});
         Tests.push_back({"Member dispatch owns snapshot and is one shot", &TestMemberDispatchOwnsSnapshotAndIsOneShot});
         Tests.push_back({"Wrong-family Begin preserves ready Member", &TestWrongFamilyBeginPreservesReadyMember});

@@ -2,8 +2,8 @@
 
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
 familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
-integración vertical JSON → Host. MemberIdentity A → B → C está completo y
-publicado en `68537d6`.
+integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
+están completas y publicadas; el baseline de la limpieza posterior es `8528c02`.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -48,12 +48,14 @@ Vertical Integration 6; esa cobertura conserva el FIFO si falla el mantenimiento
 certifica la separación entre `DueExpirations` y el lifecycle de una completion.
 
 Member conserva `ActionId` y el usuario portable completo y produce exclusivamente
-`ETSEventFlow::MemberIdentity`. `MemberNormalized` permanece reservado: no existe
+`ETSEventFlow::Member`. El flujo directo se denominaba `MemberIdentity` durante las
+fases 4I.1–4I.3 y fue renombrado porque `Member` describe el evento base, mientras
+“Identity” describía un detalle del payload. `MemberNormalized` permanece reservado: no existe
 normalización, deduplicación, acumulación ni estado entre decisiones. El baseline
-publicado `68537d6` fue certificado por el propietario con Core 10, Pipeline 112, Host
+publicado `8528c02` fue certificado por el propietario con Core 10, Pipeline 112, Host
 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0
-FAIL. La limpieza posterior de la ruta pública del payload Member permanece local, sin
-certificar ni publicar, y no modifica pruebas ni conteos.
+FAIL. El renombre nominal permanece local, sin certificar ni publicar, y no modifica
+pruebas ni conteos.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

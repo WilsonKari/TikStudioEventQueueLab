@@ -162,7 +162,7 @@ namespace
             (FamilyKind == ETSEventFamilyKind::Gift &&
                 Flow == ETSEventFlow::Gift) ||
             (FamilyKind == ETSEventFamilyKind::Member &&
-                Flow == ETSEventFlow::MemberIdentity);
+                Flow == ETSEventFlow::Member);
     }
 
     void ValidateSupportedFamilyFlowPair(
@@ -749,7 +749,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitMember(
     return SubmitDecision(
         FTSMemberFamily::Decide(std::move(Input)),
         ETSEventFamilyKind::Member,
-        ETSEventFlow::MemberIdentity,
+        ETSEventFlow::Member,
         MemberPayloadRepository
     );
 }
@@ -952,7 +952,7 @@ FTSMemberDispatchResult FTSEventPipelineCoordinator::BeginMemberProcessing()
         FTSMemberProcessingDispatch
     >(
         ETSEventFamilyKind::Member,
-        ETSEventFlow::MemberIdentity,
+        ETSEventFlow::Member,
         MemberPayloadRepository
     );
 }
@@ -1203,7 +1203,7 @@ FTSEventPipelineCoordinator::CompleteMemberProcessing(
         EmissionId,
         ProcessingResult,
         ETSEventFamilyKind::Member,
-        ETSEventFlow::MemberIdentity,
+        ETSEventFlow::Member,
         MemberPayloadRepository
     );
 }

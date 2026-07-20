@@ -763,10 +763,10 @@ namespace TikStudio::Tests
         );
         Require(
             Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.Flow ==
-                    ETSEventFlow::MemberIdentity &&
+                    ETSEventFlow::Member &&
                 Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.Flow !=
                     ETSEventFlow::MemberNormalized,
-            Context + ": MemberIdentity admission flow"
+            Context + ": Member admission flow"
         );
         return EmissionId;
     }
@@ -894,7 +894,7 @@ namespace TikStudio::Tests
         Require(Dispatch != nullptr, Context + ": Member dispatch expected");
         Require(
             Dispatch->Emission.EmissionId != 0 &&
-                Dispatch->Emission.Flow == ETSEventFlow::MemberIdentity &&
+                Dispatch->Emission.Flow == ETSEventFlow::Member &&
                 Dispatch->Emission.Flow != ETSEventFlow::MemberNormalized,
             Context + ": Member dispatch identity and flow"
         );

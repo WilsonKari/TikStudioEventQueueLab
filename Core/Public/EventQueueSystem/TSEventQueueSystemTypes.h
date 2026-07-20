@@ -15,7 +15,7 @@ enum class ETSEventFlow : std::uint8_t
     Follow,
     Like,
     LikeUser,
-    MemberIdentity,
+    Member,
     MemberNormalized,
     RoomUser,
     RoomUserMilestone,

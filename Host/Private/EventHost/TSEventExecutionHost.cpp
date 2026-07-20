@@ -158,7 +158,7 @@ namespace
     )
     {
         if (Dispatch.Emission.EmissionId == 0 ||
-            Dispatch.Emission.Flow != ETSEventFlow::MemberIdentity)
+            Dispatch.Emission.Flow != ETSEventFlow::Member)
         {
             throw std::logic_error("Invalid owned Member dispatch");
         }

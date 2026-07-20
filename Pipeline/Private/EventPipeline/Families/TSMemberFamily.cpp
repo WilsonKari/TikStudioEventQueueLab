@@ -9,7 +9,7 @@ TTSFamilyDecision<FTSMemberPayload> FTSMemberFamily::Decide(
 {
     TTSAdmissionCandidate<FTSMemberPayload> Candidate;
     Candidate.FamilyKind = ETSEventFamilyKind::Member;
-    Candidate.EnqueueRequest.Flow = ETSEventFlow::MemberIdentity;
+    Candidate.EnqueueRequest.Flow = ETSEventFlow::Member;
     Candidate.EnqueueRequest.PriorityAdjustment = 0;
     Candidate.EnqueueRequest.bOverrideTTL = false;
     Candidate.EnqueueRequest.TTLOverride = std::chrono::milliseconds{0};

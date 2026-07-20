@@ -71,7 +71,7 @@ namespace
             RequireMemberDispatch(AdmissionCycle, "Vertical Member dispatch");
         Require(
             Dispatch.Emission.EmissionId == EmissionId &&
-                Dispatch.Emission.Flow == ETSEventFlow::MemberIdentity &&
+                Dispatch.Emission.Flow == ETSEventFlow::Member &&
                 Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
             "Vertical Member dispatch identity and direct flow"
         );
@@ -142,7 +142,7 @@ namespace TikStudio::Tests
     void RegisterMemberVerticalIntegrationTests(FTSTestCases& Tests)
     {
         Tests.push_back({
-            "JSON Member reaches Host MemberIdentity dispatch and completion",
+            "JSON Member reaches Host Member dispatch and completion",
             &TestJsonMemberReachesHostDispatchAndCompletion
         });
     }

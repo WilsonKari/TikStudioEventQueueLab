@@ -32,7 +32,7 @@ FTSEventQueueSettings::FTSEventQueueSettings()
         ETSEventExpirePolicy::Discard, 5, false
     };
 
-    Flows[ToIndex(ETSEventFlow::MemberIdentity)] = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::Member)] = FTSFlowQueueSettings{
         true, 5, std::chrono::milliseconds{6000},
         ETSEventExpirePolicy::Discard, 10, false
     };
