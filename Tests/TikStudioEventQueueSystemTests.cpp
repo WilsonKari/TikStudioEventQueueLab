@@ -521,23 +521,23 @@ namespace
     {
         {
             FTSEventQueueSettings Settings = MakeSettings(false, false);
-            ConfigureFlow(Settings, ETSEventFlow::LikeUser, 0, 0ms, 2);
+            ConfigureFlow(Settings, ETSEventFlow::LikeMilestone, 0, 0ms, 2);
 
             FControlledClock Clock;
             TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
 
             const FTSEnqueueResult A = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::LikeUser)
+                MakeRequest(ETSEventFlow::LikeMilestone)
             );
             const FTSEnqueueResult B = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::LikeUser)
+                MakeRequest(ETSEventFlow::LikeMilestone)
             );
             const FTSEnqueueResult PendingFull = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::LikeUser)
+                MakeRequest(ETSEventFlow::LikeMilestone)
             );
 
-            RequireAccepted(A, ETSEventFlow::LikeUser, "Capacity A");
-            RequireAccepted(B, ETSEventFlow::LikeUser, "Capacity B");
+            RequireAccepted(A, ETSEventFlow::LikeMilestone, "Capacity A");
+            RequireAccepted(B, ETSEventFlow::LikeMilestone, "Capacity B");
             Require(
                 PendingFull.Status == ETSEnqueueStatus::RejectedAtCapacity,
                 "Capacity: two Pending records must fill both slots"
@@ -551,7 +551,7 @@ namespace
             );
 
             const FTSEnqueueResult PendingPlusInFlightFull = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::LikeUser)
+                MakeRequest(ETSEventFlow::LikeMilestone)
             );
             Require(
                 PendingPlusInFlightFull.Status
@@ -568,11 +568,11 @@ namespace
             );
 
             const FTSEnqueueResult AfterConfirm = Queue.Enqueue(
-                MakeRequest(ETSEventFlow::LikeUser)
+                MakeRequest(ETSEventFlow::LikeMilestone)
             );
             RequireAccepted(
                 AfterConfirm,
-                ETSEventFlow::LikeUser,
+                ETSEventFlow::LikeMilestone,
                 "Capacity after Confirm"
             );
         }

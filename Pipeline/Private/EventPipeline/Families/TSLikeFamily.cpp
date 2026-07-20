@@ -10,7 +10,7 @@ TTSFamilyDecision<FTSLikePayload> FTSLikeFamily::Decide(
     TTSAdmissionCandidate<FTSLikePayload> Candidate;
     Candidate.FamilyKind = ETSEventFamilyKind::Like;
 
-    // Los contadores se conservan como datos; LikeUser aún no tiene semántica.
+    // Los contadores se conservan como datos; todavía no se calculan milestones.
     Candidate.EnqueueRequest.Flow = ETSEventFlow::Like;
     Candidate.EnqueueRequest.PriorityAdjustment = 0;
     Candidate.EnqueueRequest.bOverrideTTL = false;

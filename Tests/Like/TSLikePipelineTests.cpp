@@ -36,8 +36,8 @@ namespace
             "Like candidate Flow mismatch"
         );
         Require(
-            Candidate.EnqueueRequest.Flow != ETSEventFlow::LikeUser,
-            "Like counters must not select LikeUser"
+            Candidate.EnqueueRequest.Flow != ETSEventFlow::LikeMilestone,
+            "Like counters must not select LikeMilestone"
         );
         Require(
             Candidate.EnqueueRequest.PriorityAdjustment == 0,

@@ -797,8 +797,8 @@ namespace TikStudio::Tests
             Admission.EnqueueResult->AdmittedEmission.Flow ==
                     ETSEventFlow::Member &&
                 Admission.EnqueueResult->AdmittedEmission.Flow !=
-                    ETSEventFlow::MemberNormalized,
-            "Accepted Member admission must use the identity flow"
+                    ETSEventFlow::MemberRate,
+            "Accepted Member admission must use the direct flow"
         );
         return Admission.EnqueueResult->AdmittedEmission.EmissionId;
     }
@@ -913,8 +913,8 @@ namespace TikStudio::Tests
             Dispatch.Dispatch->Emission.Flow ==
                     ETSEventFlow::Member &&
                 Dispatch.Dispatch->Emission.Flow !=
-                    ETSEventFlow::MemberNormalized,
-            "A ready Member must preserve the identity flow"
+                    ETSEventFlow::MemberRate,
+            "A ready Member must preserve the direct flow"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }

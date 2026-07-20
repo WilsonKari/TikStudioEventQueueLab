@@ -72,7 +72,7 @@ namespace
         Require(
             Dispatch.Emission.EmissionId == EmissionId &&
                 Dispatch.Emission.Flow == ETSEventFlow::Member &&
-                Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
+                Dispatch.Emission.Flow != ETSEventFlow::MemberRate,
             "Vertical Member dispatch identity and direct flow"
         );
         RequireMemberInputEqual(

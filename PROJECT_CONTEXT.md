@@ -3,15 +3,16 @@
 Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo del baseline publicado `8528c02`
-(`refactor(pipeline): align member payload layout and shared invariants`).
+rama `main`, partiendo del baseline publicado `9134844`
+(`refactor(flows): rename member identity flow to member`).
 
 El propietario certificó este baseline con Core 10, Pipeline 112, Host 66, Adapter 62,
 JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL.
 
-El renombre nominal del flujo directo `MemberIdentity` a `Member` está implementado
-localmente sobre ese baseline, sin certificar, publicar ni ejecutar compilación o
-pruebas. El ordinal, los settings y el comportamiento permanecen intactos.
+Los renombres nominales reservados `LikeUser` a `LikeMilestone` y `MemberNormalized`
+a `MemberRate` están implementados localmente sobre ese baseline, sin certificar,
+publicar ni ejecutar compilación o pruebas. Los ordinales, settings y comportamiento
+permanecen intactos.
 
 ## 1. Objetivo general
 
@@ -133,16 +134,16 @@ payload. La relación conceptual actual es:
 Chat     → Chat
 Gift     → Gift | GiftCombo
 Follow   → Follow
-Like     → Like | LikeUser
-Member   → Member | MemberNormalized
+Like     → Like | LikeMilestone
+Member   → Member | MemberRate
 RoomUser → RoomUser | RoomUserMilestone | RoomUserTop1Change
 Share    → Share | ShareMilestone
 ```
 
 Son “flujos sintéticos” porque representan una decisión semántica de la familia. Las
-siete familias producen sus flujos directos completos. Member produce sólo `Member`;
-todavía no existe lógica para ninguno de los flujos derivados, incluido
-`MemberNormalized`. El flujo directo se denominaba `MemberIdentity` durante las fases
+siete familias producen sus flujos directos completos. Like y Member producen sólo
+`Like` y `Member`; todavía no existe lógica para `LikeMilestone`, `MemberRate` ni los
+demás flujos derivados. El flujo directo de Member se denominaba `MemberIdentity` durante las fases
 4I.1–4I.3 y fue renombrado posteriormente porque `Member` comunica el evento base,
 mientras “Identity” describía un detalle del payload. Los siete archivos de
 `Core/Private/EventQueueSystem/Events/` sólo incluyen el header central y no contienen
@@ -247,7 +248,8 @@ Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
 Gift A → B → C                                              [completo y publicado]
 Member A → B → C                                            [completo y publicado]
-MemberNormalized                                            [reservado]
+LikeMilestone                                               [reservado]
+MemberRate                                                  [reservado]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -307,8 +309,9 @@ certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklis
 Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6`;
 el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
 Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza final de simetría
-fue publicada en `8528c02`; el renombre nominal a `Member` permanece local, sin
-certificar ni publicar.
+fue publicada en `8528c02`. El renombre nominal a `Member` fue publicado en `9134844`
+y el propietario conservó la certificación de 287 PASS / 0 FAIL. Los renombres de
+`LikeMilestone` y `MemberRate` permanecen locales, sin certificar ni publicar.
 
 ## 4. Contratos públicos actuales
 
@@ -465,7 +468,7 @@ En 4F.3, `PostLike` y `PostLikeCompletion` incorporan Like al Host compartido. I
 completion viajan por el mismo FIFO global y se ejecutan exclusivamente en el mismo
 owner thread. `FTSLikeProcessingDispatch` forma parte del dispatch variant propietario;
 el recorrido JSON Like → converter → Host quedó certificado sin crear otro
-Host, Coordinator, Core, ready o `InFlight`. `LikeUser` permanece reservado.
+Host, Coordinator, Core, ready o `InFlight`. `LikeMilestone` permanece reservado.
 
 ### Quinta familia semántica: RoomUser
 
@@ -704,7 +707,7 @@ continúa siendo work-conserving.
 `MemberInput`, `MemberCompletion` y el dispatch Member se añadieron al final de sus
 enums y variants para preservar los valores e índices de las seis alternativas
 publicadas previamente. El Host sólo enruta `Member`; no existe una rama para
-`MemberNormalized`.
+`MemberRate`.
 
 El Host no crea threads, timers, callbacks, procesadores ni efectos. Una excepción al
 procesar un comando consume únicamente ese comando y se propaga; los comandos posteriores
@@ -807,9 +810,9 @@ Gift:               70, 45000,  1000
 GiftCombo:          80, 60000,  1000
 Follow:             60, 30000,    10
 Like:               25, 10000,     1
-LikeUser:           10,  5000,     5
+LikeMilestone:      10,  5000,     5
 Member:              5,  6000,    10
-MemberNormalized:   20, 12000,     1
+MemberRate:         20, 12000,     1
 RoomUser:           35, 15000,     1
 RoomUserMilestone:  30,  8000,     1
 RoomUserTop1Change: 50, 10000,     2
@@ -990,7 +993,7 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. El baseline publicado y certificado en `8528c02` registra Pipeline 112,
+automático. El baseline publicado y certificado en `9134844` registra Pipeline 112,
 Host 66, Adapter 62 y Vertical Integration 7. La fase histórica MemberIdentity C aporta
 nueve casos Host y una certificación vertical, sin modificar los demás runners.
 
@@ -1116,7 +1119,9 @@ Vertical Integration 6; 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68
 el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
 Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior fue
 publicada en `8528c02`, no modificó runners ni conteos y conserva la certificación de
-287 PASS / 0 FAIL. El renombre nominal del flujo permanece local.
+287 PASS / 0 FAIL. El renombre nominal del flujo directo a `Member` fue publicado en
+`9134844` y conserva la misma certificación. Los renombres de los flujos reservados
+permanecen locales.
 
 ## 10. Historial de tareas y commits
 
@@ -1669,6 +1674,10 @@ publicada en `8528c02`, no modificó runners ni conteos y conserva la certificac
 - El propietario certificó 179 PASS / 0 FAIL: Core 10, Pipeline 70, Host 33, Adapter
   32, JSON Decoder 20, Checklist 10 y Vertical Integration 4.
 
+Nota histórica: las fases 4F.1–4F.3 utilizaron el nombre reservado `LikeUser`; ese
+flujo fue renombrado posteriormente a `LikeMilestone` sin implementar acumulación ni
+umbrales.
+
 ### Fase 4G.1 — RoomUser A: conversión y decisión familiar directa
 
 - Añade contratos y converter RoomUser específicos para `data.topViewers[].user`, sin
@@ -1835,6 +1844,10 @@ publicada en `8528c02`, no modificó runners ni conteos y conserva la certificac
   62, JSON Decoder 20, Checklist 10 y Vertical Integration 7. Las siete familias
   completan A → B → C, pero los flujos derivados continúan fuera de alcance.
 
+Nota histórica: las fases 4I.1–4I.3 utilizaron `MemberNormalized` para el flujo
+reservado agregado; ese nombre fue sustituido posteriormente por `MemberRate` sin
+implementar ventanas temporales, conteos agregados ni tasas.
+
 ### Limpieza final de simetría y documentación
 
 - Mueve la definición única de `FTSMemberPayload` a `Payloads/` y conserva la ruta
@@ -1856,13 +1869,24 @@ publicada en `8528c02`, no modificó runners ni conteos y conserva la certificac
   simétrica `Member / Member`, sin cambiar payloads, lifecycle ni conteos.
 - `MemberIdentity` se conserva sólo al narrar las fases y commits donde era el nombre
   vigente del flujo.
-- Los cambios permanecen locales, sin certificar ni publicar; no se compiló ni se
-  ejecutaron pruebas durante este refactor.
+- Fue publicado en `9134844` como
+  `refactor(flows): rename member identity flow to member` y el propietario certificó
+  el baseline con 287 PASS / 0 FAIL.
+
+### Refactor nominal de flujos reservados
+
+- `LikeUser` fue renombrado a `LikeMilestone` en la misma posición del enum.
+- `MemberNormalized` fue renombrado a `MemberRate` en la misma posición del enum.
+- Ambos continúan reservados y sin semántica operativa; Like conserva sus contadores
+  como datos y Member no calcula ventanas, conteos agregados ni tasas.
+- Los settings, los trece ordinales y los conteos de pruebas permanecen intactos.
+- Estos cambios permanecen locales, pendientes de certificación y publicación; no se
+  compiló ni se ejecutaron pruebas durante este refactor.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `8528c02` más el renombre local del flujo directo `MemberIdentity` a `Member`.
+  `9134844` más los renombres locales `LikeMilestone` y `MemberRate`.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1899,8 +1923,10 @@ publicada en `8528c02`, no modificó runners ni conteos y conserva la certificac
   certificado con 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226` y
   certificado con 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6` y
   certificado con 287 PASS / 0 FAIL. La limpieza final fue publicada en `8528c02`; el
-  flujo vigente es `Member` y su renombre permanece local. No continuar automáticamente
-  con `MemberNormalized` ni otros flujos derivados.
+  flujo directo vigente `Member` fue publicado en `9134844` con la misma certificación.
+  Los nombres reservados vigentes son `LikeMilestone` y `MemberRate`; sus renombres
+  permanecen locales. No continuar automáticamente con ellos ni con otros flujos
+  derivados.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

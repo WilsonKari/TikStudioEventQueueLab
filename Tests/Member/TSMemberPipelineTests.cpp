@@ -87,7 +87,7 @@ namespace
         );
     }
 
-    void TestMemberMetadataDoesNotActivateMemberNormalized()
+    void TestMemberMetadataDoesNotActivateMemberRate()
     {
         const FTSMemberInput First = MakeMemberFamilyInput(0, "first");
         const FTSMemberInput Second = MakeMemberFamilyInput(
@@ -112,10 +112,10 @@ namespace
         );
         Require(
             FirstDecision->EnqueueRequest.Flow !=
-                    ETSEventFlow::MemberNormalized &&
+                    ETSEventFlow::MemberRate &&
                 SecondDecision->EnqueueRequest.Flow !=
-                    ETSEventFlow::MemberNormalized,
-            "Member metadata must not select MemberNormalized"
+                    ETSEventFlow::MemberRate,
+            "Member metadata must not select MemberRate"
         );
         RequireMemberInputEqual(
             FirstDecision->Payload.Input,
@@ -140,7 +140,7 @@ namespace
         Require(Envelope.EmissionId != 0, Context + ": identity");
         Require(
             Envelope.Flow == ETSEventFlow::Member &&
-                Envelope.Flow != ETSEventFlow::MemberNormalized,
+                Envelope.Flow != ETSEventFlow::MemberRate,
             Context + ": Member flow"
         );
         return Envelope.EmissionId;
@@ -182,7 +182,7 @@ namespace
                             Binding.ExpectedFlow ==
                                 ETSEventFlow::Member &&
                             Binding.ExpectedFlow !=
-                                ETSEventFlow::MemberNormalized &&
+                                ETSEventFlow::MemberRate &&
                             Binding.PayloadHandle.Value != 0 &&
                             Binding.ExternalState == ExpectedState,
                         Context + ": binding"
@@ -257,7 +257,7 @@ namespace
         Require(
             Dispatch.Emission.EmissionId == ExpectedEmissionId &&
                 Dispatch.Emission.Flow == ETSEventFlow::Member &&
-                Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
+                Dispatch.Emission.Flow != ETSEventFlow::MemberRate,
             Context + ": dispatch route"
         );
         RequireMemberInputEqual(
@@ -290,7 +290,7 @@ namespace
                 Completion.ConfirmResult->LifecycleEvents.front()
                         .Envelope.Flow == ETSEventFlow::Member &&
                 Completion.ConfirmResult->LifecycleEvents.front()
-                        .Envelope.Flow != ETSEventFlow::MemberNormalized &&
+                        .Envelope.Flow != ETSEventFlow::MemberRate &&
                 Completion.ConfirmResult->LifecycleEvents.front().Reason ==
                     ETSEmissionTerminalReason::Confirmed,
             Context + ": confirmation lifecycle"
@@ -808,7 +808,7 @@ namespace
                         ETSEventFlow::Member &&
                     Completion.CancelResult->LifecycleEvents.front()
                             .Envelope.Flow !=
-                        ETSEventFlow::MemberNormalized &&
+                        ETSEventFlow::MemberRate &&
                     Completion.CancelResult->LifecycleEvents.front().Reason ==
                         ETSEmissionTerminalReason::Cancelled,
                 "Cancelled or Failed Member lifecycle"
@@ -1250,7 +1250,7 @@ namespace
                 Expirations.LifecycleEvents.front().Envelope.Flow ==
                     ETSEventFlow::Member &&
                 Expirations.LifecycleEvents.front().Envelope.Flow !=
-                    ETSEventFlow::MemberNormalized &&
+                    ETSEventFlow::MemberRate &&
                 Expirations.LifecycleEvents.front().Reason ==
                     ETSEmissionTerminalReason::ExpiredDiscard,
             "Pending Member expiration lifecycle"
@@ -1306,8 +1306,8 @@ namespace TikStudio::Tests
             &TestMemberProducesDirectMemberCandidate
         });
         Tests.push_back({
-            "Member metadata does not activate MemberNormalized",
-            &TestMemberMetadataDoesNotActivateMemberNormalized
+            "Member metadata does not activate MemberRate",
+            &TestMemberMetadataDoesNotActivateMemberRate
         });
     }
 

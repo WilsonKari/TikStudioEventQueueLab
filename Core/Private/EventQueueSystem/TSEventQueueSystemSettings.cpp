@@ -27,7 +27,7 @@ FTSEventQueueSettings::FTSEventQueueSettings()
         ETSEventExpirePolicy::Discard, 1, false
     };
 
-    Flows[ToIndex(ETSEventFlow::LikeUser)] = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::LikeMilestone)] = FTSFlowQueueSettings{
         true, 10, std::chrono::milliseconds{5000},
         ETSEventExpirePolicy::Discard, 5, false
     };
@@ -37,7 +37,7 @@ FTSEventQueueSettings::FTSEventQueueSettings()
         ETSEventExpirePolicy::Discard, 10, false
     };
 
-    Flows[ToIndex(ETSEventFlow::MemberNormalized)] = FTSFlowQueueSettings{
+    Flows[ToIndex(ETSEventFlow::MemberRate)] = FTSFlowQueueSettings{
         true, 20, std::chrono::milliseconds{12000},
         ETSEventExpirePolicy::Discard, 1, false
     };

@@ -3,7 +3,7 @@
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
 familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
 integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
-están completas y publicadas; el baseline de la limpieza posterior es `8528c02`.
+están completas y publicadas; el baseline vigente es `9134844`.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
 transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
@@ -27,8 +27,8 @@ certificación vertical JSON → Host. Su familia produce exclusivamente
 especificación posterior.
 
 Like conserva `LikeCount` y `TotalLikeCount` como datos portables y produce únicamente
-`ETSEventFlow::Like`. `LikeUser` permanece reservado y no está implementado; no existe
-acumulación, umbral ni estado semántico para inferirlo.
+`ETSEventFlow::Like`. `LikeMilestone` permanece reservado y no está implementado; no
+existe acumulación, umbral ni estado semántico para inferirlo.
 
 RoomUser dispone de Adapter tipado, familia directa, Pipeline, Host, lifecycle y
 certificación vertical JSON → Host. Preserva `TopViewers` por valor, en orden y sin
@@ -50,11 +50,15 @@ certifica la separación entre `DueExpirations` y el lifecycle de una completion
 Member conserva `ActionId` y el usuario portable completo y produce exclusivamente
 `ETSEventFlow::Member`. El flujo directo se denominaba `MemberIdentity` durante las
 fases 4I.1–4I.3 y fue renombrado porque `Member` describe el evento base, mientras
-“Identity” describía un detalle del payload. `MemberNormalized` permanece reservado: no existe
-normalización, deduplicación, acumulación ni estado entre decisiones. El baseline
-publicado `8528c02` fue certificado por el propietario con Core 10, Pipeline 112, Host
+“Identity” describía un detalle del payload. `MemberRate` permanece reservado: no
+existen ventanas temporales, conteos agregados, tasas ni estado entre decisiones. El baseline
+publicado `9134844` fue certificado por el propietario con Core 10, Pipeline 112, Host
 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0
-FAIL. El renombre nominal permanece local, sin certificar ni publicar, y no modifica
+FAIL.
+
+Migración nominal: `LikeUser` fue renombrado a `LikeMilestone` y `MemberNormalized`
+fue renombrado a `MemberRate`. Ambos continúan reservados y sin semántica operativa.
+Estos dos renombres permanecen locales, sin certificar ni publicar, y no modifican
 pruebas ni conteos.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse

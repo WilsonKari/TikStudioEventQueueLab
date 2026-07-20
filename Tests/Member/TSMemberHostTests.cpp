@@ -105,7 +105,7 @@ namespace
         Require(
             Dispatch.Emission.EmissionId == EmissionId &&
                 Dispatch.Emission.Flow == ETSEventFlow::Member &&
-                Dispatch.Emission.Flow != ETSEventFlow::MemberNormalized,
+                Dispatch.Emission.Flow != ETSEventFlow::MemberRate,
             "Member Auto Pump dispatch identity and direct flow"
         );
         RequireMemberInputEqual(
@@ -412,7 +412,7 @@ namespace
             MemberDispatch.Emission.EmissionId == MemberId &&
                 MemberDispatch.Emission.Flow == ETSEventFlow::Member &&
                 MemberDispatch.Emission.Flow !=
-                    ETSEventFlow::MemberNormalized,
+                    ETSEventFlow::MemberRate,
             "Member must be the final direct-flow dispatch"
         );
         RequireMemberInputEqual(
@@ -727,7 +727,7 @@ namespace
                 Lifecycle.front().Envelope.Flow ==
                     ETSEventFlow::Member &&
                 Lifecycle.front().Envelope.Flow !=
-                    ETSEventFlow::MemberNormalized &&
+                    ETSEventFlow::MemberRate &&
                 Lifecycle.front().Reason ==
                     ETSEmissionTerminalReason::ExpiredDiscard,
             "Replacement cycle must report expired Member"
