@@ -3,12 +3,15 @@
 Última actualización: 2026-07-19.
 
 Estado de referencia:
-rama `main`, partiendo de HEAD `7e2d226`
-(`feat(member): complete identity pipeline lifecycle`).
+rama `main`, partiendo del baseline publicado `68537d6`
+(`feat(host): complete member identity vertical integration`).
 
-El propietario certificó este baseline con 277 PASS / 0 FAIL. Los cambios de
-MemberIdentity C permanecen locales y sin commit; durante su implementación no se
-compiló ni se ejecutaron pruebas.
+El propietario certificó este baseline con Core 10, Pipeline 112, Host 66, Adapter 62,
+JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL.
+
+La limpieza final de simetría del payload Member y de comentarios compartidos está
+implementada localmente sobre ese baseline, sin certificar, publicar ni ejecutar
+compilación o pruebas.
 
 ## 1. Objetivo general
 
@@ -108,7 +111,7 @@ y `FTSRoomUserTopViewer`. Sólo usan tipos de la biblioteca estándar.
 
 Estos contratos describen datos entrantes, pero el core genérico de emisiones no los
 interpreta ni almacena. Las siete familias disponen del recorrido portable completo
-hasta Host y lifecycle; MemberIdentity C completa localmente el último tramo de Member.
+hasta Host y lifecycle; MemberIdentity C completa el último tramo publicado de Member.
 
 Decisión arquitectónica aprobada:
 
@@ -230,9 +233,9 @@ texto JSON TikFinity                                [implementado en Adapter]
 → repositorio, binding y admisión MemberIdentity           [publicados en 4I.2]
 → dispatch y completion MemberIdentity                     [publicados en 4I.2]
 → lifecycle mixto de siete familias                        [generalizado en 4I.2]
-→ PostMember y PostMemberCompletion en Host                [implementados localmente en 4I.3]
-→ Member en FIFO global, owner y dispatch variant          [implementado localmente en 4I.3]
-→ certificación JSON Member → Host                         [implementada localmente en 4I.3]
+→ PostMember y PostMemberCompletion en Host                [publicados en 4I.3]
+→ Member en FIFO global, owner y dispatch variant          [publicado en 4I.3]
+→ certificación JSON Member → Host                         [publicada en 4I.3]
 ──────────────────────── PUNTO ACTUAL ────────────────────────
 Chat    A → B → C                                          [completo]
 Follow  A → B → C                                          [completo]
@@ -240,7 +243,7 @@ Share   A → B → C                                          [completo]
 Like    A → B → C                                          [completo]
 RoomUser A → B → C                                          [completo]
 Gift A → B → C                                              [completo y publicado]
-MemberIdentity A → B → C                                    [completo; C local]
+MemberIdentity A → B → C                                    [completo y publicado]
 MemberNormalized                                            [reservado]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
@@ -298,8 +301,10 @@ Host 57, Adapter 52, JSON Decoder 20, Checklist 10 y Vertical Integration 6: 253
 Pipeline 100, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration
 6: 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226`; el propietario
 certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y
-Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C está implementado
-localmente y no fue compilado ni ejecutado.
+Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6`;
+el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
+Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza final de simetría
+permanece local, sin certificar ni publicar.
 
 ## 4. Contratos públicos actuales
 
@@ -981,9 +986,9 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. El baseline publicado y certificado en `7e2d226` registra Pipeline 112,
-Host 57, Adapter 62 y Vertical Integration 6. MemberIdentity C añade localmente nueve
-casos Host y una certificación vertical, sin modificar los demás runners.
+automático. El baseline publicado y certificado en `68537d6` registra Pipeline 112,
+Host 66, Adapter 62 y Vertical Integration 7. MemberIdentity C aporta nueve casos Host
+y una certificación vertical, sin modificar los demás runners.
 
 La estructura familiar queda así:
 
@@ -1103,10 +1108,10 @@ MemberIdentity A fue publicado en `51cba3a` y el propietario certificó Core 10,
 Pipeline 100, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration
 6; 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226`; el propietario
 certificó Core 10, Pipeline 112, Host 57, Adapter 62, JSON Decoder 20, Checklist 10 y
-Vertical Integration 6; 277 PASS / 0 FAIL. MemberIdentity C añade localmente nueve
-escenarios Host y una certificación vertical. Sin ejecución local, los runners registran
-Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
-Integration 7; 287 casos.
+Vertical Integration 6; 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6`;
+el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
+Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior no
+modifica runners ni conteos y permanece local, sin certificar ni publicar.
 
 ## 10. Historial de tareas y commits
 
@@ -1818,15 +1823,28 @@ Integration 7; 287 casos.
 - Añade nueve escenarios Host, incluida la prueba acumulativa de siete familias sin
   sustituir la certificación histórica de seis, y una certificación vertical JSON
   Member → converter → Host → Pipeline → Core.
-- Host registra localmente 66 casos, Vertical Integration 7 y el total general 287;
-  no se compiló ni se ejecutaron pruebas.
-- Los cambios permanecen locales y sin commit. Las siete familias completan A → B → C,
-  pero los flujos derivados continúan fuera de alcance.
+- Host registra 66 casos, Vertical Integration 7 y el total general 287.
+- Fue publicada en `68537d6` como
+  `feat(host): complete member identity vertical integration`.
+- El propietario certificó 287 PASS / 0 FAIL: Core 10, Pipeline 112, Host 66, Adapter
+  62, JSON Decoder 20, Checklist 10 y Vertical Integration 7. Las siete familias
+  completan A → B → C, pero los flujos derivados continúan fuera de alcance.
+
+### Limpieza final de simetría y documentación
+
+- Mueve la definición única de `FTSMemberPayload` a `Payloads/` y conserva la ruta
+  pública anterior como forwarding header de compatibilidad.
+- Alinea los includes internos Member con la ruta canónica y documenta las fronteras
+  de autoridad compartidas sin cambiar funciones ni comportamiento.
+- Sincroniza la documentación con el baseline publicado `68537d6` y la certificación
+  del propietario de 287 PASS / 0 FAIL.
+- Los cambios permanecen locales, sin certificar ni publicar; no se compiló ni se
+  ejecutaron pruebas durante esta limpieza.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `7e2d226` más los cambios locales de MemberIdentity C.
+  `68537d6` más la limpieza local de simetría y documentación.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1861,7 +1879,8 @@ Integration 7; 287 casos.
   certificada con 245 PASS / 0 FAIL. El hardening fue publicado en `51d73b5` y
   certificado con 253 PASS / 0 FAIL. MemberIdentity A fue publicado en `51cba3a` y
   certificado con 265 PASS / 0 FAIL. MemberIdentity B fue publicado en `7e2d226` y
-  certificado con 277 PASS / 0 FAIL. MemberIdentity C permanece local; no continuar
+  certificado con 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6` y
+  certificado con 287 PASS / 0 FAIL. La limpieza final permanece local; no continuar
   automáticamente con `MemberNormalized` ni otros flujos derivados.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.

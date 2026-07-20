@@ -423,7 +423,8 @@ namespace
             RequestedEmissionId
         );
 
-        // Toda la tanda se valida antes de cambiar cualquiera de sus autoridades.
+        // La tanda completa valida binding, payload, estado y pareja familia/flujo;
+        // el ready se trata sólo como una notificación que no puede quedar stale.
         std::vector<FValidatedLifecycleEntry> ValidatedEntries;
         ValidatedEntries.reserve(LifecycleEvents.size());
 
@@ -530,7 +531,8 @@ namespace
             );
         }
 
-        // El enrutamiento por familia conserva el orden comunicado por el core.
+        // Tras validar toda la tanda, las autoridades externas transicionan y se
+        // limpian en el mismo orden autoritativo comunicado por el Core.
         for (const FValidatedLifecycleEntry& Entry : ValidatedEntries)
         {
             if (!BindingRegistry.TransitionState(
@@ -612,6 +614,8 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         return Result;
     }
 
+    // El repositorio posee provisionalmente el payload hasta que una admisión
+    // aceptada permita vincular el handle con la identidad global del Core.
     TProvisionalPayloadGuard<TRepository> ProvisionalGuard(
         Repository,
         *PayloadHandle
@@ -628,7 +632,8 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         return Result;
     }
 
-    // El core ya comprometió la emisión; desde aquí no se simula rollback.
+    // El Core ya realizó el commit autoritativo; binding, lifecycle y ready sólo
+    // sincronizan las autoridades externas, sin simular rollback.
     ProvisionalGuard.Release();
 
     if (CoreResult.AdmittedEmission.EmissionId == 0)
@@ -820,7 +825,8 @@ FTSEventPipelineCoordinator::BeginProcessing(
     const FTSEmissionEnvelope ReadyEmission = *PendingReadyEmission;
     const FTSEmissionBinding Binding = ValidateReadyBinding(ReadyEmission);
 
-    // La inspección de otra familia no autoriza ni consume el ready compartido.
+    // El ready sólo notifica qué binding autoritativo puede despacharse; inspeccionar
+    // otra familia no lo autoriza ni lo consume.
     if (Binding.FamilyKind != ExpectedFamilyKind)
     {
         return Result;
@@ -851,7 +857,8 @@ FTSEventPipelineCoordinator::BeginProcessing(
     Result.Status = ETSPipelineDispatchStatus::Dispatched;
     Result.Dispatch.emplace(std::move(Dispatch));
 
-    // Toda operación potencialmente lanzable terminó antes del compromiso.
+    // Binding, payload y pareja familia/flujo se validan y el dispatch se construye
+    // antes de comprometer Bound -> Processing y consumir la notificación ready.
     if (!BindingRegistry.TransitionState(
             Binding.EmissionId,
             ETSExternalEmissionState::Bound,
@@ -988,7 +995,8 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         throw std::logic_error("Processing completion result is invalid");
     }
 
-    // Todas las autoridades externas se validan antes de mutar el core.
+    // Binding, payload, estado y pareja familia/flujo se validan antes de mutar el
+    // Core; tras su commit terminal, lifecycle sincroniza la limpieza externa.
     FTSEmissionBinding Binding;
     const bool bFoundBinding = BindingRegistry.Visit(
         EmissionId,

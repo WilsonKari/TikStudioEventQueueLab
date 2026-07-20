@@ -1,8 +1,4 @@
 #pragma once
 
-#include "EventQueueSystem/TSEventQueueSystemTypes.h"
-
-struct FTSMemberPayload
-{
-    FTSMemberInput Input;
-};
+// Forwarding header retained for compatibility with the original public path.
+#include "EventPipeline/Payloads/TSMemberPayload.h"
