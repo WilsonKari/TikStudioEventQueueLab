@@ -6,7 +6,9 @@ int main()
     using namespace TikStudio::Tests;
 
     FTSTestCases Tests;
-    Tests.reserve(66);
+    Tests.reserve(68);
+
+    RegisterHostInfrastructureTests(Tests);
 
     RegisterChatHostTests(Tests);
     RegisterFollowHostTests(Tests);

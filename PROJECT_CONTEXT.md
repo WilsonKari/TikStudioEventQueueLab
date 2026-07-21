@@ -1,18 +1,17 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-19.
+Última actualización: 2026-07-20.
 
 Estado de referencia:
-rama `main`, partiendo del baseline publicado `9134844`
-(`refactor(flows): rename member identity flow to member`).
+rama `main`, partiendo del baseline publicado `f59836f`
+(`refactor(flows): clarify like milestone and member rate names`).
 
 El propietario certificó este baseline con Core 10, Pipeline 112, Host 66, Adapter 62,
 JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL.
 
-Los renombres nominales reservados `LikeUser` a `LikeMilestone` y `MemberNormalized`
-a `MemberRate` están implementados localmente sobre ese baseline, sin certificar,
-publicar ni ejecutar compilación o pruebas. Los ordinales, settings y comportamiento
-permanecen intactos.
+La actualización dinámica de settings por flujo está implementada localmente sobre ese
+baseline, sin certificar, publicar ni ejecutar compilación o pruebas. Los nuevos casos
+elevan los conteos esperados a Core 15, Pipeline 113 y Host 68: 295 pruebas totales.
 
 ## 1. Objetivo general
 
@@ -188,6 +187,8 @@ texto JSON TikFinity                                [implementado en Adapter]
 → Pump y expiración se exponen por el coordinador       [siete familias]
 → fuentes publican input/completion en bandeja segura   [implementado en Host]
 → RunOneCycle serializa el coordinador en owner thread  [implementado en Host]
+→ UpdateFlowSettings afecta sólo admisiones futuras      [implementado localmente]
+→ Host serializa updates de flujo en el FIFO global      [implementado localmente]
 → mantenimiento, Pump y wake quedan encapsulados        [implementado en Host]
 → Host devuelve como máximo un despacho propietario     [implementado en Host]
 → decoder JSON valida siete eventos TikFinity            [implementado en Adapter]
@@ -250,6 +251,7 @@ Gift A → B → C                                              [completo y publ
 Member A → B → C                                            [completo y publicado]
 LikeMilestone                                               [reservado]
 MemberRate                                                  [reservado]
+UpdateFlowSettings Core → Pipeline → Host FIFO              [implementado localmente]
 → puente UE5 TikFinityPlugin → Event Host                [trabajo futuro separado]
 ```
 
@@ -310,8 +312,9 @@ Vertical Integration 6: 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68
 el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decoder 20,
 Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza final de simetría
 fue publicada en `8528c02`. El renombre nominal a `Member` fue publicado en `9134844`
-y el propietario conservó la certificación de 287 PASS / 0 FAIL. Los renombres de
-`LikeMilestone` y `MemberRate` permanecen locales, sin certificar ni publicar.
+y el refactor de los nombres reservados fue publicado en `f59836f`; el propietario
+conservó la certificación de 287 PASS / 0 FAIL. La actualización dinámica de settings
+permanece local, sin certificar ni publicar.
 
 ## 4. Contratos públicos actuales
 
@@ -687,8 +690,9 @@ fase de diseño independiente; este hardening no añade rollback ni modifica
 `FTSEventExecutionHost` es una biblioteca separada que posee un único coordinador y Core
 mediante un PImpl no copiable ni movible. Su API pública permite `PostChat`,
 `PostFollow`, `PostShare`, `PostLike`, `PostRoomUser`, `PostGift`, `PostMember` y sus
-completions tipadas desde cualquier hilo, pero reserva `RunOneCycle` al hilo que
-construyó la instancia. El Host no expone mutexes, bandeja, thread ID ni el coordinador.
+completions tipadas desde cualquier hilo. `PostFlowSettingsUpdate` publica una copia de
+los settings en la misma bandeja. `RunOneCycle` queda reservado al hilo que construyó
+la instancia. El Host no expone mutexes, bandeja, thread ID ni el coordinador.
 
 Una sola bandeja privada conserva inputs y finalizaciones de las siete familias bajo el
 mismo mutex. Así, el FIFO global queda definido por el orden efectivo de inserción entre
@@ -702,7 +706,9 @@ intacta y sólo después retira como máximo un comando del frente. Así, un fal
 capacidad antes de la admisión. Después procesa el comando, consume cualquier ready ya
 capturado, llama Pump una vez si no hubo dispatch, consulta el próximo wake y comunica
 si quedan comandos. El variant propietario cubre las siete familias y la política
-continúa siendo work-conserving.
+continúa siendo work-conserving. El comando `FlowSettingsUpdate` es la excepción
+deliberada: aplica el cambio en el owner thread y ese ciclo no consume ready, no llama
+Pump y no produce dispatch ni completion; aun así conserva mantenimiento, wake y FIFO.
 
 `MemberInput`, `MemberCompletion` y el dispatch Member se añadieron al final de sus
 enums y variants para preservar los valores e índices de las seis alternativas
@@ -734,7 +740,8 @@ evaluará aparte.
 
 `FTSEnqueueRequest` contiene flujo, ajuste de prioridad, override opcional de TTL y
 protección ante evicción. Existen contratos de resultado para `Enqueue`, `Pump`,
-`Confirm`, `CancelInFlight`, `ProcessDueExpirations` y `GetNextWakeTime`.
+`Confirm`, `CancelInFlight`, `ProcessDueExpirations`, `GetNextWakeTime` y
+`UpdateFlowSettings`.
 
 `Enqueue` ya tiene una implementación básica funcional: valida la solicitud, comprueba
 la capacidad del flujo, captura el tiempo una vez, asigna identidad, construye el
@@ -746,6 +753,12 @@ emisión activa, generan exactamente un terminal en caso de éxito y eliminan su
 liberando el slot. `Enqueue` intenta Auto Pump tras una admisión cuando el setting está
 activo y el core está idle; `Confirm` hace lo mismo después de confirmar cuando su
 setting está activo. `CancelInFlight` permanece sin Auto Pump.
+
+`UpdateFlowSettings` valida flujo, TTL y política antes de reemplazar una entrada de
+settings. No captura tiempo, no consume identidad y no recorre records o índices. El
+Coordinator delega directamente y el Host aplica el comando exclusivamente desde el
+owner thread. El resultado distingue actualización válida, flujo inválido, TTL
+negativo y política inválida.
 
 Estados relevantes de admisión:
 
@@ -798,6 +811,11 @@ reordenarse por ID, flujo o prioridad.
 - CancelInFlight no realiza Auto Pump automáticamente.
 - El core es single-threaded. Adaptador/host debe serializar llamadas al hilo propietario.
 - El Host es work-conserving: los settings de Auto Pump no prohíben su Pump explícito.
+- Una actualización de flujo sólo afecta admisiones futuras; cada emisión viva conserva
+  prioridad, expiración, política y protección congeladas al admitirse.
+- Deshabilitar o reducir la capacidad no elimina emisiones existentes. Con ocupación
+  igual o superior al nuevo límite, las admisiones posteriores se rechazan normalmente.
+- `MaxSlots == 0` sigue siendo una actualización válida que establece capacidad cero.
 
 ## 6. Settings actuales
 
@@ -827,6 +845,10 @@ Defaults globales:
 - Aging: `0.0` puntos/segundo; bonus máximo configurado `20`.
 - Pump después de Enqueue cuando idle: activado.
 - Pump después de Confirm: activado.
+
+La operación local `UpdateFlowSettings` reemplaza sólo el bloque del flujo indicado tras
+validarlo completamente. Las futuras categorías de Pump, evicción y fairness requerirán
+operaciones tipadas separadas; no existe un mapa genérico de settings.
 
 ## 7. Estado privado implementado hasta 4A.9
 
@@ -993,9 +1015,10 @@ La Fase 4D.2.1 organizó las suites por responsabilidad sin cambiar los seis eje
 automáticos existentes ni sus registros CTest. `TSTestHarness.h` conserva el contrato
 común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autorregistro
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
-automático. El baseline publicado y certificado en `9134844` registra Pipeline 112,
-Host 66, Adapter 62 y Vertical Integration 7. La fase histórica MemberIdentity C aporta
-nueve casos Host y una certificación vertical, sin modificar los demás runners.
+automático. El baseline publicado y certificado en `f59836f` registra Core 10, Pipeline
+112, Host 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287
+PASS / 0 FAIL. La actualización local añade cinco casos Core, uno Pipeline y dos Host;
+los conteos esperados son Core 15, Pipeline 113 y Host 68: 295 pruebas totales.
 
 La estructura familiar queda así:
 
@@ -1008,6 +1031,7 @@ Tests/RoomUser/ → Pipeline, Host, Adapter y certificación vertical RoomUser
 Tests/Gift/ → Pipeline, Host, Adapter y certificación vertical Gift
 Tests/Member/ → Adapter, familia, Coordinator, Host y certificación vertical A → B → C
 Tests/TSPipelineInfrastructureTests.cpp → repositorios, bindings y Coordinator
+Tests/TSHostInfrastructureTests.cpp → comandos y comportamiento transversal del Host
 ```
 
 Core, JSON Decoder y Checklist permanecen en sus runners transversales sin dividirse.
@@ -1120,8 +1144,9 @@ el propietario certificó Core 10, Pipeline 112, Host 66, Adapter 62, JSON Decod
 Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior fue
 publicada en `8528c02`, no modificó runners ni conteos y conserva la certificación de
 287 PASS / 0 FAIL. El renombre nominal del flujo directo a `Member` fue publicado en
-`9134844` y conserva la misma certificación. Los renombres de los flujos reservados
-permanecen locales.
+`9134844`; los nombres reservados fueron publicados en `f59836f` y conservaron la misma
+certificación. La actualización dinámica de settings permanece local y eleva el total
+esperado a 295.
 
 ## 10. Historial de tareas y commits
 
@@ -1880,13 +1905,28 @@ implementar ventanas temporales, conteos agregados ni tasas.
 - Ambos continúan reservados y sin semántica operativa; Like conserva sus contadores
   como datos y Member no calcula ventanas, conteos agregados ni tasas.
 - Los settings, los trece ordinales y los conteos de pruebas permanecen intactos.
-- Estos cambios permanecen locales, pendientes de certificación y publicación; no se
-  compiló ni se ejecutaron pruebas durante este refactor.
+- Fue publicado en `f59836f` como
+  `refactor(flows): clarify like milestone and member rate names` y el propietario
+  certificó el baseline con 287 PASS / 0 FAIL.
+
+### Actualización dinámica de settings por flujo
+
+- Añade `UpdateFlowSettings` al Core con rechazo tipado de flujo, TTL y política de
+  expiración inválidos; una actualización válida reemplaza sólo el bloque del flujo.
+- Las emisiones vivas conservan sus snapshots y no se reordenan, expulsan, expiran ni
+  deshabilitan retroactivamente.
+- El Coordinator delega sin tocar payloads, bindings, ready o lifecycle.
+- El Host incorpora `FlowSettingsUpdate` al final de su enum y variant; el comando viaja
+  por el FIFO global y se aplica únicamente en el owner thread.
+- Añade cinco pruebas Core, una Pipeline y dos Host. Los conteos esperados pasan a Core
+  15, Pipeline 113 y Host 68; las demás suites permanecen en 62, 20, 10 y 7: 295 total.
+- Los cambios permanecen locales, pendientes de certificación y publicación; no se
+  compiló ni se ejecutaron pruebas durante esta fase.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `9134844` más los renombres locales `LikeMilestone` y `MemberRate`.
+  `f59836f` más la actualización dinámica local de settings por flujo.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1924,9 +1964,10 @@ implementar ventanas temporales, conteos agregados ni tasas.
   certificado con 277 PASS / 0 FAIL. MemberIdentity C fue publicado en `68537d6` y
   certificado con 287 PASS / 0 FAIL. La limpieza final fue publicada en `8528c02`; el
   flujo directo vigente `Member` fue publicado en `9134844` con la misma certificación.
-  Los nombres reservados vigentes son `LikeMilestone` y `MemberRate`; sus renombres
-  permanecen locales. No continuar automáticamente con ellos ni con otros flujos
-  derivados.
+  Los nombres reservados vigentes `LikeMilestone` y `MemberRate` fueron publicados en
+  `f59836f`, también certificado con 287 PASS / 0 FAIL. La actualización dinámica de
+  settings permanece local y pendiente de certificación. No continuar automáticamente
+  con flujos derivados ni otras categorías de settings.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

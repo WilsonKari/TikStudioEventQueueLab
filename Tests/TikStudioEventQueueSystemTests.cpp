@@ -16,12 +16,14 @@ namespace
     struct FControlledClock
     {
         FTSEventQueueTimePoint Now{};
+        std::size_t CaptureCount = 0;
 
         [[nodiscard]]
         FTSNowProvider MakeProvider()
         {
             return [this]()
             {
+                ++CaptureCount;
                 return Now;
             };
         }
@@ -621,6 +623,368 @@ namespace
         }
     }
 
+    void TestFlowSettingsUpdateAffectsOnlyFutureAdmissions()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& InitialSettings = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Chat,
+            10,
+            5s,
+            10,
+            ETSEventExpirePolicy::Discard
+        );
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+
+        const FTSEnqueueResult BeforeUpdate = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        RequireAccepted(
+            BeforeUpdate,
+            ETSEventFlow::Chat,
+            "Flow update before"
+        );
+        Require(
+            BeforeUpdate.AdmittedEmission.PriorityScore == 10,
+            "Flow update: first emission must use the original priority"
+        );
+
+        FTSFlowQueueSettings NewSettings = InitialSettings;
+        NewSettings.BaseWeight = 50;
+        NewSettings.TTL = 20s;
+        NewSettings.ExpirePolicy = ETSEventExpirePolicy::Consolidate;
+        NewSettings.bExemptFromEviction = true;
+
+        const std::size_t CapturesBeforeUpdate = Clock.CaptureCount;
+        const FTSUpdateFlowSettingsResult Update = Queue.UpdateFlowSettings(
+            ETSEventFlow::Chat,
+            NewSettings
+        );
+        Require(
+            Update.Status == ETSUpdateFlowSettingsStatus::Updated &&
+                Update.Flow == ETSEventFlow::Chat,
+            "Flow update: valid settings must be accepted"
+        );
+        Require(
+            Clock.CaptureCount == CapturesBeforeUpdate,
+            "Flow update must not capture the clock"
+        );
+
+        Clock.Advance(1s);
+        const FTSEnqueueResult AfterUpdate = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        RequireAccepted(
+            AfterUpdate,
+            ETSEventFlow::Chat,
+            "Flow update after"
+        );
+        Require(
+            AfterUpdate.AdmittedEmission.EmissionId ==
+                    BeforeUpdate.AdmittedEmission.EmissionId + 1 &&
+                AfterUpdate.AdmittedEmission.PriorityScore == 50,
+            "Flow update must not consume identity and must affect later priority"
+        );
+        Require(
+            AfterUpdate.AdmittedEmission.ExpiresAt ==
+                Clock.Now + std::chrono::duration_cast<
+                    FTSEventQueueClock::duration
+                >(20s),
+            "Flow update: later emission must use the new TTL"
+        );
+
+        const FTSPumpResult Pump = Queue.Pump();
+        RequireReadyEmission(
+            Pump.Outcome,
+            AfterUpdate.AdmittedEmission,
+            "Flow update priority selection"
+        );
+
+        Clock.Advance(4s);
+        const FTSProcessDueExpirationsResult Expirations =
+            Queue.ProcessDueExpirations();
+        Require(
+            Expirations.LifecycleEvents.size() == 1,
+            "Flow update: original Pending emission must keep its TTL"
+        );
+        RequireLifecycleEvent(
+            Expirations.LifecycleEvents.front(),
+            BeforeUpdate.AdmittedEmission,
+            ETSEmissionTerminalReason::ExpiredDiscard,
+            "Flow update original Pending snapshot"
+        );
+    }
+
+    void TestFlowSettingsUpdatePreservesInFlightSnapshot()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& InitialSettings = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Follow,
+            7,
+            5s,
+            1
+        );
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult Admission = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Follow)
+        );
+        RequireAccepted(
+            Admission,
+            ETSEventFlow::Follow,
+            "InFlight settings update"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Admission.AdmittedEmission,
+            "InFlight settings update Pump"
+        );
+
+        FTSFlowQueueSettings NewSettings = InitialSettings;
+        NewSettings.bEnabled = false;
+        NewSettings.BaseWeight = 100;
+        NewSettings.TTL = 1s;
+        NewSettings.ExpirePolicy = ETSEventExpirePolicy::Consolidate;
+        NewSettings.MaxSlots = 0;
+        NewSettings.bExemptFromEviction = true;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Follow,
+                NewSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "InFlight settings update must succeed"
+        );
+        Require(
+            Queue.Enqueue(MakeRequest(ETSEventFlow::Follow)).Status ==
+                ETSEnqueueStatus::RejectedDisabled,
+            "Disabled settings must block only the later admission"
+        );
+
+        Clock.Advance(10s);
+        Require(
+            Queue.ProcessDueExpirations().LifecycleEvents.empty(),
+            "Settings update must not expire the existing InFlight emission"
+        );
+        const FTSConfirmResult Confirm = Queue.Confirm(
+            Admission.AdmittedEmission.EmissionId
+        );
+        Require(
+            Confirm.Status == ETSConfirmStatus::Confirmed &&
+                Confirm.LifecycleEvents.size() == 1,
+            "Existing InFlight emission must remain confirmable"
+        );
+        RequireLifecycleEvent(
+            Confirm.LifecycleEvents.front(),
+            Admission.AdmittedEmission,
+            ETSEmissionTerminalReason::Confirmed,
+            "InFlight settings update snapshot"
+        );
+    }
+
+    void TestInvalidFlowSettingsUpdatesAreAtomic()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& InitialSettings = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Share,
+            17,
+            9s,
+            3,
+            ETSEventExpirePolicy::Discard
+        );
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+
+        FTSFlowQueueSettings InvalidSettings = InitialSettings;
+        InvalidSettings.BaseWeight = 99;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Count,
+                InvalidSettings
+            ).Status == ETSUpdateFlowSettingsStatus::RejectedInvalidFlow,
+            "Invalid flow update must be rejected"
+        );
+
+        InvalidSettings.TTL = -1ms;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Share,
+                InvalidSettings
+            ).Status == ETSUpdateFlowSettingsStatus::RejectedInvalidTTL,
+            "Negative TTL update must be rejected"
+        );
+
+        InvalidSettings.TTL = 20s;
+        InvalidSettings.ExpirePolicy =
+            static_cast<ETSEventExpirePolicy>(255);
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Share,
+                InvalidSettings
+            ).Status ==
+                ETSUpdateFlowSettingsStatus::RejectedInvalidExpirePolicy,
+            "Invalid expiration policy update must be rejected"
+        );
+        Require(
+            Clock.CaptureCount == 0,
+            "Rejected updates must not capture the clock"
+        );
+
+        const FTSEnqueueResult Admission = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Share)
+        );
+        RequireAccepted(
+            Admission,
+            ETSEventFlow::Share,
+            "Atomic update admission"
+        );
+        Require(
+            Admission.AdmittedEmission.EmissionId == 1 &&
+                Admission.AdmittedEmission.PriorityScore == 17 &&
+                Admission.AdmittedEmission.ExpiresAt ==
+                    Clock.Now + std::chrono::duration_cast<
+                        FTSEventQueueClock::duration
+                    >(9s),
+            "Rejected updates must leave the original settings intact"
+        );
+
+        Clock.Advance(9s);
+        const FTSProcessDueExpirationsResult Expirations =
+            Queue.ProcessDueExpirations();
+        Require(
+            Expirations.LifecycleEvents.size() == 1,
+            "Atomic update emission must expire under original settings"
+        );
+        RequireLifecycleEvent(
+            Expirations.LifecycleEvents.front(),
+            Admission.AdmittedEmission,
+            ETSEmissionTerminalReason::ExpiredDiscard,
+            "Atomic update original policy"
+        );
+    }
+
+    void TestDisablingFlowPreservesExistingEmission()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& InitialSettings = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Gift,
+            70,
+            0ms,
+            2
+        );
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult Existing = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Gift)
+        );
+        RequireAccepted(Existing, ETSEventFlow::Gift, "Disable existing");
+
+        FTSFlowQueueSettings DisabledSettings = InitialSettings;
+        DisabledSettings.bEnabled = false;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Gift,
+                DisabledSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "Disable update must succeed"
+        );
+        Require(
+            Queue.Enqueue(MakeRequest(ETSEventFlow::Gift)).Status ==
+                ETSEnqueueStatus::RejectedDisabled,
+            "Disabled flow must reject later admissions"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Existing.AdmittedEmission,
+            "Disabled flow existing emission"
+        );
+    }
+
+    void TestReducingFlowCapacityDoesNotEvictExistingEmissions()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& InitialSettings = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Chat,
+            0,
+            0ms,
+            3
+        );
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        const FTSEnqueueResult B = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        RequireAccepted(A, ETSEventFlow::Chat, "Reduced capacity A");
+        RequireAccepted(B, ETSEventFlow::Chat, "Reduced capacity B");
+
+        FTSFlowQueueSettings ReducedSettings = InitialSettings;
+        ReducedSettings.MaxSlots = 1;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                ReducedSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "Capacity reduction must succeed"
+        );
+        Require(
+            Queue.Enqueue(MakeRequest(ETSEventFlow::Chat)).Status ==
+                ETSEnqueueStatus::RejectedAtCapacity,
+            "Capacity reduction must reject while existing occupancy exceeds it"
+        );
+
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            A.AdmittedEmission,
+            "Reduced capacity A remains"
+        );
+        Require(
+            Queue.Confirm(A.AdmittedEmission.EmissionId).Status ==
+                ETSConfirmStatus::Confirmed,
+            "Reduced capacity A must remain confirmable"
+        );
+        Require(
+            Queue.Enqueue(MakeRequest(ETSEventFlow::Chat)).Status ==
+                ETSEnqueueStatus::RejectedAtCapacity,
+            "Occupancy equal to the reduced limit must reject"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            B.AdmittedEmission,
+            "Reduced capacity B remains"
+        );
+        Require(
+            Queue.Confirm(B.AdmittedEmission.EmissionId).Status ==
+                ETSConfirmStatus::Confirmed,
+            "Reduced capacity B must remain confirmable"
+        );
+
+        ReducedSettings.MaxSlots = 0;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                ReducedSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "Zero capacity must be a valid settings update"
+        );
+        Require(
+            Queue.Enqueue(MakeRequest(ETSEventFlow::Chat)).Status ==
+                ETSEnqueueStatus::RejectedAtCapacity,
+            "Zero capacity must reject new admissions"
+        );
+    }
+
     void TestConfirmWrongIdPreservesInFlight()
     {
         FTSEventQueueSettings Settings = MakeSettings(true, false);
@@ -700,6 +1064,11 @@ int main()
         {"TTL expires exactly at boundary", &TestDeterministicExpirationAtTTLBoundary},
         {"InFlight does not expire", &TestInFlightDoesNotExpire},
         {"Capacity counts live records", &TestCapacityCountsPendingAndInFlightAndReleasesSlots},
+        {"Flow settings update affects only future admissions", &TestFlowSettingsUpdateAffectsOnlyFutureAdmissions},
+        {"Flow settings update preserves InFlight snapshot", &TestFlowSettingsUpdatePreservesInFlightSnapshot},
+        {"Invalid flow settings updates are atomic", &TestInvalidFlowSettingsUpdatesAreAtomic},
+        {"Disabling a flow preserves existing emissions", &TestDisablingFlowPreservesExistingEmission},
+        {"Reducing flow capacity does not evict", &TestReducingFlowCapacityDoesNotEvictExistingEmissions},
         {"Wrong Confirm ID preserves InFlight", &TestConfirmWrongIdPreservesInFlight}
     };
 

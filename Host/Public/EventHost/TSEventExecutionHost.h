@@ -23,7 +23,8 @@ enum class ETSEventHostCommandKind : std::uint8_t
     GiftInput,
     GiftCompletion,
     MemberInput,
-    MemberCompletion
+    MemberCompletion,
+    FlowSettingsUpdate
 };
 
 // El variant sólo transporta el resultado propietario fuera del Host; no forma parte
@@ -48,6 +49,7 @@ struct FTSEventHostCycleResult
     // El tipo de comando determina cuál de estos resultados puede existir.
     std::optional<FTSPipelineAdmissionResult> AdmissionResult;
     std::optional<FTSProcessingCompletionResult> CompletionResult;
+    std::optional<FTSUpdateFlowSettingsResult> FlowSettingsUpdateResult;
 
     std::optional<FTSPumpResult> PumpResult;
     std::optional<FTSEventProcessingDispatch> Dispatch;
@@ -136,6 +138,12 @@ public:
     bool PostMemberCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    bool PostFlowSettingsUpdate(
+        ETSEventFlow Flow,
+        FTSFlowQueueSettings NewSettings
     );
 
     // Sólo el hilo que construyó el Host puede ejecutar el Coordinator.

@@ -234,6 +234,18 @@ public:
     }
 
     [[nodiscard]]
+    bool PostFlowSettingsUpdate(
+        ETSEventFlow Flow,
+        FTSFlowQueueSettings NewSettings
+    )
+    {
+        return PostCommand(FPostedFlowSettingsUpdate{
+            Flow,
+            std::move(NewSettings)
+        });
+    }
+
+    [[nodiscard]]
     bool PostChatCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
@@ -353,8 +365,14 @@ public:
             ProcessPostedCommand(std::move(*PostedCommand), Result);
         }
 
-        Result.Dispatch = TryBeginPendingDispatch();
-        if (!Result.Dispatch.has_value())
+        const bool bMayDispatchOrPump = Result.ProcessedCommand !=
+            ETSEventHostCommandKind::FlowSettingsUpdate;
+        if (bMayDispatchOrPump)
+        {
+            Result.Dispatch = TryBeginPendingDispatch();
+        }
+
+        if (bMayDispatchOrPump && !Result.Dispatch.has_value())
         {
             Result.PumpResult.emplace(Coordinator.Pump());
             const FTSPumpOutcome& PumpOutcome = Result.PumpResult->Outcome;
@@ -460,6 +478,14 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    // El productor publica un snapshot; sólo el owner thread lo aplica y las emisiones
+    // existentes conservan los settings efectivos congelados durante su admisión.
+    struct FPostedFlowSettingsUpdate
+    {
+        ETSEventFlow Flow = ETSEventFlow::Chat;
+        FTSFlowQueueSettings NewSettings{};
+    };
+
     using FPostedCommand = std::variant<
         FTSChatInput,
         FTSFollowInput,
@@ -474,7 +500,8 @@ private:
         FTSGiftInput,
         FPostedGiftCompletion,
         FTSMemberInput,
-        FPostedMemberCompletion
+        FPostedMemberCompletion,
+        FPostedFlowSettingsUpdate
     >;
 
     static_assert(
@@ -630,6 +657,17 @@ private:
                         Coordinator.CompleteMemberProcessing(
                             Completion.EmissionId,
                             Completion.ProcessingResult
+                        )
+                    );
+                },
+                [&](const FPostedFlowSettingsUpdate& Update)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::FlowSettingsUpdate;
+                    Result.FlowSettingsUpdateResult.emplace(
+                        Coordinator.UpdateFlowSettings(
+                            Update.Flow,
+                            Update.NewSettings
                         )
                     );
                 }
@@ -929,6 +967,17 @@ bool FTSEventExecutionHost::PostMemberCompletion(
     return Impl->PostMemberCompletion(
         EmissionId,
         ProcessingResult
+    );
+}
+
+bool FTSEventExecutionHost::PostFlowSettingsUpdate(
+    ETSEventFlow Flow,
+    FTSFlowQueueSettings NewSettings
+)
+{
+    return Impl->PostFlowSettingsUpdate(
+        Flow,
+        std::move(NewSettings)
     );
 }
 

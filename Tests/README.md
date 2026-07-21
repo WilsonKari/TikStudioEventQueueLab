@@ -3,11 +3,14 @@
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
 familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
 integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
-están completas y publicadas; el baseline vigente es `9134844`.
+están completas y publicadas; el baseline vigente es `f59836f`.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
-transversales del Pipeline. `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core
-genérico. `Tests/TikStudioTikFinityJsonDecoderTests.cpp` y
+transversales del Pipeline, incluido el passthrough de settings.
+`Tests/TSHostInfrastructureTests.cpp` cubre comandos transversales del Host y su FIFO.
+`Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core genérico. Los casos locales de
+settings verifican snapshots existentes, validación atómica, disable y capacidad.
+`Tests/TikStudioTikFinityJsonDecoderTests.cpp` y
 `Tests/TikStudioTikFinityChecklistTests.cpp` certifican la frontera transversal de los
 siete eventos.
 
@@ -52,14 +55,18 @@ Member conserva `ActionId` y el usuario portable completo y produce exclusivamen
 fases 4I.1–4I.3 y fue renombrado porque `Member` describe el evento base, mientras
 “Identity” describía un detalle del payload. `MemberRate` permanece reservado: no
 existen ventanas temporales, conteos agregados, tasas ni estado entre decisiones. El baseline
-publicado `9134844` fue certificado por el propietario con Core 10, Pipeline 112, Host
+publicado `f59836f` fue certificado por el propietario con Core 10, Pipeline 112, Host
 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0
 FAIL.
 
 Migración nominal: `LikeUser` fue renombrado a `LikeMilestone` y `MemberNormalized`
 fue renombrado a `MemberRate`. Ambos continúan reservados y sin semántica operativa.
-Estos dos renombres permanecen locales, sin certificar ni publicar, y no modifican
-pruebas ni conteos.
+Estos dos renombres fueron publicados en `f59836f` y no modificaron pruebas ni conteos.
+
+La actualización dinámica de settings permanece local y pendiente de certificación y
+publicación. Añade cinco casos Core, uno Pipeline y dos Host: los conteos esperados son
+Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
+Integration 7, para un total de 295. No se ejecutaron durante esta fase.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

@@ -36,6 +36,14 @@ public:
     [[nodiscard]]
     FTSEnqueueResult Enqueue(const FTSEnqueueRequest& Request);
 
+    // Reemplaza los settings usados por admisiones futuras; las emisiones vivas
+    // conservan los snapshots efectivos capturados al admitirse.
+    [[nodiscard]]
+    FTSUpdateFlowSettingsResult UpdateFlowSettings(
+        ETSEventFlow Flow,
+        const FTSFlowQueueSettings& NewSettings
+    );
+
     [[nodiscard]]
     FTSPumpResult Pump();
 

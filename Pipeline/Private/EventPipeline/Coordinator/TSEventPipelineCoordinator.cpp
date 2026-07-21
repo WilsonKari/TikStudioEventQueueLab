@@ -580,6 +580,15 @@ FTSEventPipelineCoordinator::FTSEventPipelineCoordinator(
 {
 }
 
+FTSUpdateFlowSettingsResult
+FTSEventPipelineCoordinator::UpdateFlowSettings(
+    ETSEventFlow Flow,
+    const FTSFlowQueueSettings& NewSettings
+)
+{
+    return Core.UpdateFlowSettings(Flow, NewSettings);
+}
+
 template <typename TPayload, typename TRepository>
 FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
     TTSFamilyDecision<TPayload> Decision,

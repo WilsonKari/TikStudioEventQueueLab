@@ -609,6 +609,44 @@ TikStudioEventQueueSystem::TikStudioEventQueueSystem(
 {
 }
 
+FTSUpdateFlowSettingsResult TikStudioEventQueueSystem::UpdateFlowSettings(
+    ETSEventFlow Flow,
+    const FTSFlowQueueSettings& NewSettings
+)
+{
+    FTSUpdateFlowSettingsResult Result;
+    Result.Flow = Flow;
+
+    if (!IsValidFlow(Flow))
+    {
+        return Result;
+    }
+
+    if (NewSettings.TTL.count() < 0)
+    {
+        Result.Status = ETSUpdateFlowSettingsStatus::RejectedInvalidTTL;
+        return Result;
+    }
+
+    switch (NewSettings.ExpirePolicy)
+    {
+    case ETSEventExpirePolicy::Discard:
+    case ETSEventExpirePolicy::Consolidate:
+        break;
+
+    default:
+        Result.Status =
+            ETSUpdateFlowSettingsStatus::RejectedInvalidExpirePolicy;
+        return Result;
+    }
+
+    // La validación concluye antes del único reemplazo. Records e índices no se
+    // recorren: sus snapshots siguen gobernando todas las emisiones ya admitidas.
+    Impl->Settings.Flows[ToIndex(Flow)] = NewSettings;
+    Result.Status = ETSUpdateFlowSettingsStatus::Updated;
+    return Result;
+}
+
 FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     const FTSEnqueueRequest& Request
 )

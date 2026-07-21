@@ -103,6 +103,12 @@ public:
     ) = delete;
 
     [[nodiscard]]
+    FTSUpdateFlowSettingsResult UpdateFlowSettings(
+        ETSEventFlow Flow,
+        const FTSFlowQueueSettings& NewSettings
+    );
+
+    [[nodiscard]]
     FTSPipelineAdmissionResult SubmitChat(FTSChatInput Input);
 
     [[nodiscard]]

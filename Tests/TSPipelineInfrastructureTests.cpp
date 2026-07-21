@@ -5,6 +5,7 @@
 #include "TSPipelineTestSupport.h"
 #include "TSTestSuites.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -427,6 +428,97 @@ namespace
         Require(Registry.Empty(), "Registry must be empty after all erases");
         Require(Registry.Size() == 0, "Empty registry size must return to zero");
     }
+
+    void TestCoordinatorDelegatesFlowSettingsUpdateWithoutPipelineMutation()
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* ChatSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::Chat);
+        Require(ChatSettings != nullptr, "Coordinator Chat settings must exist");
+        ChatSettings->bEnabled = true;
+        ChatSettings->TTL = std::chrono::milliseconds{0};
+        ChatSettings->MaxSlots = 10;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = false;
+        Settings.Pump.bPumpAfterConfirm = false;
+
+        FTSEventPipelineCoordinator Coordinator(Settings);
+        const FTSPipelineAdmissionResult Existing =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Existing.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Existing.EnqueueResult.has_value(),
+            "Coordinator settings update setup admission failed"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 1 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Coordinator setup authorities mismatch"
+        );
+
+        FTSFlowQueueSettings InvalidSettings = *ChatSettings;
+        InvalidSettings.TTL = std::chrono::milliseconds{-1};
+        Require(
+            Coordinator.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                InvalidSettings
+            ).Status == ETSUpdateFlowSettingsStatus::RejectedInvalidTTL,
+            "Coordinator must preserve the Core rejection status"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 1 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Rejected settings update must not alter Pipeline authorities"
+        );
+
+        FTSFlowQueueSettings DisabledSettings = *ChatSettings;
+        DisabledSettings.bEnabled = false;
+        const FTSUpdateFlowSettingsResult Update =
+            Coordinator.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                DisabledSettings
+            );
+        Require(
+            Update.Status == ETSUpdateFlowSettingsStatus::Updated &&
+                Update.Flow == ETSEventFlow::Chat,
+            "Coordinator must return the Core update result"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 1 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Valid settings update must not alter Pipeline authorities"
+        );
+
+        const FTSPipelineAdmissionResult Rejected =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Rejected.Status == ETSPipelineAdmissionStatus::RejectedByCore &&
+                Rejected.EnqueueResult.has_value() &&
+                Rejected.EnqueueResult->Status ==
+                    ETSEnqueueStatus::RejectedDisabled,
+            "Updated settings must affect the later Coordinator admission"
+        );
+        Require(
+            Coordinator.GetBindingCount() == 1 &&
+                Coordinator.GetChatPayloadCount() == 1,
+            "Rejected later admission must roll back its provisional payload"
+        );
+
+        const FTSPumpResult Pump = Coordinator.Pump();
+        Require(
+            Pump.Outcome.Status == ETSPumpStatus::EmissionReady &&
+                Pump.Outcome.ReadyEmission.EmissionId ==
+                    Existing.EnqueueResult->AdmittedEmission.EmissionId,
+            "Existing Coordinator emission must remain selectable"
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::Dispatched,
+            "Existing Coordinator emission must remain dispatchable"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -439,5 +531,6 @@ namespace TikStudio::Tests
         Tests.push_back({"Binding registry rejects invalid bindings", &TestBindingRegistryRejectsInvalidBindings});
         Tests.push_back({"Binding registry conditional transitions", &TestBindingRegistryConditionalTransitions});
         Tests.push_back({"Binding registry erase and size", &TestBindingRegistryEraseAndSize});
+        Tests.push_back({"Coordinator delegates flow settings update", &TestCoordinatorDelegatesFlowSettingsUpdateWithoutPipelineMutation});
     }
 }

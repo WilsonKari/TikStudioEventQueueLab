@@ -96,6 +96,21 @@ struct FTSEnqueueResult
     FTSEmissionLifecycleEvents LifecycleEvents;
 };
 
+enum class ETSUpdateFlowSettingsStatus : std::uint8_t
+{
+    Updated,
+    RejectedInvalidFlow,
+    RejectedInvalidTTL,
+    RejectedInvalidExpirePolicy
+};
+
+struct FTSUpdateFlowSettingsResult
+{
+    ETSUpdateFlowSettingsStatus Status =
+        ETSUpdateFlowSettingsStatus::RejectedInvalidFlow;
+    ETSEventFlow Flow = ETSEventFlow::Chat;
+};
+
 enum class ETSConfirmStatus : std::uint8_t
 {
     Confirmed,

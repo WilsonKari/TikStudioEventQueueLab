@@ -191,6 +191,7 @@ add_test(
 
 add_executable(TikStudioEventHostTests
   Tests/TikStudioEventHostTests.cpp
+  Tests/TSHostInfrastructureTests.cpp
   Tests/Chat/TSChatHostTests.cpp
   Tests/Follow/TSFollowHostTests.cpp
   Tests/Share/TSShareHostTests.cpp
