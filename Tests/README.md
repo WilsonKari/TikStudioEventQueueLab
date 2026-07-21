@@ -3,13 +3,16 @@
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
 familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
 integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
-están completas y publicadas; el baseline vigente es `f59836f`.
+están completas y publicadas; el baseline vigente es `b7809bc`.
 
-`Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings y piezas
-transversales del Pipeline, incluido el passthrough de settings.
-`Tests/TSHostInfrastructureTests.cpp` cubre comandos transversales del Host y su FIFO.
+`Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings, preparación
+transaccional, consistencia ready/processing/terminal y piezas transversales del
+Pipeline, incluido el passthrough de settings.
+`Tests/TSHostInfrastructureTests.cpp` cubre comandos transversales, lease/ack del frente
+y FIFO del Host ante excepciones.
 `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core genérico. Los casos locales de
-settings verifican snapshots existentes, validación atómica, disable y capacidad.
+hardening verifican prepare/commit, snapshots, desempates por `Sequence`, expiraciones,
+índices stale y repetición determinista.
 `Tests/TikStudioTikFinityJsonDecoderTests.cpp` y
 `Tests/TikStudioTikFinityChecklistTests.cpp` certifican la frontera transversal de los
 siete eventos.
@@ -63,10 +66,14 @@ Migración nominal: `LikeUser` fue renombrado a `LikeMilestone` y `MemberNormali
 fue renombrado a `MemberRate`. Ambos continúan reservados y sin semántica operativa.
 Estos dos renombres fueron publicados en `f59836f` y no modificaron pruebas ni conteos.
 
-La actualización dinámica de settings permanece local y pendiente de certificación y
-publicación. Añade cinco casos Core, uno Pipeline y dos Host: los conteos esperados son
-Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
-Integration 7, para un total de 295. No se ejecutaron durante esta fase.
+La actualización dinámica de settings fue publicada en `b7809bc` y certificada por el
+propietario con Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20, Checklist
+10 y Vertical Integration 7: 295 PASS / 0 FAIL.
+
+El hardening de invariantes compartidas permanece local y pendiente de certificación y
+publicación. Añade cinco casos Core, cuatro Pipeline y uno Host: los conteos esperados
+son Core 20, Pipeline 117, Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
+Integration 7, para un total de 305. No se ejecutaron durante esta fase.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

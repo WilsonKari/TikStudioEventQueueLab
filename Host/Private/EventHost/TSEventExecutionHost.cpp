@@ -1,6 +1,8 @@
 #include "EventHost/TSEventExecutionHost.h"
 
 #include <deque>
+#include <exception>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -350,19 +352,34 @@ public:
         // reutilizarse por el único comando procesado en este mismo ciclo.
         Result.DueExpirations = Coordinator.ProcessDueExpirations();
 
-        std::optional<FPostedCommand> PostedCommand;
+        std::optional<FPostedCommandEntry> CommandLease;
         {
             std::lock_guard<std::mutex> Lock(CommandMutex);
             if (!PostedCommands.empty())
             {
-                PostedCommand.emplace(std::move(PostedCommands.front()));
-                PostedCommands.pop_front();
+                // El lease copia el frente estable; el comando autoritativo permanece
+                // en la bandeja mientras Core y Pipeline puedan lanzar.
+                CommandLease.emplace(PostedCommands.front());
             }
         }
 
-        if (PostedCommand.has_value())
+        if (CommandLease.has_value())
         {
-            ProcessPostedCommand(std::move(*PostedCommand), Result);
+            ProcessPostedCommand(
+                std::move(CommandLease->Command),
+                Result
+            );
+
+            std::lock_guard<std::mutex> Lock(CommandMutex);
+            if (PostedCommands.empty() ||
+                PostedCommands.front().Sequence != CommandLease->Sequence)
+            {
+                std::terminate();
+            }
+
+            // Sólo el owner reconoce el lease. Una excepción anterior evita este ack,
+            // por lo que el mismo frente se reintentará sin permitir adelantamientos.
+            PostedCommands.pop_front();
         }
 
         const bool bMayDispatchOrPump = Result.ProcessedCommand !=
@@ -504,6 +521,12 @@ private:
         FPostedFlowSettingsUpdate
     >;
 
+    struct FPostedCommandEntry
+    {
+        std::uint64_t Sequence = 0;
+        FPostedCommand Command;
+    };
+
     static_assert(
         std::is_nothrow_move_constructible_v<FPostedCommand>
     );
@@ -515,8 +538,26 @@ private:
         std::lock_guard<std::mutex> Lock(CommandMutex);
         const bool bWasEmpty = PostedCommands.empty();
 
+        if (NextPostedCommandSequence == 0)
+        {
+            throw std::overflow_error("Host command identity exhausted");
+        }
+
         // Una sola bandeja conserva el orden total de publicaciones entre familias.
-        PostedCommands.emplace_back(std::move(Command));
+        const std::uint64_t Sequence = NextPostedCommandSequence;
+        PostedCommands.push_back(FPostedCommandEntry{
+            Sequence,
+            FPostedCommand(std::move(Command))
+        });
+
+        if (Sequence == std::numeric_limits<std::uint64_t>::max())
+        {
+            NextPostedCommandSequence = 0;
+        }
+        else
+        {
+            ++NextPostedCommandSequence;
+        }
         return bWasEmpty;
     }
 
@@ -853,7 +894,8 @@ private:
 
     FTSEventPipelineCoordinator Coordinator;
     std::mutex CommandMutex;
-    std::deque<FPostedCommand> PostedCommands;
+    std::deque<FPostedCommandEntry> PostedCommands;
+    std::uint64_t NextPostedCommandSequence = 1;
     std::thread::id OwnerThreadId;
 };
 

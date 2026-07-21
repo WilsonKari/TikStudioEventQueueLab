@@ -8,6 +8,7 @@
 #include "EventPipeline/Families/TSGiftFamily.h"
 #include "EventPipeline/Families/TSMemberFamily.h"
 
+#include <exception>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -61,6 +62,9 @@ static_assert(
 static_assert(std::is_nothrow_move_constructible_v<FTSPumpResult>);
 static_assert(
     std::is_nothrow_move_constructible_v<FTSProcessDueExpirationsResult>
+);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSEmissionEnvelope>
 );
 
 namespace
@@ -142,29 +146,6 @@ namespace
             Status == ETSEnqueueStatus::AcceptedWithEviction;
     }
 
-    [[nodiscard]]
-    constexpr bool IsSupportedFamilyFlowPair(
-        ETSEventFamilyKind FamilyKind,
-        ETSEventFlow Flow
-    ) noexcept
-    {
-        return
-            (FamilyKind == ETSEventFamilyKind::Chat &&
-                Flow == ETSEventFlow::Chat) ||
-            (FamilyKind == ETSEventFamilyKind::Follow &&
-                Flow == ETSEventFlow::Follow) ||
-            (FamilyKind == ETSEventFamilyKind::Share &&
-                Flow == ETSEventFlow::Share) ||
-            (FamilyKind == ETSEventFamilyKind::Like &&
-                Flow == ETSEventFlow::Like) ||
-            (FamilyKind == ETSEventFamilyKind::RoomUser &&
-                Flow == ETSEventFlow::RoomUser) ||
-            (FamilyKind == ETSEventFamilyKind::Gift &&
-                Flow == ETSEventFlow::Gift) ||
-            (FamilyKind == ETSEventFamilyKind::Member &&
-                Flow == ETSEventFlow::Member);
-    }
-
     void ValidateSupportedFamilyFlowPair(
         ETSEventFamilyKind FamilyKind,
         ETSEventFlow Flow
@@ -192,6 +173,12 @@ namespace
         FTSPayloadHandle PayloadHandle{};
         ETSExternalEmissionState ExpectedState =
             ETSExternalEmissionState::Bound;
+        bool bClearsReady = false;
+    };
+
+    struct FPreparedLifecycleBatch
+    {
+        std::vector<FValidatedLifecycleEntry> Entries;
     };
 
     [[nodiscard]]
@@ -361,7 +348,7 @@ namespace
     }
 
     [[nodiscard]]
-    bool ErasePayloadForBinding(
+    void CommitErasePayloadForBinding(
         const FValidatedLifecycleEntry& Entry,
         FTSChatPayloadRepository& ChatPayloadRepository,
         FTSFollowPayloadRepository& FollowPayloadRepository,
@@ -370,47 +357,53 @@ namespace
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
         FTSMemberPayloadRepository& MemberPayloadRepository
-    )
+    ) noexcept
     {
         switch (Entry.FamilyKind)
         {
         case ETSEventFamilyKind::Chat:
-            return ChatPayloadRepository.Erase(Entry.PayloadHandle);
+            ChatPayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::Follow:
-            return FollowPayloadRepository.Erase(Entry.PayloadHandle);
+            FollowPayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::Share:
-            return SharePayloadRepository.Erase(Entry.PayloadHandle);
+            SharePayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::Like:
-            return LikePayloadRepository.Erase(Entry.PayloadHandle);
+            LikePayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::RoomUser:
-            return RoomUserPayloadRepository.Erase(Entry.PayloadHandle);
+            RoomUserPayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::Gift:
-            return GiftPayloadRepository.Erase(Entry.PayloadHandle);
+            GiftPayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         case ETSEventFamilyKind::Member:
-            return MemberPayloadRepository.Erase(Entry.PayloadHandle);
+            MemberPayloadRepository.CommitErase(Entry.PayloadHandle);
+            return;
 
         default:
-            throw std::logic_error(
-                "Lifecycle cleanup references an unsupported payload family"
-            );
+            std::terminate();
         }
     }
 
-    void ValidateAndApplyLifecycleBatch(
-        FTSEmissionBindingRegistry& BindingRegistry,
-        FTSChatPayloadRepository& ChatPayloadRepository,
-        FTSFollowPayloadRepository& FollowPayloadRepository,
-        FTSSharePayloadRepository& SharePayloadRepository,
-        FTSLikePayloadRepository& LikePayloadRepository,
-        FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
-        FTSGiftPayloadRepository& GiftPayloadRepository,
-        FTSMemberPayloadRepository& MemberPayloadRepository,
+    [[nodiscard]]
+    FPreparedLifecycleBatch PrepareLifecycleBatch(
+        const FTSEmissionBindingRegistry& BindingRegistry,
+        const FTSChatPayloadRepository& ChatPayloadRepository,
+        const FTSFollowPayloadRepository& FollowPayloadRepository,
+        const FTSSharePayloadRepository& SharePayloadRepository,
+        const FTSLikePayloadRepository& LikePayloadRepository,
+        const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
+        const FTSGiftPayloadRepository& GiftPayloadRepository,
+        const FTSMemberPayloadRepository& MemberPayloadRepository,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
         const FTSEmissionLifecycleEvents& LifecycleEvents,
         ELifecycleBatchKind BatchKind,
@@ -425,8 +418,8 @@ namespace
 
         // La tanda completa valida binding, payload, estado y pareja familia/flujo;
         // el ready se trata sólo como una notificación que no puede quedar stale.
-        std::vector<FValidatedLifecycleEntry> ValidatedEntries;
-        ValidatedEntries.reserve(LifecycleEvents.size());
+        FPreparedLifecycleBatch Prepared;
+        Prepared.Entries.reserve(LifecycleEvents.size());
 
         for (const FTSEmissionLifecycleEvent& LifecycleEvent : LifecycleEvents)
         {
@@ -440,7 +433,7 @@ namespace
                 );
             }
 
-            for (const FValidatedLifecycleEntry& Entry : ValidatedEntries)
+            for (const FValidatedLifecycleEntry& Entry : Prepared.Entries)
             {
                 if (Entry.EmissionId == EmissionId)
                 {
@@ -448,14 +441,6 @@ namespace
                         "Lifecycle contains a duplicate identity"
                     );
                 }
-            }
-
-            if (PendingReadyEmission.has_value() &&
-                PendingReadyEmission->EmissionId == EmissionId)
-            {
-                throw std::logic_error(
-                    "Lifecycle targets a pending ready notification"
-                );
             }
 
             const ETSExternalEmissionState ExpectedState =
@@ -521,52 +506,60 @@ namespace
                 );
             }
 
-            ValidatedEntries.push_back(
+            const bool bClearsReady = PendingReadyEmission.has_value() &&
+                PendingReadyEmission->EmissionId == EmissionId;
+
+            Prepared.Entries.push_back(
                 FValidatedLifecycleEntry{
                     EmissionId,
                     Binding.FamilyKind,
                     Binding.PayloadHandle,
-                    ExpectedState
+                    ExpectedState,
+                    bClearsReady
                 }
             );
         }
 
-        // Tras validar toda la tanda, las autoridades externas transicionan y se
-        // limpian en el mismo orden autoritativo comunicado por el Core.
-        for (const FValidatedLifecycleEntry& Entry : ValidatedEntries)
+        return Prepared;
+    }
+
+    // Toda asignación y validación ya ocurrió. Esta fase sincroniza y limpia las
+    // autoridades externas en el orden autoritativo del Core sin poder lanzar.
+    void CommitLifecycleBatch(
+        FTSEmissionBindingRegistry& BindingRegistry,
+        FTSChatPayloadRepository& ChatPayloadRepository,
+        FTSFollowPayloadRepository& FollowPayloadRepository,
+        FTSSharePayloadRepository& SharePayloadRepository,
+        FTSLikePayloadRepository& LikePayloadRepository,
+        FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
+        FTSGiftPayloadRepository& GiftPayloadRepository,
+        FTSMemberPayloadRepository& MemberPayloadRepository,
+        std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
+        const FPreparedLifecycleBatch& Prepared
+    ) noexcept
+    {
+        for (const FValidatedLifecycleEntry& Entry : Prepared.Entries)
         {
-            if (!BindingRegistry.TransitionState(
-                    Entry.EmissionId,
-                    Entry.ExpectedState,
-                    ETSExternalEmissionState::TerminalPendingHandling
-                ))
-            {
-                throw std::logic_error(
-                    "Lifecycle binding transition failed"
-                );
-            }
+            BindingRegistry.CommitTransitionState(
+                Entry.EmissionId,
+                Entry.ExpectedState,
+                ETSExternalEmissionState::TerminalPendingHandling
+            );
+            CommitErasePayloadForBinding(
+                Entry,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository
+            );
+            BindingRegistry.CommitErase(Entry.EmissionId);
 
-            if (!ErasePayloadForBinding(
-                    Entry,
-                    ChatPayloadRepository,
-                    FollowPayloadRepository,
-                    SharePayloadRepository,
-                    LikePayloadRepository,
-                    RoomUserPayloadRepository,
-                    GiftPayloadRepository,
-                    MemberPayloadRepository
-                ))
+            if (Entry.bClearsReady)
             {
-                throw std::logic_error(
-                    "Lifecycle payload disappeared before cleanup"
-                );
-            }
-
-            if (!BindingRegistry.Erase(Entry.EmissionId))
-            {
-                throw std::logic_error(
-                    "Lifecycle binding disappeared before cleanup"
-                );
+                PendingReadyEmission.reset();
             }
         }
     }
@@ -606,7 +599,8 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
 
     TTSAdmissionCandidate<TPayload> Candidate = std::move(*Decision);
     if (Candidate.FamilyKind != ExpectedFamilyKind ||
-        Candidate.EnqueueRequest.Flow != ExpectedFlow)
+        Candidate.EnqueueRequest.Flow != ExpectedFlow ||
+        !IsSupportedFamilyFlowPair(ExpectedFamilyKind, ExpectedFlow))
     {
         throw std::logic_error(
             "Family decision does not match its coordinator route"
@@ -629,11 +623,84 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         Repository,
         *PayloadHandle
     );
-    FTSEnqueueResult CoreResult = Core.Enqueue(Candidate.EnqueueRequest);
+
+    std::optional<FTSEmissionBindingRegistry::FPreparedInsert>
+        PreparedBindingInsert;
+    FPreparedLifecycleBatch PreparedLifecycle;
+    std::optional<FTSEmissionEnvelope> PreparedReady;
+
+    FTSEnqueueResult CoreResult = Core.EnqueuePrepared(
+        Candidate.EnqueueRequest,
+        [&](const FTSEnqueueResult& PreparedCoreResult)
+        {
+            if (!IsAcceptedStatus(PreparedCoreResult.Status))
+            {
+                if (!PreparedCoreResult.LifecycleEvents.empty() ||
+                    PreparedCoreResult.AutoPumpOutcome.Status !=
+                        ETSPumpStatus::NotRequested)
+                {
+                    throw std::logic_error(
+                        "Rejected admission prepared Core mutations"
+                    );
+                }
+                return;
+            }
+
+            if (PreparedCoreResult.AdmittedEmission.EmissionId == 0)
+            {
+                throw std::logic_error(
+                    "Accepted emission has an invalid identity"
+                );
+            }
+
+            if (PreparedCoreResult.AdmittedEmission.Flow != ExpectedFlow)
+            {
+                throw std::logic_error(
+                    "Accepted emission flow does not match its request"
+                );
+            }
+
+            FTSEmissionBinding Binding;
+            Binding.EmissionId =
+                PreparedCoreResult.AdmittedEmission.EmissionId;
+            Binding.FamilyKind = ExpectedFamilyKind;
+            Binding.ExpectedFlow = ExpectedFlow;
+            Binding.PayloadHandle = *PayloadHandle;
+            Binding.ExternalState = ETSExternalEmissionState::Bound;
+
+            std::optional<FTSEmissionBindingRegistry::FPreparedInsert>
+                BindingInsert = BindingRegistry.PrepareInsert(Binding);
+            if (!BindingInsert.has_value())
+            {
+                throw std::logic_error(
+                    "Accepted emission could not prepare its binding"
+                );
+            }
+
+            PreparedLifecycle = PrepareLifecycleBatch(
+                BindingRegistry,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository,
+                PendingReadyEmission,
+                PreparedCoreResult.LifecycleEvents,
+                ELifecycleBatchKind::PendingOnly,
+                0
+            );
+            PreparedReady = PrepareCorePumpOutcome(
+                PreparedCoreResult.AutoPumpOutcome,
+                &Binding
+            );
+            PreparedBindingInsert.emplace(std::move(*BindingInsert));
+        }
+    );
 
     if (!IsAcceptedStatus(CoreResult.Status))
     {
-        ProcessPendingLifecycleEvents(CoreResult.LifecycleEvents);
         ProvisionalGuard.RollbackNow();
 
         Result.Status = ETSPipelineAdmissionStatus::RejectedByCore;
@@ -641,38 +708,23 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         return Result;
     }
 
-    // El Core ya realizó el commit autoritativo; binding, lifecycle y ready sólo
-    // sincronizan las autoridades externas, sin simular rollback.
+    // El callback ya reservó y validó todo. Desde el commit del Core hasta terminar
+    // binding, lifecycle y ready sólo se ejecutan operaciones noexcept.
+    BindingRegistry.CommitInsert(*PreparedBindingInsert);
+    CommitLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        FollowPayloadRepository,
+        SharePayloadRepository,
+        LikePayloadRepository,
+        RoomUserPayloadRepository,
+        GiftPayloadRepository,
+        MemberPayloadRepository,
+        PendingReadyEmission,
+        PreparedLifecycle
+    );
+    CommitCorePumpOutcome(PreparedReady);
     ProvisionalGuard.Release();
-
-    if (CoreResult.AdmittedEmission.EmissionId == 0)
-    {
-        throw std::logic_error(
-            "Accepted emission has an invalid identity"
-        );
-    }
-
-    if (CoreResult.AdmittedEmission.Flow != ExpectedFlow)
-    {
-        throw std::logic_error(
-            "Accepted emission flow does not match its request"
-        );
-    }
-
-    FTSEmissionBinding Binding;
-    Binding.EmissionId = CoreResult.AdmittedEmission.EmissionId;
-    Binding.FamilyKind = ExpectedFamilyKind;
-    Binding.ExpectedFlow = ExpectedFlow;
-    Binding.PayloadHandle = *PayloadHandle;
-    Binding.ExternalState = ETSExternalEmissionState::Bound;
-
-    if (!BindingRegistry.Insert(std::move(Binding)))
-    {
-        throw std::logic_error("Accepted emission could not be bound");
-    }
-
-    ProcessPendingLifecycleEvents(CoreResult.LifecycleEvents);
-    CaptureCorePumpOutcome(CoreResult.AutoPumpOutcome);
 
     Result.Status = ETSPipelineAdmissionStatus::Accepted;
     Result.EnqueueResult = std::move(CoreResult);
@@ -813,6 +865,20 @@ FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
         );
     }
 
+    if (!HasPayloadForBinding(
+            Binding,
+            ChatPayloadRepository,
+            FollowPayloadRepository,
+            SharePayloadRepository,
+            LikePayloadRepository,
+            RoomUserPayloadRepository,
+            GiftPayloadRepository,
+            MemberPayloadRepository
+        ))
+    {
+        throw std::logic_error("Pending ready binding has no payload");
+    }
+
     return Binding;
 }
 
@@ -848,6 +914,8 @@ FTSEventPipelineCoordinator::BeginProcessing(
         );
     }
 
+    ValidateSupportedFamilyFlowPair(ExpectedFamilyKind, ExpectedFlow);
+
     TPayload Payload;
     const bool bFoundPayload = Repository.Visit(
         Binding.PayloadHandle,
@@ -868,15 +936,11 @@ FTSEventPipelineCoordinator::BeginProcessing(
 
     // Binding, payload y pareja familia/flujo se validan y el dispatch se construye
     // antes de comprometer Bound -> Processing y consumir la notificación ready.
-    if (!BindingRegistry.TransitionState(
-            Binding.EmissionId,
-            ETSExternalEmissionState::Bound,
-            ETSExternalEmissionState::Processing
-        ))
-    {
-        throw std::logic_error("Pending ready could not enter Processing");
-    }
-
+    BindingRegistry.CommitTransitionState(
+        Binding.EmissionId,
+        ETSExternalEmissionState::Bound,
+        ETSExternalEmissionState::Processing
+    );
     PendingReadyEmission.reset();
     return Result;
 }
@@ -1074,39 +1138,100 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         );
     }
 
+    FPreparedLifecycleBatch PreparedLifecycle;
+    std::optional<FTSEmissionEnvelope> PreparedReady;
+
     if (ProcessingResult == ETSProcessingResult::Succeeded)
     {
-        FTSConfirmResult CoreResult = Core.Confirm(EmissionId);
-
-        if (CoreResult.Status != ETSConfirmStatus::Confirmed)
-        {
-            throw std::logic_error(
-                "Core rejected a valid processing confirmation"
-            );
-        }
-
-        ProcessConfirmLifecycleEvents(
+        FTSConfirmResult CoreResult = Core.ConfirmPrepared(
             EmissionId,
-            CoreResult.LifecycleEvents
+            [&](const FTSConfirmResult& PreparedCoreResult)
+            {
+                if (PreparedCoreResult.Status != ETSConfirmStatus::Confirmed)
+                {
+                    throw std::logic_error(
+                        "Core rejected a valid processing confirmation"
+                    );
+                }
+
+                PreparedLifecycle = PrepareLifecycleBatch(
+                    BindingRegistry,
+                    ChatPayloadRepository,
+                    FollowPayloadRepository,
+                    SharePayloadRepository,
+                    LikePayloadRepository,
+                    RoomUserPayloadRepository,
+                    GiftPayloadRepository,
+                    MemberPayloadRepository,
+                    PendingReadyEmission,
+                    PreparedCoreResult.LifecycleEvents,
+                    ELifecycleBatchKind::Confirm,
+                    EmissionId
+                );
+                PreparedReady = PrepareCorePumpOutcome(
+                    PreparedCoreResult.AutoPumpOutcome
+                );
+            }
         );
-        CaptureCorePumpOutcome(CoreResult.AutoPumpOutcome);
+
+        CommitLifecycleBatch(
+            BindingRegistry,
+            ChatPayloadRepository,
+            FollowPayloadRepository,
+            SharePayloadRepository,
+            LikePayloadRepository,
+            RoomUserPayloadRepository,
+            GiftPayloadRepository,
+            MemberPayloadRepository,
+            PendingReadyEmission,
+            PreparedLifecycle
+        );
+        CommitCorePumpOutcome(PreparedReady);
         Result.ConfirmResult.emplace(std::move(CoreResult));
         return Result;
     }
 
     // Failed también es terminal; el Pipeline no crea retry implícito.
-    FTSCancelInFlightResult CoreResult = Core.CancelInFlight(EmissionId);
-
-    if (CoreResult.Status != ETSCancelInFlightStatus::Cancelled)
-    {
-        throw std::logic_error(
-            "Core rejected a valid processing cancellation"
-        );
-    }
-
-    ProcessCancelLifecycleEvents(
+    FTSCancelInFlightResult CoreResult = Core.CancelInFlightPrepared(
         EmissionId,
-        CoreResult.LifecycleEvents
+        [&](const FTSCancelInFlightResult& PreparedCoreResult)
+        {
+            if (PreparedCoreResult.Status !=
+                ETSCancelInFlightStatus::Cancelled)
+            {
+                throw std::logic_error(
+                    "Core rejected a valid processing cancellation"
+                );
+            }
+
+            PreparedLifecycle = PrepareLifecycleBatch(
+                BindingRegistry,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository,
+                PendingReadyEmission,
+                PreparedCoreResult.LifecycleEvents,
+                ELifecycleBatchKind::Cancel,
+                EmissionId
+            );
+        }
+    );
+
+    CommitLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        FollowPayloadRepository,
+        SharePayloadRepository,
+        LikePayloadRepository,
+        RoomUserPayloadRepository,
+        GiftPayloadRepository,
+        MemberPayloadRepository,
+        PendingReadyEmission,
+        PreparedLifecycle
     );
     Result.CancelResult.emplace(std::move(CoreResult));
     return Result;
@@ -1219,17 +1344,84 @@ FTSEventPipelineCoordinator::CompleteMemberProcessing(
 
 FTSPumpResult FTSEventPipelineCoordinator::Pump()
 {
-    FTSPumpResult Result = Core.Pump();
-    ProcessPendingLifecycleEvents(Result.LifecycleEvents);
-    CaptureCorePumpOutcome(Result.Outcome);
+    FPreparedLifecycleBatch PreparedLifecycle;
+    std::optional<FTSEmissionEnvelope> PreparedReady;
+    FTSPumpResult Result = Core.PumpPrepared(
+        [&](const FTSPumpResult& PreparedCoreResult)
+        {
+            PreparedLifecycle = PrepareLifecycleBatch(
+                BindingRegistry,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository,
+                PendingReadyEmission,
+                PreparedCoreResult.LifecycleEvents,
+                ELifecycleBatchKind::PendingOnly,
+                0
+            );
+            PreparedReady = PrepareCorePumpOutcome(
+                PreparedCoreResult.Outcome
+            );
+        }
+    );
+
+    CommitLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        FollowPayloadRepository,
+        SharePayloadRepository,
+        LikePayloadRepository,
+        RoomUserPayloadRepository,
+        GiftPayloadRepository,
+        MemberPayloadRepository,
+        PendingReadyEmission,
+        PreparedLifecycle
+    );
+    CommitCorePumpOutcome(PreparedReady);
     return Result;
 }
 
 FTSProcessDueExpirationsResult
 FTSEventPipelineCoordinator::ProcessDueExpirations()
 {
-    FTSProcessDueExpirationsResult Result = Core.ProcessDueExpirations();
-    ProcessPendingLifecycleEvents(Result.LifecycleEvents);
+    FPreparedLifecycleBatch PreparedLifecycle;
+    FTSProcessDueExpirationsResult Result =
+        Core.ProcessDueExpirationsPrepared(
+            [&](const FTSProcessDueExpirationsResult& PreparedCoreResult)
+            {
+                PreparedLifecycle = PrepareLifecycleBatch(
+                    BindingRegistry,
+                    ChatPayloadRepository,
+                    FollowPayloadRepository,
+                    SharePayloadRepository,
+                    LikePayloadRepository,
+                    RoomUserPayloadRepository,
+                    GiftPayloadRepository,
+                    MemberPayloadRepository,
+                    PendingReadyEmission,
+                    PreparedCoreResult.LifecycleEvents,
+                    ELifecycleBatchKind::PendingOnly,
+                    0
+                );
+            }
+        );
+
+    CommitLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        FollowPayloadRepository,
+        SharePayloadRepository,
+        LikePayloadRepository,
+        RoomUserPayloadRepository,
+        GiftPayloadRepository,
+        MemberPayloadRepository,
+        PendingReadyEmission,
+        PreparedLifecycle
+    );
     return Result;
 }
 
@@ -1290,84 +1482,150 @@ std::size_t FTSEventPipelineCoordinator::GetMemberPayloadCount() const noexcept
     return MemberPayloadRepository.Size();
 }
 
-void FTSEventPipelineCoordinator::CaptureCorePumpOutcome(
-    const FTSPumpOutcome& PumpOutcome
-)
+void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
+{
+    const std::size_t PayloadCount =
+        ChatPayloadRepository.Size() +
+        FollowPayloadRepository.Size() +
+        SharePayloadRepository.Size() +
+        LikePayloadRepository.Size() +
+        RoomUserPayloadRepository.Size() +
+        GiftPayloadRepository.Size() +
+        MemberPayloadRepository.Size();
+    if (PayloadCount != BindingRegistry.Size())
+    {
+        throw std::logic_error(
+            "Pipeline payload and binding authorities have different sizes"
+        );
+    }
+
+    std::size_t ProcessingCount = 0;
+    BindingRegistry.VisitAll(
+        [&](const FTSEmissionBinding& Binding)
+        {
+            if (Binding.EmissionId == 0 ||
+                Binding.PayloadHandle.Value == 0 ||
+                !IsSupportedFamilyFlowPair(
+                    Binding.FamilyKind,
+                    Binding.ExpectedFlow
+                ) ||
+                Binding.ExternalState ==
+                    ETSExternalEmissionState::TerminalPendingHandling)
+            {
+                throw std::logic_error(
+                    "Pipeline contains an invalid live binding"
+                );
+            }
+
+            if (!HasPayloadForBinding(
+                    Binding,
+                    ChatPayloadRepository,
+                    FollowPayloadRepository,
+                    SharePayloadRepository,
+                    LikePayloadRepository,
+                    RoomUserPayloadRepository,
+                    GiftPayloadRepository,
+                    MemberPayloadRepository
+                ))
+            {
+                throw std::logic_error(
+                    "Pipeline binding references a missing payload"
+                );
+            }
+
+            if (Binding.ExternalState ==
+                ETSExternalEmissionState::Processing)
+            {
+                ++ProcessingCount;
+            }
+        }
+    );
+
+    if (ProcessingCount > 1)
+    {
+        throw std::logic_error(
+            "Pipeline contains more than one Processing binding"
+        );
+    }
+
+    if (PendingReadyEmission.has_value())
+    {
+        (void)ValidateReadyBinding(*PendingReadyEmission);
+        if (ProcessingCount != 0)
+        {
+            throw std::logic_error(
+                "Pipeline ready and Processing states overlap"
+            );
+        }
+    }
+}
+
+std::optional<FTSEmissionEnvelope>
+FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
+    const FTSPumpOutcome& PumpOutcome,
+    const FTSEmissionBinding* PreparedBinding
+) const
 {
     if (PumpOutcome.Status != ETSPumpStatus::EmissionReady)
     {
-        return;
+        return std::nullopt;
     }
-
-    const FTSEmissionEnvelope& ReadyEmission = PumpOutcome.ReadyEmission;
-    (void)ValidateReadyBinding(ReadyEmission);
 
     if (PendingReadyEmission.has_value())
     {
         throw std::logic_error("A ready notification is already pending");
     }
 
-    PendingReadyEmission = ReadyEmission;
+    const FTSEmissionEnvelope& ReadyEmission = PumpOutcome.ReadyEmission;
+    if (PreparedBinding != nullptr &&
+        PreparedBinding->EmissionId == ReadyEmission.EmissionId)
+    {
+        if (PreparedBinding->ExpectedFlow != ReadyEmission.Flow ||
+            PreparedBinding->ExternalState !=
+                ETSExternalEmissionState::Bound ||
+            !IsSupportedFamilyFlowPair(
+                PreparedBinding->FamilyKind,
+                PreparedBinding->ExpectedFlow
+            ) ||
+            !HasPayloadForBinding(
+                *PreparedBinding,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository
+            ))
+        {
+            throw std::logic_error(
+                "Prepared ready does not match its admission binding"
+            );
+        }
+    }
+    else
+    {
+        (void)ValidateReadyBinding(ReadyEmission);
+    }
+
+    return ReadyEmission;
 }
 
-void FTSEventPipelineCoordinator::ProcessPendingLifecycleEvents(
-    const FTSEmissionLifecycleEvents& LifecycleEvents
-)
+void FTSEventPipelineCoordinator::CommitCorePumpOutcome(
+    std::optional<FTSEmissionEnvelope>& PreparedReady
+) noexcept
 {
-    ValidateAndApplyLifecycleBatch(
-        BindingRegistry,
-        ChatPayloadRepository,
-        FollowPayloadRepository,
-        SharePayloadRepository,
-        LikePayloadRepository,
-        RoomUserPayloadRepository,
-        GiftPayloadRepository,
-        MemberPayloadRepository,
-        PendingReadyEmission,
-        LifecycleEvents,
-        ELifecycleBatchKind::PendingOnly,
-        0
-    );
-}
+    if (!PreparedReady.has_value())
+    {
+        return;
+    }
 
-void FTSEventPipelineCoordinator::ProcessConfirmLifecycleEvents(
-    FTSEmissionId EmissionId,
-    const FTSEmissionLifecycleEvents& LifecycleEvents
-)
-{
-    ValidateAndApplyLifecycleBatch(
-        BindingRegistry,
-        ChatPayloadRepository,
-        FollowPayloadRepository,
-        SharePayloadRepository,
-        LikePayloadRepository,
-        RoomUserPayloadRepository,
-        GiftPayloadRepository,
-        MemberPayloadRepository,
-        PendingReadyEmission,
-        LifecycleEvents,
-        ELifecycleBatchKind::Confirm,
-        EmissionId
-    );
-}
+    if (PendingReadyEmission.has_value())
+    {
+        std::terminate();
+    }
 
-void FTSEventPipelineCoordinator::ProcessCancelLifecycleEvents(
-    FTSEmissionId EmissionId,
-    const FTSEmissionLifecycleEvents& LifecycleEvents
-)
-{
-    ValidateAndApplyLifecycleBatch(
-        BindingRegistry,
-        ChatPayloadRepository,
-        FollowPayloadRepository,
-        SharePayloadRepository,
-        LikePayloadRepository,
-        RoomUserPayloadRepository,
-        GiftPayloadRepository,
-        MemberPayloadRepository,
-        PendingReadyEmission,
-        LifecycleEvents,
-        ELifecycleBatchKind::Cancel,
-        EmissionId
-    );
+    // Ready sólo notifica el InFlight ya comprometido; no introduce otra autoridad.
+    PendingReadyEmission.emplace(std::move(*PreparedReady));
+    PreparedReady.reset();
 }

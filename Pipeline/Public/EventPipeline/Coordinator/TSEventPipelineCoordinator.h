@@ -538,6 +538,10 @@ public:
     [[nodiscard]]
     std::size_t GetMemberPayloadCount() const noexcept;
 
+    // Diagnóstico portable reutilizable por las suites compartidas. Verifica que
+    // bindings, payloads y la notificación ready no contradigan sus autoridades.
+    void ValidateInternalConsistency() const;
+
 private:
     template <typename TPayload, typename TRepository>
     FTSPipelineAdmissionResult SubmitDecision(
@@ -568,21 +572,15 @@ private:
         const FTSEmissionEnvelope& ReadyEmission
     ) const;
 
-    void CaptureCorePumpOutcome(const FTSPumpOutcome& PumpOutcome);
+    [[nodiscard]]
+    std::optional<FTSEmissionEnvelope> PrepareCorePumpOutcome(
+        const FTSPumpOutcome& PumpOutcome,
+        const FTSEmissionBinding* PreparedBinding = nullptr
+    ) const;
 
-    void ProcessPendingLifecycleEvents(
-        const FTSEmissionLifecycleEvents& LifecycleEvents
-    );
-
-    void ProcessConfirmLifecycleEvents(
-        FTSEmissionId EmissionId,
-        const FTSEmissionLifecycleEvents& LifecycleEvents
-    );
-
-    void ProcessCancelLifecycleEvents(
-        FTSEmissionId EmissionId,
-        const FTSEmissionLifecycleEvents& LifecycleEvents
-    );
+    void CommitCorePumpOutcome(
+        std::optional<FTSEmissionEnvelope>& PreparedReady
+    ) noexcept;
 
     TikStudioEventQueueSystem Core;
     FTSChatPayloadRepository ChatPayloadRepository;

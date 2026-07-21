@@ -2,11 +2,35 @@
 #include "TSTestSuites.h"
 
 #include <chrono>
+#include <cstddef>
+#include <stdexcept>
 #include <utility>
+#include <variant>
 
 namespace
 {
     using namespace TikStudio::Tests;
+
+    struct FFailingHostClock
+    {
+        FTSEventQueueTimePoint Now{};
+        std::size_t CaptureCount = 0;
+        std::size_t ThrowOnCapture = 0;
+
+        [[nodiscard]]
+        FTSNowProvider MakeProvider()
+        {
+            return [this]()
+            {
+                ++CaptureCount;
+                if (CaptureCount == ThrowOnCapture)
+                {
+                    throw std::runtime_error("Controlled Host clock failure");
+                }
+                return Now;
+            };
+        }
+    };
 
     void TestHostAppliesFlowSettingsUpdateInGlobalFIFOOrder()
     {
@@ -159,6 +183,76 @@ namespace
             "Rejected settings update must leave the original settings active"
         );
     }
+
+    void TestHostRetainsFailedFrontCommandAndPreservesFIFO()
+    {
+        FFailingHostClock Clock;
+        Clock.ThrowOnCapture = 2;
+        FTSEventExecutionHost Host(
+            MakeChatSettings(
+                10,
+                std::chrono::milliseconds{0},
+                false,
+                false
+            ),
+            Clock.MakeProvider()
+        );
+
+        Require(
+            Host.PostChat(MakeChatInput("leased-front")),
+            "Failed command setup must signal the empty tray"
+        );
+        Require(
+            !Host.PostChat(MakeChatInput("queued-after-front")),
+            "Second command must remain behind the leased front"
+        );
+
+        bool bThrew = false;
+        try
+        {
+            (void)Host.RunOneCycle();
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(bThrew, "Command processing failure must propagate");
+
+        Clock.ThrowOnCapture = 0;
+        const FTSEventHostCycleResult Retried = Host.RunOneCycle();
+        Require(
+            Retried.ProcessedCommand == ETSEventHostCommandKind::ChatInput &&
+                Retried.AdmissionResult.has_value() &&
+                Retried.AdmissionResult->Status ==
+                    ETSPipelineAdmissionStatus::Accepted &&
+                Retried.AdmissionResult->EnqueueResult.has_value() &&
+                Retried.AdmissionResult->EnqueueResult->AdmittedEmission.EmissionId ==
+                    1 &&
+                Retried.Dispatch.has_value() &&
+                Retried.bMoreCommandsPending,
+            "The failed front command must retry once before later work"
+        );
+        const FTSChatProcessingDispatch* FirstDispatch =
+            std::get_if<FTSChatProcessingDispatch>(&*Retried.Dispatch);
+        Require(
+            FirstDispatch != nullptr &&
+                FirstDispatch->Payload.Input.Comment == "leased-front",
+            "Retried dispatch must belong to the original front command"
+        );
+
+        const FTSEventHostCycleResult Later = Host.RunOneCycle();
+        Require(
+            Later.ProcessedCommand == ETSEventHostCommandKind::ChatInput &&
+                Later.AdmissionResult.has_value() &&
+                Later.AdmissionResult->Status ==
+                    ETSPipelineAdmissionStatus::Accepted &&
+                Later.AdmissionResult->EnqueueResult.has_value() &&
+                Later.AdmissionResult->EnqueueResult->AdmittedEmission.EmissionId ==
+                    2 &&
+                !Later.bMoreCommandsPending,
+            "The later command must keep FIFO and execute after the retry"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -172,6 +266,10 @@ namespace TikStudio::Tests
         Tests.push_back({
             "Host reports rejected flow settings update",
             &TestHostReportsRejectedFlowSettingsUpdate
+        });
+        Tests.push_back({
+            "Host retains failed front command and preserves FIFO",
+            &TestHostRetainsFailedFrontCommandAndPreservesFIFO
         });
     }
 }

@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <type_traits>
@@ -9,9 +10,23 @@
 #include <utility>
 #include <vector>
 
+static_assert(std::is_nothrow_move_constructible_v<FTSEnqueueResult>);
+static_assert(std::is_nothrow_move_constructible_v<FTSPumpResult>);
+static_assert(std::is_nothrow_move_constructible_v<FTSConfirmResult>);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSCancelInFlightResult>
+);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSProcessDueExpirationsResult>
+);
+
 class TikStudioEventQueueSystem::FImpl final
 {
 public:
+    struct FPreparedStateTag
+    {
+    };
+
     struct FEmissionIdentity
     {
         FTSEmissionId EmissionId = 0;
@@ -128,6 +143,31 @@ public:
                 return FTSEventQueueClock::now();
             };
         }
+    }
+
+    // La copia preparada excluye al proveedor de tiempo: el Now se captura en la
+    // instancia autoritativa y sólo el estado operativo alternativo llega al commit.
+    FImpl(const FImpl& Source, FPreparedStateTag)
+        : Settings(Source.Settings)
+        , NextEmissionId(Source.NextEmissionId)
+        , NextSequence(Source.NextSequence)
+        , InFlightEmissionId(Source.InFlightEmissionId)
+        , Records(Source.Records)
+        , PriorityIndex(Source.PriorityIndex)
+        , ExpirationIndex(Source.ExpirationIndex)
+    {
+    }
+
+    void CommitPreparedState(FImpl& Prepared) noexcept
+    {
+        using std::swap;
+
+        swap(NextEmissionId, Prepared.NextEmissionId);
+        swap(NextSequence, Prepared.NextSequence);
+        swap(InFlightEmissionId, Prepared.InFlightEmissionId);
+        Records.swap(Prepared.Records);
+        PriorityIndex.swap(Prepared.PriorityIndex);
+        ExpirationIndex.swap(Prepared.ExpirationIndex);
     }
 
     // El par ID/Sequence avanza como una sola identidad monotónica. Cero marca
@@ -598,6 +638,27 @@ private:
     }
 };
 
+TikStudioEventQueueSystem::FPreparedMutation::FPreparedMutation() noexcept =
+    default;
+
+TikStudioEventQueueSystem::FPreparedMutation::FPreparedMutation(
+    std::unique_ptr<FImpl> InPreparedImpl
+) noexcept
+    : PreparedImpl(std::move(InPreparedImpl))
+{
+}
+
+TikStudioEventQueueSystem::FPreparedMutation::~FPreparedMutation() = default;
+
+TikStudioEventQueueSystem::FPreparedMutation::FPreparedMutation(
+    FPreparedMutation&&
+) noexcept = default;
+
+TikStudioEventQueueSystem::FPreparedMutation&
+TikStudioEventQueueSystem::FPreparedMutation::operator=(
+    FPreparedMutation&&
+) noexcept = default;
+
 TikStudioEventQueueSystem::TikStudioEventQueueSystem(
     FTSEventQueueSettings Settings,
     FTSNowProvider NowProvider
@@ -651,36 +712,49 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     const FTSEnqueueRequest& Request
 )
 {
-    // La admisión valida antes de mutar y congela todos los valores de orden con una
-    // sola captura temporal antes de establecer el record autoritativo.
-    FTSEnqueueResult Result;
+    return EnqueuePrepared(
+        Request,
+        [](const FTSEnqueueResult&) noexcept
+        {
+        }
+    );
+}
+
+TikStudioEventQueueSystem::FPreparedEnqueue
+TikStudioEventQueueSystem::PrepareEnqueue(
+    const FTSEnqueueRequest& Request
+)
+{
+    // Toda validación, captura temporal y asignación ocurre sobre un estado alterno;
+    // ninguna autoridad cambia hasta que el callback externo acepte el resultado.
+    FPreparedEnqueue Prepared;
     const FImpl::FAdmissionValidationResult Validation =
         Impl->ValidateEnqueueRequest(Request);
 
     switch (Validation.Status)
     {
     case FImpl::EAdmissionValidationStatus::InvalidFlow:
-        Result.Status = ETSEnqueueStatus::RejectedInvalidFlow;
-        return Result;
+        Prepared.Result.Status = ETSEnqueueStatus::RejectedInvalidFlow;
+        return Prepared;
 
     case FImpl::EAdmissionValidationStatus::Disabled:
-        Result.Status = ETSEnqueueStatus::RejectedDisabled;
-        return Result;
+        Prepared.Result.Status = ETSEnqueueStatus::RejectedDisabled;
+        return Prepared;
 
     case FImpl::EAdmissionValidationStatus::InvalidTTL:
-        Result.Status = ETSEnqueueStatus::RejectedInvalidTTL;
-        return Result;
+        Prepared.Result.Status = ETSEnqueueStatus::RejectedInvalidTTL;
+        return Prepared;
 
     case FImpl::EAdmissionValidationStatus::Valid:
         break;
     }
 
-    const FTSFlowQueueSettings& FlowSettings = *Validation.FlowSettings;
+    const FTSFlowQueueSettings FlowSettings = *Validation.FlowSettings;
 
     if (Impl->IsFlowAtCapacity(Request.Flow, FlowSettings.MaxSlots))
     {
-        Result.Status = ETSEnqueueStatus::RejectedAtCapacity;
-        return Result;
+        Prepared.Result.Status = ETSEnqueueStatus::RejectedAtCapacity;
+        return Prepared;
     }
 
     const FTSEventQueueTimePoint Now = Impl->CaptureNow();
@@ -693,12 +767,17 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
         Validation.EffectiveTTL
     );
 
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
+
     FImpl::FEmissionIdentity Identity;
 
-    if (!Impl->TryAllocateEmissionIdentity(Identity))
+    if (!PreparedImpl->TryAllocateEmissionIdentity(Identity))
     {
-        Result.Status = ETSEnqueueStatus::RejectedIdentityExhausted;
-        return Result;
+        Prepared.Result.Status = ETSEnqueueStatus::RejectedIdentityExhausted;
+        return Prepared;
     }
 
     FTSEmissionEnvelope Envelope;
@@ -720,7 +799,7 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
 
     // Una colisión contradice la identidad monotónica: es una violación interna, no
     // una condición de rechazo que deba exponerse en el contrato público.
-    const auto [RecordIt, bInserted] = Impl->Records.emplace(
+    const auto [RecordIt, bInserted] = PreparedImpl->Records.emplace(
         Envelope.EmissionId,
         std::move(Record)
     );
@@ -730,137 +809,182 @@ FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
         throw std::logic_error("Duplicate emission identity");
     }
 
-    // Accepted exige que todas las vistas derivadas requeridas existan. Si indexar
-    // falla, retirar el record evita dejar estado autoritativo parcialmente admitido.
-    try
-    {
-        const FImpl::FInternalEmissionRecord& StoredRecord = RecordIt->second;
-        const FTSEmissionEnvelope& StoredEnvelope = StoredRecord.Envelope;
+    // Los índices se construyen en el estado preparado; cualquier asignación fallida
+    // descarta el plan completo sin tocar Records autoritativo.
+    const FImpl::FInternalEmissionRecord& StoredRecord = RecordIt->second;
+    const FTSEmissionEnvelope& StoredEnvelope = StoredRecord.Envelope;
 
-        Impl->PriorityIndex.push(FImpl::FPriorityIndexEntry{
-            StoredEnvelope.PriorityScore,
+    PreparedImpl->PriorityIndex.push(FImpl::FPriorityIndexEntry{
+        StoredEnvelope.PriorityScore,
+        StoredEnvelope.Sequence,
+        StoredEnvelope.EmissionId,
+        StoredRecord.Revision
+    });
+
+    if (StoredEnvelope.ExpiresAt != FTSEventQueueTimePoint::max())
+    {
+        PreparedImpl->ExpirationIndex.push(FImpl::FExpirationIndexEntry{
+            StoredEnvelope.ExpiresAt,
             StoredEnvelope.Sequence,
             StoredEnvelope.EmissionId,
             StoredRecord.Revision
         });
-
-        if (StoredEnvelope.ExpiresAt != FTSEventQueueTimePoint::max())
-        {
-            Impl->ExpirationIndex.push(FImpl::FExpirationIndexEntry{
-                StoredEnvelope.ExpiresAt,
-                StoredEnvelope.Sequence,
-                StoredEnvelope.EmissionId,
-                StoredRecord.Revision
-            });
-        }
-    }
-    catch (...)
-    {
-        Impl->Records.erase(RecordIt);
-        throw;
     }
 
-    Result.Status = ETSEnqueueStatus::Accepted;
-    Result.AdmittedEmission = Envelope;
+    Prepared.Result.Status = ETSEnqueueStatus::Accepted;
+    Prepared.Result.AdmittedEmission = Envelope;
 
     // Auto Pump sólo se solicita después de una admisión completa y estando idle; usa
     // el mismo Now de Enqueue para ordenar expiraciones y selección coherentemente.
     if (
-        Impl->Settings.Pump.bPumpAfterEnqueueWhenIdle
-        && !Impl->HasInFlightEmission()
+        PreparedImpl->Settings.Pump.bPumpAfterEnqueueWhenIdle
+        && !PreparedImpl->HasInFlightEmission()
     )
     {
-        Result.AutoPumpOutcome = Impl->PumpAt(
+        Prepared.Result.AutoPumpOutcome = PreparedImpl->PumpAt(
             Now,
-            Result.LifecycleEvents
+            Prepared.Result.LifecycleEvents
         );
     }
 
-    return Result;
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+    return Prepared;
 }
 
 FTSPumpResult TikStudioEventQueueSystem::Pump()
 {
-    // El Pump público sólo añade la captura propia de una solicitud explícita; la ruta
-    // de expiración y selección es la misma usada por los Auto Pump.
-    FTSPumpResult Result;
+    return PumpPrepared(
+        [](const FTSPumpResult&) noexcept
+        {
+        }
+    );
+}
+
+TikStudioEventQueueSystem::FPreparedPump
+TikStudioEventQueueSystem::PreparePump()
+{
+    FPreparedPump Prepared;
     const FTSEventQueueTimePoint Now = Impl->CaptureNow();
-    Result.Outcome = Impl->PumpAt(Now, Result.LifecycleEvents);
-    return Result;
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
+
+    Prepared.Result.Outcome = PreparedImpl->PumpAt(
+        Now,
+        Prepared.Result.LifecycleEvents
+    );
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+    return Prepared;
 }
 
 FTSConfirmResult TikStudioEventQueueSystem::Confirm(
     FTSEmissionId EmissionId
 )
 {
-    FTSConfirmResult Result;
+    return ConfirmPrepared(
+        EmissionId,
+        [](const FTSConfirmResult&) noexcept
+        {
+        }
+    );
+}
+
+TikStudioEventQueueSystem::FPreparedConfirm
+TikStudioEventQueueSystem::PrepareConfirm(
+    FTSEmissionId EmissionId
+)
+{
+    FPreparedConfirm Prepared;
 
     switch (Impl->ValidateInFlightTarget(EmissionId))
     {
     case FImpl::EInFlightTargetStatus::NoInFlightEmission:
-        return Result;
+        return Prepared;
 
     case FImpl::EInFlightTargetStatus::EmissionIdMismatch:
-        Result.Status = ETSConfirmStatus::EmissionIdMismatch;
-        return Result;
+        Prepared.Result.Status = ETSConfirmStatus::EmissionIdMismatch;
+        return Prepared;
 
     case FImpl::EInFlightTargetStatus::Valid:
         break;
     }
 
-    if (!Impl->Settings.Pump.bPumpAfterConfirm)
+    std::optional<FTSEventQueueTimePoint> Now;
+    if (Impl->Settings.Pump.bPumpAfterConfirm)
     {
-        Impl->CompleteInFlight(
-            ETSEmissionTerminalReason::Confirmed,
-            Result.LifecycleEvents
-        );
-        Result.Status = ETSConfirmStatus::Confirmed;
-        return Result;
+        // La captura pertenece a prepare: si falla, la emisión continúa InFlight.
+        Now.emplace(Impl->CaptureNow());
     }
 
-    // Capturar antes de finalizar garantiza que un fallo del proveedor no confirme
-    // parcialmente; el mismo Now gobierna expiraciones y la siguiente selección.
-    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
 
-    Impl->CompleteInFlight(
+    PreparedImpl->CompleteInFlight(
         ETSEmissionTerminalReason::Confirmed,
-        Result.LifecycleEvents
+        Prepared.Result.LifecycleEvents
     );
-    Result.Status = ETSConfirmStatus::Confirmed;
+    Prepared.Result.Status = ETSConfirmStatus::Confirmed;
 
-    // Confirmed se publica antes de los terminales que PumpAt pueda producir.
-    Result.AutoPumpOutcome = Impl->PumpAt(
-        Now,
-        Result.LifecycleEvents
-    );
-    return Result;
+    if (Now.has_value())
+    {
+        // Confirmed precede a cualquier terminal producido por el Auto Pump.
+        Prepared.Result.AutoPumpOutcome = PreparedImpl->PumpAt(
+            *Now,
+            Prepared.Result.LifecycleEvents
+        );
+    }
+
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+    return Prepared;
 }
 
 FTSCancelInFlightResult TikStudioEventQueueSystem::CancelInFlight(
     FTSEmissionId EmissionId
 )
 {
-    FTSCancelInFlightResult Result;
+    return CancelInFlightPrepared(
+        EmissionId,
+        [](const FTSCancelInFlightResult&) noexcept
+        {
+        }
+    );
+}
+
+TikStudioEventQueueSystem::FPreparedCancelInFlight
+TikStudioEventQueueSystem::PrepareCancelInFlight(
+    FTSEmissionId EmissionId
+)
+{
+    FPreparedCancelInFlight Prepared;
 
     switch (Impl->ValidateInFlightTarget(EmissionId))
     {
     case FImpl::EInFlightTargetStatus::NoInFlightEmission:
-        return Result;
+        return Prepared;
 
     case FImpl::EInFlightTargetStatus::EmissionIdMismatch:
-        Result.Status = ETSCancelInFlightStatus::EmissionIdMismatch;
-        return Result;
+        Prepared.Result.Status =
+            ETSCancelInFlightStatus::EmissionIdMismatch;
+        return Prepared;
 
     case FImpl::EInFlightTargetStatus::Valid:
         break;
     }
 
-    Impl->CompleteInFlight(
-        ETSEmissionTerminalReason::Cancelled,
-        Result.LifecycleEvents
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
     );
-    Result.Status = ETSCancelInFlightStatus::Cancelled;
-    return Result;
+    PreparedImpl->CompleteInFlight(
+        ETSEmissionTerminalReason::Cancelled,
+        Prepared.Result.LifecycleEvents
+    );
+    Prepared.Result.Status = ETSCancelInFlightStatus::Cancelled;
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+    return Prepared;
 }
 
 // Consulta pura respecto del tiempo y de Records: sólo limpia claves stale del frente
@@ -884,13 +1008,44 @@ FTSNextWakeTimeResult TikStudioEventQueueSystem::GetNextWakeTime()
 FTSProcessDueExpirationsResult
 TikStudioEventQueueSystem::ProcessDueExpirations()
 {
-    // Una sola captura hace determinista todo el lote; el min-heap preserva orden por
-    // ExpiresAt y luego Sequence durante la generación de terminales.
-    FTSProcessDueExpirationsResult Result;
-    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
-    Impl->ProcessDueExpirationsAt(Now, Result.LifecycleEvents);
+    return ProcessDueExpirationsPrepared(
+        [](const FTSProcessDueExpirationsResult&) noexcept
+        {
+        }
+    );
+}
 
-    return Result;
+TikStudioEventQueueSystem::FPreparedProcessDueExpirations
+TikStudioEventQueueSystem::PrepareProcessDueExpirations()
+{
+    FPreparedProcessDueExpirations Prepared;
+    const FTSEventQueueTimePoint Now = Impl->CaptureNow();
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
+    PreparedImpl->ProcessDueExpirationsAt(
+        Now,
+        Prepared.Result.LifecycleEvents
+    );
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+
+    return Prepared;
+}
+
+void TikStudioEventQueueSystem::CommitPreparedMutation(
+    FPreparedMutation& Mutation
+) noexcept
+{
+    if (!Mutation.PreparedImpl)
+    {
+        return;
+    }
+
+    // El único commit intercambia estado ya construido; reset consume el token y
+    // destruye la copia anterior sin dejar una segunda oportunidad de aplicación.
+    Impl->CommitPreparedState(*Mutation.PreparedImpl);
+    Mutation.PreparedImpl.reset();
 }
 
 TikStudioEventQueueSystem::~TikStudioEventQueueSystem() = default;

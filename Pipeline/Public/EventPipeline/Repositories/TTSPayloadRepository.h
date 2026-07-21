@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -85,7 +86,7 @@ public:
     }
 
     [[nodiscard]]
-    bool Erase(FTSPayloadHandle Handle)
+    bool Erase(FTSPayloadHandle Handle) noexcept
     {
         if (Handle.Value == 0)
         {
@@ -93,6 +94,14 @@ public:
         }
 
         return Payloads.erase(Handle.Value) == 1;
+    }
+
+    void CommitErase(FTSPayloadHandle Handle) noexcept
+    {
+        if (!Erase(Handle))
+        {
+            std::terminate();
+        }
     }
 
     [[nodiscard]]

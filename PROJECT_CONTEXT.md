@@ -1,17 +1,17 @@
 # TikStudioEventQueueLab — contexto de transferencia
 
-Última actualización: 2026-07-20.
+Última actualización: 2026-07-21.
 
 Estado de referencia:
-rama `main`, partiendo del baseline publicado `f59836f`
-(`refactor(flows): clarify like milestone and member rate names`).
+rama `main`, partiendo del baseline publicado `b7809bc`
+(`feat(settings): support runtime flow updates`).
 
-El propietario certificó este baseline con Core 10, Pipeline 112, Host 66, Adapter 62,
-JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL.
+El propietario certificó este baseline con Core 15, Pipeline 113, Host 68, Adapter 62,
+JSON Decoder 20, Checklist 10 y Vertical Integration 7: 295 PASS / 0 FAIL.
 
-La actualización dinámica de settings por flujo está implementada localmente sobre ese
-baseline, sin certificar, publicar ni ejecutar compilación o pruebas. Los nuevos casos
-elevan los conteos esperados a Core 15, Pipeline 113 y Host 68: 295 pruebas totales.
+El hardening de invariantes compartidas está implementado localmente sobre ese baseline,
+sin certificar, publicar ni ejecutar compilación o pruebas. Los nuevos casos elevan los
+conteos esperados a Core 20, Pipeline 117 y Host 69: 305 pruebas totales.
 
 ## 1. Objetivo general
 
@@ -1017,8 +1017,10 @@ común de ejecución y `TSTestSuites.h` declara registros explícitos, sin autor
 global ni dependencia del orden de link. El refinamiento 4D.3.1 añadió un séptimo runner
 automático. El baseline publicado y certificado en `f59836f` registra Core 10, Pipeline
 112, Host 66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287
-PASS / 0 FAIL. La actualización local añade cinco casos Core, uno Pipeline y dos Host;
-los conteos esperados son Core 15, Pipeline 113 y Host 68: 295 pruebas totales.
+PASS / 0 FAIL. La actualización de settings publicada en `b7809bc` elevó la
+certificación a Core 15, Pipeline 113 y Host 68: 295 PASS / 0 FAIL. El hardening local
+añade cinco casos Core, cuatro Pipeline y uno Host; los conteos esperados son Core 20,
+Pipeline 117 y Host 69: 305 pruebas totales.
 
 La estructura familiar queda así:
 
@@ -1145,8 +1147,10 @@ Checklist 10 y Vertical Integration 7: 287 PASS / 0 FAIL. La limpieza posterior 
 publicada en `8528c02`, no modificó runners ni conteos y conserva la certificación de
 287 PASS / 0 FAIL. El renombre nominal del flujo directo a `Member` fue publicado en
 `9134844`; los nombres reservados fueron publicados en `f59836f` y conservaron la misma
-certificación. La actualización dinámica de settings permanece local y eleva el total
-esperado a 295.
+certificación. La actualización dinámica de settings fue publicada en `b7809bc` y el
+propietario certificó Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20,
+Checklist 10 y Vertical Integration 7: 295 PASS / 0 FAIL. El hardening transaccional
+permanece local y eleva el total esperado a 305.
 
 ## 10. Historial de tareas y commits
 
@@ -1920,13 +1924,39 @@ implementar ventanas temporales, conteos agregados ni tasas.
   por el FIFO global y se aplica únicamente en el owner thread.
 - Añade cinco pruebas Core, una Pipeline y dos Host. Los conteos esperados pasan a Core
   15, Pipeline 113 y Host 68; las demás suites permanecen en 62, 20, 10 y 7: 295 total.
-- Los cambios permanecen locales, pendientes de certificación y publicación; no se
-  compiló ni se ejecutaron pruebas durante esta fase.
+- Fue publicada en `b7809bc` como
+  `feat(settings): support runtime flow updates`; el propietario certificó
+  295 PASS / 0 FAIL.
+
+### Hardening de invariantes compartidas
+
+- Las mutaciones `Enqueue`, `Pump`, `Confirm`, `CancelInFlight` y
+  `ProcessDueExpirations` preparan un estado alternativo completo. La preparación puede
+  capturar tiempo, validar y asignar; el commit sólo intercambia estado operativo ya
+  construido mediante una operación `noexcept` consumida una vez.
+- El callback portable del Core permite que el Coordinator prepare binding, lifecycle,
+  payload y ready antes del commit sin introducir tipos de Pipeline dentro del Core.
+- `IsSupportedFamilyFlowPair` es la autoridad única para las siete parejas operativas;
+  el binding registry rechaza pares no soportados y bindings cuyo estado inicial no sea
+  `Bound`.
+- El payload permanece provisional hasta que binding, lifecycle y ready están listos.
+  Tras el commit del Core, las autoridades externas sólo ejecutan commits `noexcept`;
+  terminal elimina binding, payload y cualquier ready coincidente exactamente una vez.
+- Ready continúa siendo una notificación derivada. `BeginProcessing` construye por
+  completo el dispatch antes de `Bound → Processing` y de consumir la notificación.
+- El Host copia un lease del frente sin retirar el comando ni mantener el mutex durante
+  Core/Pipeline. Sólo reconoce y elimina esa secuencia tras procesarla correctamente;
+  una excepción conserva el mismo frente y el orden de los comandos posteriores.
+- Se añadieron cinco casos Core, cuatro Pipeline y uno Host. Los conteos esperados son
+  Core 20, Pipeline 117, Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
+  Integration 7: 305 total.
+- Este hardening permanece local, pendiente de compilación, pruebas, certificación y
+  publicación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
 
 - Leer este documento y comprobar el estado Git actual antes de asumir que sigue en
-  `f59836f` más la actualización dinámica local de settings por flujo.
+  `b7809bc` más el hardening local de invariantes compartidas.
 - Existe `.codegraph/`; usar CodeGraph antes de buscar o leer código.
 - Obedecer literalmente el alcance de cada fase. No continuar automáticamente a la
   siguiente.
@@ -1966,8 +1996,9 @@ implementar ventanas temporales, conteos agregados ni tasas.
   flujo directo vigente `Member` fue publicado en `9134844` con la misma certificación.
   Los nombres reservados vigentes `LikeMilestone` y `MemberRate` fueron publicados en
   `f59836f`, también certificado con 287 PASS / 0 FAIL. La actualización dinámica de
-  settings permanece local y pendiente de certificación. No continuar automáticamente
-  con flujos derivados ni otras categorías de settings.
+  settings fue publicada en `b7809bc` y certificada con 295 PASS / 0 FAIL. El hardening
+  de invariantes compartidas permanece local y pendiente de certificación. No continuar
+  automáticamente con flujos derivados ni otras categorías de settings.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

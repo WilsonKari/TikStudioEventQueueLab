@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -38,6 +39,45 @@ static_assert(!std::is_move_assignable_v<FTSEventPipelineCoordinator>);
 namespace
 {
     using namespace TikStudio::Tests;
+
+    struct FFailingClock
+    {
+        FTSEventQueueTimePoint Now{};
+        std::size_t CaptureCount = 0;
+        std::size_t ThrowOnCapture = 0;
+
+        [[nodiscard]]
+        FTSNowProvider MakeProvider()
+        {
+            return [this]()
+            {
+                ++CaptureCount;
+                if (CaptureCount == ThrowOnCapture)
+                {
+                    throw std::runtime_error("Controlled Pipeline clock failure");
+                }
+                return Now;
+            };
+        }
+    };
+
+    [[nodiscard]]
+    FTSEventQueueSettings MakeCoordinatorSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* Chat =
+            Settings.TryGetFlowSettings(ETSEventFlow::Chat);
+        Require(Chat != nullptr, "Pipeline Chat settings must exist");
+        Chat->bEnabled = true;
+        Chat->TTL = std::chrono::milliseconds{0};
+        Chat->MaxSlots = 10;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
 
     void TestTypedRepositoryStoresIndependentSnapshots()
     {
@@ -291,6 +331,24 @@ namespace
             )),
             "Invalid ExpectedFlow must be rejected"
         );
+        FTSEmissionBinding InvalidPair = MakeBinding(
+            3,
+            FTSPayloadHandle{3}
+        );
+        InvalidPair.FamilyKind = ETSEventFamilyKind::Gift;
+        Require(
+            !Registry.Insert(InvalidPair),
+            "Unsupported FamilyKind and Flow pair must be rejected"
+        );
+        Require(
+            !Registry.Insert(MakeBinding(
+                4,
+                FTSPayloadHandle{4},
+                ETSEventFlow::Chat,
+                ETSExternalEmissionState::Processing
+            )),
+            "A new binding must start Bound"
+        );
         Require(Registry.Empty(), "Invalid bindings must not change the registry");
         Require(Registry.Size() == 0, "Invalid bindings must keep registry size at zero");
 
@@ -519,6 +577,198 @@ namespace
             "Existing Coordinator emission must remain dispatchable"
         );
     }
+
+    void TestAdmissionPrepareFailureCleansProvisionalPayload()
+    {
+        FFailingClock Clock;
+        Clock.ThrowOnCapture = 1;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeCoordinatorSettings(false, false),
+            Clock.MakeProvider()
+        );
+
+        bool bThrew = false;
+        try
+        {
+            (void)Coordinator.SubmitChat(MakeCompleteInput());
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(bThrew, "Admission preparation failure must propagate");
+        Require(
+            Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Admission preparation failure must remove provisional payload"
+        );
+        Coordinator.ValidateInternalConsistency();
+
+        Clock.ThrowOnCapture = 0;
+        const FTSPipelineAdmissionResult Retry =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Retry.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Retry.EnqueueResult.has_value() &&
+                Retry.EnqueueResult->AdmittedEmission.EmissionId == 1,
+            "Admission retry must commit once without identity loss"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestPumpPrepareFailurePublishesNoReady()
+    {
+        FFailingClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeCoordinatorSettings(false, false),
+            Clock.MakeProvider()
+        );
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted,
+            "Pump failure setup admission failed"
+        );
+
+        Clock.ThrowOnCapture = Clock.CaptureCount + 1;
+        bool bThrew = false;
+        try
+        {
+            (void)Coordinator.Pump();
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(bThrew, "Pump preparation failure must propagate");
+        Require(
+            !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Failed Pump preparation must not publish partial ready"
+        );
+        Coordinator.ValidateInternalConsistency();
+
+        Clock.ThrowOnCapture = 0;
+        Require(
+            Coordinator.Pump().Outcome.Status ==
+                ETSPumpStatus::EmissionReady &&
+                Coordinator.PeekPendingReadyFamilyKind() ==
+                    ETSEventFamilyKind::Chat,
+            "Pump retry must publish the original emission"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestCompletionPrepareFailurePreservesProcessing()
+    {
+        FFailingClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakeCoordinatorSettings(false, true),
+            Clock.MakeProvider()
+        );
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Admission.EnqueueResult.has_value(),
+            "Completion failure setup admission failed"
+        );
+        const FTSEmissionId EmissionId =
+            Admission.EnqueueResult->AdmittedEmission.EmissionId;
+        (void)Coordinator.Pump();
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::Dispatched,
+            "Completion failure setup dispatch failed"
+        );
+
+        Clock.ThrowOnCapture = Clock.CaptureCount + 1;
+        bool bThrew = false;
+        try
+        {
+            (void)Coordinator.CompleteChatProcessing(
+                EmissionId,
+                ETSProcessingResult::Succeeded
+            );
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(bThrew, "Completion preparation failure must propagate");
+
+        bool bStillProcessing = false;
+        Require(
+            Coordinator.VisitEmissionBinding(
+                EmissionId,
+                [&](const FTSEmissionBinding& Binding)
+                {
+                    bStillProcessing = Binding.ExternalState ==
+                        ETSExternalEmissionState::Processing;
+                }
+            ) && bStillProcessing,
+            "Failed completion must preserve Processing binding"
+        );
+        Require(
+            Coordinator.GetChatPayloadCount() == 1 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Failed completion must preserve payload without ready"
+        );
+        Coordinator.ValidateInternalConsistency();
+
+        Clock.ThrowOnCapture = 0;
+        const FTSProcessingCompletionResult Completed =
+            Coordinator.CompleteChatProcessing(
+                EmissionId,
+                ETSProcessingResult::Succeeded
+            );
+        Require(
+            Completed.ConfirmResult.has_value() &&
+                Completed.ConfirmResult->Status ==
+                    ETSConfirmStatus::Confirmed &&
+                Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0,
+            "Completion retry must clean terminal authorities exactly once"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestConsistencyCheckTracksReadyProcessingAndTerminal()
+    {
+        FTSEventPipelineCoordinator Coordinator(
+            MakeCoordinatorSettings(true, false)
+        );
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Coordinator.PeekPendingReadyFamilyKind() ==
+                    ETSEventFamilyKind::Chat,
+            "Consistency ready setup failed"
+        );
+        Coordinator.ValidateInternalConsistency();
+
+        const FTSChatDispatchResult Dispatch =
+            Coordinator.BeginChatProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "Consistency processing setup failed"
+        );
+        Coordinator.ValidateInternalConsistency();
+
+        const FTSProcessingCompletionResult Terminal =
+            Coordinator.CompleteChatProcessing(
+                Dispatch.Dispatch->Emission.EmissionId,
+                ETSProcessingResult::Failed
+            );
+        Require(
+            Terminal.CancelResult.has_value() &&
+                Coordinator.GetBindingCount() == 0 &&
+                Coordinator.GetChatPayloadCount() == 0 &&
+                !Coordinator.PeekPendingReadyFamilyKind().has_value(),
+            "Consistency terminal cleanup failed"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
 }
 
 namespace TikStudio::Tests
@@ -532,5 +782,9 @@ namespace TikStudio::Tests
         Tests.push_back({"Binding registry conditional transitions", &TestBindingRegistryConditionalTransitions});
         Tests.push_back({"Binding registry erase and size", &TestBindingRegistryEraseAndSize});
         Tests.push_back({"Coordinator delegates flow settings update", &TestCoordinatorDelegatesFlowSettingsUpdateWithoutPipelineMutation});
+        Tests.push_back({"Admission prepare failure cleans provisional payload", &TestAdmissionPrepareFailureCleansProvisionalPayload});
+        Tests.push_back({"Pump prepare failure publishes no ready", &TestPumpPrepareFailurePublishesNoReady});
+        Tests.push_back({"Completion prepare failure preserves Processing", &TestCompletionPrepareFailurePreservesProcessing});
+        Tests.push_back({"Consistency tracks ready, Processing and terminal", &TestConsistencyCheckTracksReadyProcessingAndTerminal});
     }
 }

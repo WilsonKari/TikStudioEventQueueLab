@@ -16,6 +16,31 @@ enum class ETSEventFamilyKind : std::uint8_t
     Follow
 };
 
+// Única autoridad portable para las rutas operativas. Los flujos derivados siguen
+// reservados aunque sean valores válidos del enum del Core.
+[[nodiscard]]
+constexpr bool IsSupportedFamilyFlowPair(
+    ETSEventFamilyKind FamilyKind,
+    ETSEventFlow Flow
+) noexcept
+{
+    return
+        (FamilyKind == ETSEventFamilyKind::Chat &&
+            Flow == ETSEventFlow::Chat) ||
+        (FamilyKind == ETSEventFamilyKind::Gift &&
+            Flow == ETSEventFlow::Gift) ||
+        (FamilyKind == ETSEventFamilyKind::Follow &&
+            Flow == ETSEventFlow::Follow) ||
+        (FamilyKind == ETSEventFamilyKind::Like &&
+            Flow == ETSEventFlow::Like) ||
+        (FamilyKind == ETSEventFamilyKind::Member &&
+            Flow == ETSEventFlow::Member) ||
+        (FamilyKind == ETSEventFamilyKind::RoomUser &&
+            Flow == ETSEventFlow::RoomUser) ||
+        (FamilyKind == ETSEventFamilyKind::Share &&
+            Flow == ETSEventFlow::Share);
+}
+
 // Identidad opaca dentro del repositorio tipado de una familia. Cero es inválido y
 // este valor nunca sustituye la identidad global asignada por el core.
 struct FTSPayloadHandle

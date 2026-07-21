@@ -17,6 +17,7 @@ namespace
     {
         FTSEventQueueTimePoint Now{};
         std::size_t CaptureCount = 0;
+        std::size_t ThrowOnCapture = 0;
 
         [[nodiscard]]
         FTSNowProvider MakeProvider()
@@ -24,6 +25,10 @@ namespace
             return [this]()
             {
                 ++CaptureCount;
+                if (ThrowOnCapture == CaptureCount)
+                {
+                    throw std::runtime_error("Controlled clock failure");
+                }
                 return Now;
             };
         }
@@ -985,6 +990,260 @@ namespace
         );
     }
 
+    void TestAdmissionPrepareFailureLeavesCoreUnchanged()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 0, 0ms, 10);
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+
+        bool bThrew = false;
+        try
+        {
+            (void)Queue.EnqueuePrepared(
+                MakeRequest(ETSEventFlow::Chat),
+                [](const FTSEnqueueResult& PreparedResult)
+                {
+                    if (PreparedResult.Status != ETSEnqueueStatus::Accepted)
+                    {
+                        throw std::logic_error(
+                            "Admission was not fully prepared"
+                        );
+                    }
+                    throw std::runtime_error(
+                        "Controlled external preparation failure"
+                    );
+                }
+            );
+        }
+        catch (const std::runtime_error&)
+        {
+            bThrew = true;
+        }
+        Require(bThrew, "Admission prepare must propagate clock failure");
+
+        const FTSPumpResult EmptyPump = Queue.Pump();
+        Require(
+            EmptyPump.Outcome.Status == ETSPumpStatus::QueueEmpty,
+            "Failed admission prepare must leave no live emission"
+        );
+
+        const FTSEnqueueResult Accepted = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        RequireAccepted(Accepted, ETSEventFlow::Chat, "Retry admission");
+        Require(
+            Accepted.AdmittedEmission.EmissionId == 1 &&
+                Accepted.AdmittedEmission.Sequence == 1,
+            "Failed prepare must not consume identity or sequence"
+        );
+    }
+
+    void TestPumpAndConfirmPrepareFailuresPreserveState()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, true);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 0, 0ms, 10);
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult Admission = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        RequireAccepted(Admission, ETSEventFlow::Chat, "Prepared failure");
+
+        bool bPumpThrew = false;
+        try
+        {
+            (void)Queue.PumpPrepared(
+                [](const FTSPumpResult& PreparedResult)
+                {
+                    if (PreparedResult.Outcome.Status !=
+                        ETSPumpStatus::EmissionReady)
+                    {
+                        throw std::logic_error("Pump was not fully prepared");
+                    }
+                    throw std::runtime_error(
+                        "Controlled Pump preparation failure"
+                    );
+                }
+            );
+        }
+        catch (const std::runtime_error&)
+        {
+            bPumpThrew = true;
+        }
+        Require(bPumpThrew, "Pump prepare must propagate clock failure");
+
+        const FTSPumpResult Ready = Queue.Pump();
+        RequireReadyEmission(
+            Ready.Outcome,
+            Admission.AdmittedEmission,
+            "Pump retry"
+        );
+
+        bool bConfirmThrew = false;
+        try
+        {
+            (void)Queue.ConfirmPrepared(
+                Admission.AdmittedEmission.EmissionId,
+                [](const FTSConfirmResult& PreparedResult)
+                {
+                    if (PreparedResult.Status != ETSConfirmStatus::Confirmed)
+                    {
+                        throw std::logic_error(
+                            "Confirm was not fully prepared"
+                        );
+                    }
+                    throw std::runtime_error(
+                        "Controlled Confirm preparation failure"
+                    );
+                }
+            );
+        }
+        catch (const std::runtime_error&)
+        {
+            bConfirmThrew = true;
+        }
+        Require(bConfirmThrew, "Confirm prepare must propagate clock failure");
+
+        Require(
+            Queue.Pump().Outcome.Status == ETSPumpStatus::Busy,
+            "Failed Confirm prepare must preserve InFlight"
+        );
+        const FTSConfirmResult Confirmed = Queue.Confirm(
+            Admission.AdmittedEmission.EmissionId
+        );
+        Require(
+            Confirmed.Status == ETSConfirmStatus::Confirmed &&
+                Confirmed.LifecycleEvents.size() == 1,
+            "Confirm retry must complete exactly once"
+        );
+    }
+
+    void TestEqualPriorityUsesGlobalSequenceAcrossFlows()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 10, 0ms, 10);
+        ConfigureFlow(Settings, ETSEventFlow::Gift, 10, 0ms, 10);
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult Chat = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        const FTSEnqueueResult Gift = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Gift)
+        );
+
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Chat.AdmittedEmission,
+            "Cross-flow FIFO first"
+        );
+        (void)Queue.Confirm(Chat.AdmittedEmission.EmissionId);
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Gift.AdmittedEmission,
+            "Cross-flow FIFO second"
+        );
+    }
+
+    void TestEqualExpirationsAndStaleIndexesRemainDeterministic()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 0, 10ms, 10);
+        ConfigureFlow(Settings, ETSEventFlow::Gift, 0, 10ms, 10);
+
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+        const FTSEnqueueResult B = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Gift)
+        );
+        const FTSEnqueueResult C = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat)
+        );
+
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            A.AdmittedEmission,
+            "Stale expiration setup"
+        );
+        (void)Queue.CancelInFlight(A.AdmittedEmission.EmissionId);
+
+        Clock.Advance(10ms);
+        const FTSProcessDueExpirationsResult Expired =
+            Queue.ProcessDueExpirations();
+        Require(
+            Expired.LifecycleEvents.size() == 2 &&
+                Expired.LifecycleEvents[0].Envelope.EmissionId ==
+                    B.AdmittedEmission.EmissionId &&
+                Expired.LifecycleEvents[1].Envelope.EmissionId ==
+                    C.AdmittedEmission.EmissionId,
+            "Equal ExpiresAt must use Sequence after ignoring stale entries"
+        );
+        Require(
+            Queue.Pump().Outcome.Status == ETSPumpStatus::QueueEmpty,
+            "Stale priority entries must not resurrect terminal emissions"
+        );
+    }
+
+    void TestRepeatedScenarioProducesIdenticalIdentityAndLifecycleOrder()
+    {
+        const auto RunScenario = []()
+        {
+            FTSEventQueueSettings Settings = MakeSettings(false, false);
+            ConfigureFlow(Settings, ETSEventFlow::Chat, 0, 5ms, 10);
+            ConfigureFlow(Settings, ETSEventFlow::Gift, 0, 5ms, 10);
+
+            FControlledClock Clock;
+            TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+            const FTSEnqueueResult A = Queue.Enqueue(
+                MakeRequest(ETSEventFlow::Chat)
+            );
+            const FTSEnqueueResult B = Queue.Enqueue(
+                MakeRequest(ETSEventFlow::Gift)
+            );
+            (void)Queue.Pump();
+            const FTSCancelInFlightResult Cancelled =
+                Queue.CancelInFlight(A.AdmittedEmission.EmissionId);
+            Clock.Advance(5ms);
+            const FTSProcessDueExpirationsResult Expired =
+                Queue.ProcessDueExpirations();
+
+            Require(
+                Cancelled.Status == ETSCancelInFlightStatus::Cancelled &&
+                    Cancelled.LifecycleEvents.size() == 1 &&
+                    Expired.LifecycleEvents.size() == 1,
+                "Deterministic replay must produce both terminal events"
+            );
+
+            std::vector<std::uint64_t> Trace{
+                A.AdmittedEmission.EmissionId,
+                A.AdmittedEmission.Sequence,
+                B.AdmittedEmission.EmissionId,
+                B.AdmittedEmission.Sequence,
+                Cancelled.LifecycleEvents.front().Envelope.EmissionId,
+                static_cast<std::uint64_t>(
+                    Cancelled.LifecycleEvents.front().Reason
+                ),
+                Expired.LifecycleEvents.front().Envelope.EmissionId,
+                static_cast<std::uint64_t>(
+                    Expired.LifecycleEvents.front().Reason
+                )
+            };
+            return Trace;
+        };
+
+        Require(
+            RunScenario() == RunScenario(),
+            "Repeated deterministic scenarios must produce identical traces"
+        );
+    }
+
     void TestConfirmWrongIdPreservesInFlight()
     {
         FTSEventQueueSettings Settings = MakeSettings(true, false);
@@ -1069,6 +1328,11 @@ int main()
         {"Invalid flow settings updates are atomic", &TestInvalidFlowSettingsUpdatesAreAtomic},
         {"Disabling a flow preserves existing emissions", &TestDisablingFlowPreservesExistingEmission},
         {"Reducing flow capacity does not evict", &TestReducingFlowCapacityDoesNotEvictExistingEmissions},
+        {"Admission prepare failure preserves Core", &TestAdmissionPrepareFailureLeavesCoreUnchanged},
+        {"Pump and Confirm prepare failures preserve state", &TestPumpAndConfirmPrepareFailuresPreserveState},
+        {"Equal priority uses global cross-flow Sequence", &TestEqualPriorityUsesGlobalSequenceAcrossFlows},
+        {"Equal expirations ignore stale indexes deterministically", &TestEqualExpirationsAndStaleIndexesRemainDeterministic},
+        {"Repeated scenario produces identical trace", &TestRepeatedScenarioProducesIdenticalIdentityAndLifecycleOrder},
         {"Wrong Confirm ID preserves InFlight", &TestConfirmWrongIdPreservesInFlight}
     };
 
