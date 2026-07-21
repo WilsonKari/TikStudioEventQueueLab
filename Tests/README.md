@@ -3,13 +3,14 @@
 `Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
 familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
 integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
-están completas y publicadas; el baseline vigente es `b7809bc`.
+están completas y publicadas; el baseline vigente es `f32e95b`.
 
 `Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings, preparación
 transaccional, consistencia ready/processing/terminal y piezas transversales del
 Pipeline, incluido el passthrough de settings.
 `Tests/TSHostInfrastructureTests.cpp` cubre comandos transversales, lease/ack del frente
-y FIFO del Host ante excepciones.
+y FIFO del Host ante excepciones reintentables. Las suites por familia cubren que las
+completions definitivamente rechazadas se consuman sin bloquear trabajo posterior.
 `Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core genérico. Los casos locales de
 hardening verifican prepare/commit, snapshots, desempates por `Sequence`, expiraciones,
 índices stale y repetición determinista.
@@ -70,10 +71,16 @@ La actualización dinámica de settings fue publicada en `b7809bc` y certificada
 propietario con Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20, Checklist
 10 y Vertical Integration 7: 295 PASS / 0 FAIL.
 
-El hardening de invariantes compartidas permanece local y pendiente de certificación y
-publicación. Añade cinco casos Core, cuatro Pipeline y uno Host: los conteos esperados
-son Core 20, Pipeline 117, Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
-Integration 7, para un total de 305. No se ejecutaron durante esta fase.
+El hardening de invariantes compartidas fue publicado en `f32e95b`. Añade cinco casos
+Core, cuatro Pipeline y uno Host: los conteos registrados son Core 20, Pipeline 117,
+Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7, para un
+total de 305. En la validación manual del propietario las suites distintas de Host
+permanecieron correctas y Host terminó con 55 PASS / 14 FAIL.
+
+La corrección local distingue rechazos definitivos de completion de fallos
+reintentables: los primeros reconocen su lease exacto y dejan avanzar el FIFO; los
+segundos conservan el mismo frente. No añade pruebas ni cambia conteos y permanece
+pendiente de compilación, ejecución, certificación y publicación.
 
 Las suites futuras deben añadirse al directorio de su evento y registrarse
 explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa

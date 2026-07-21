@@ -83,6 +83,14 @@ using FTSGiftDispatchResult =
 using FTSMemberDispatchResult =
     TTSPipelineDispatchResult<FTSMemberProcessingDispatch>;
 
+// Identifica una completion que las autoridades actuales rechazan de forma
+// definitiva; repetir el mismo comando no puede volverla válida.
+class FTSRejectedProcessingCompletionError final : public std::logic_error
+{
+public:
+    using std::logic_error::logic_error;
+};
+
 // Orquesta autoridades independientes sin asumir la semántica ni el ownership de ellas.
 class FTSEventPipelineCoordinator final
 {

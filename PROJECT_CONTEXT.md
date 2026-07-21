@@ -3,15 +3,16 @@
 Última actualización: 2026-07-21.
 
 Estado de referencia:
-rama `main`, partiendo del baseline publicado `b7809bc`
-(`feat(settings): support runtime flow updates`).
+rama `main`, partiendo del baseline publicado `f32e95b`
+(`refactor(queue): harden shared processing invariants`).
 
-El propietario certificó este baseline con Core 15, Pipeline 113, Host 68, Adapter 62,
-JSON Decoder 20, Checklist 10 y Vertical Integration 7: 295 PASS / 0 FAIL.
+El baseline registra Core 20, Pipeline 117, Host 69, Adapter 62, JSON Decoder 20,
+Checklist 10 y Vertical Integration 7: 305 pruebas. En la validación manual del
+propietario las suites distintas de Host permanecieron correctas, mientras Host terminó
+con 55 PASS / 14 FAIL.
 
-El hardening de invariantes compartidas está implementado localmente sobre ese baseline,
-sin certificar, publicar ni ejecutar compilación o pruebas. Los nuevos casos elevan los
-conteos esperados a Core 20, Pipeline 117 y Host 69: 305 pruebas totales.
+La corrección del FIFO para completions definitivamente rechazadas está implementada
+localmente sobre ese baseline, sin compilar, ejecutar pruebas, certificar ni publicar.
 
 ## 1. Objetivo general
 
@@ -1950,7 +1951,22 @@ implementar ventanas temporales, conteos agregados ni tasas.
 - Se añadieron cinco casos Core, cuatro Pipeline y uno Host. Los conteos esperados son
   Core 20, Pipeline 117, Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical
   Integration 7: 305 total.
-- Este hardening permanece local, pendiente de compilación, pruebas, certificación y
+- Fue publicado en `f32e95b` como
+  `refactor(queue): harden shared processing invariants`.
+
+### Corrección local — completions que envenenan el FIFO
+
+- `CompleteProcessing` clasifica como rechazo definitivo únicamente binding ausente,
+  familia incorrecta, flujo incorrecto o binding que ya no está `Processing`.
+- El Host reconoce por `Sequence` el lease de una completion definitivamente rechazada
+  antes de propagar el error, de modo que el siguiente comando conserva FIFO y puede
+  progresar.
+- Cualquier otro fallo conserva el frente para retry: payload ausente, binding corrupto,
+  pareja interna no soportada, lifecycle inconsistente, rechazo del Core, ready
+  incompatible y excepciones de tiempo o admisión no se consumen.
+- No se añadieron ni modificaron pruebas. Los conteos permanecen en Host 69 y 305 total;
+  el resultado manual del baseline publicado fue Host 55 PASS / 14 FAIL.
+- Esta corrección permanece local, pendiente de compilación, pruebas, certificación y
   publicación.
 
 ## 11. Reglas de trabajo para la siguiente sesión
@@ -1997,8 +2013,10 @@ implementar ventanas temporales, conteos agregados ni tasas.
   Los nombres reservados vigentes `LikeMilestone` y `MemberRate` fueron publicados en
   `f59836f`, también certificado con 287 PASS / 0 FAIL. La actualización dinámica de
   settings fue publicada en `b7809bc` y certificada con 295 PASS / 0 FAIL. El hardening
-  de invariantes compartidas permanece local y pendiente de certificación. No continuar
-  automáticamente con flujos derivados ni otras categorías de settings.
+  de invariantes compartidas fue publicado en `f32e95b`; su validación manual dejó Host
+  en 55 PASS / 14 FAIL. La corrección del FIFO permanece local y pendiente de
+  certificación. No continuar automáticamente con flujos derivados ni otras categorías
+  de settings.
 - La migración UE5 es trabajo futuro separado:
   `TikFinityPlugin → puente Blueprint/C++ → FTS*Input → Event Host`.
 - No añadir automáticamente conexión WebSocket → Host, nuevas familias, repositorios,

@@ -365,21 +365,28 @@ public:
 
         if (CommandLease.has_value())
         {
-            ProcessPostedCommand(
-                std::move(CommandLease->Command),
-                Result
-            );
-
-            std::lock_guard<std::mutex> Lock(CommandMutex);
-            if (PostedCommands.empty() ||
-                PostedCommands.front().Sequence != CommandLease->Sequence)
+            try
             {
-                std::terminate();
+                ProcessPostedCommand(
+                    std::move(CommandLease->Command),
+                    Result
+                );
+            }
+            catch (const FTSRejectedProcessingCompletionError&)
+            {
+                // La prevalidación autoritativa ya determinó que este comando no
+                // puede progresar; reconocer su lease permite avanzar el FIFO.
+                AcknowledgeCommandLease(CommandLease->Sequence);
+                throw;
+            }
+            catch (...)
+            {
+                // Un fallo no clasificado puede ser transitorio o revelar una
+                // invariante interna; conservar el lease permite reintentar sin reorder.
+                throw;
             }
 
-            // Sólo el owner reconoce el lease. Una excepción anterior evita este ack,
-            // por lo que el mismo frente se reintentará sin permitir adelantamientos.
-            PostedCommands.pop_front();
+            AcknowledgeCommandLease(CommandLease->Sequence);
         }
 
         const bool bMayDispatchOrPump = Result.ProcessedCommand !=
@@ -559,6 +566,18 @@ private:
             ++NextPostedCommandSequence;
         }
         return bWasEmpty;
+    }
+
+    void AcknowledgeCommandLease(std::uint64_t Sequence) noexcept
+    {
+        std::lock_guard<std::mutex> Lock(CommandMutex);
+        if (PostedCommands.empty() ||
+            PostedCommands.front().Sequence != Sequence)
+        {
+            std::terminate();
+        }
+
+        PostedCommands.pop_front();
     }
 
     void ProcessPostedCommand(

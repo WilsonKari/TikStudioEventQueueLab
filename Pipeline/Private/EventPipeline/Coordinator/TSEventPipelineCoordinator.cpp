@@ -1081,7 +1081,9 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
 
     if (!bFoundBinding)
     {
-        throw std::logic_error("Processing completion has no binding");
+        throw FTSRejectedProcessingCompletionError(
+            "Processing completion has no binding"
+        );
     }
 
     if (Binding.EmissionId != EmissionId)
@@ -1091,36 +1093,38 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         );
     }
 
-    if (Binding.FamilyKind != ExpectedFamilyKind)
+    ValidateSupportedFamilyFlowPair(
+        Binding.FamilyKind,
+        Binding.ExpectedFlow
+    );
+
+    if (Binding.PayloadHandle.Value == 0)
     {
         throw std::logic_error(
+            "Processing completion binding has an invalid payload handle"
+        );
+    }
+
+    // Sólo estas discrepancias describen un comando externo definitivamente
+    // rechazado; las invariantes internas conservan std::logic_error para retry.
+    if (Binding.FamilyKind != ExpectedFamilyKind)
+    {
+        throw FTSRejectedProcessingCompletionError(
             "Processing completion binding family mismatch"
         );
     }
 
     if (Binding.ExpectedFlow != ExpectedFlow)
     {
-        throw std::logic_error(
+        throw FTSRejectedProcessingCompletionError(
             "Processing completion binding flow mismatch"
         );
     }
 
-    ValidateSupportedFamilyFlowPair(
-        Binding.FamilyKind,
-        Binding.ExpectedFlow
-    );
-
     if (Binding.ExternalState != ETSExternalEmissionState::Processing)
     {
-        throw std::logic_error(
+        throw FTSRejectedProcessingCompletionError(
             "Processing completion binding is not Processing"
-        );
-    }
-
-    if (Binding.PayloadHandle.Value == 0)
-    {
-        throw std::logic_error(
-            "Processing completion binding has an invalid payload handle"
         );
     }
 
