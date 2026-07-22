@@ -888,13 +888,19 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
 
     const std::string UserUniqueId = Candidate.Payload.User.UniqueId;
     std::optional<FTSChatPendingBatchEntry> ExistingEntry;
-    ChatPendingBatchIndex.VisitByUser(
+    const bool bFoundExistingEntry = ChatPendingBatchIndex.VisitByUser(
         UserUniqueId,
         [&](const FTSChatPendingBatchEntry& Entry)
         {
             ExistingEntry = Entry;
         }
     );
+    if (bFoundExistingEntry != ExistingEntry.has_value())
+    {
+        throw std::logic_error(
+            "Pending Chat lookup returned an incoherent result"
+        );
+    }
 
     if (ExistingEntry.has_value() && Now < ExistingEntry->ExpiresAt)
     {

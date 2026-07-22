@@ -4,6 +4,7 @@
 #include "TSPipelineTestSupport.h"
 #include "TSTestSuites.h"
 
+#include <array>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -100,7 +101,12 @@ namespace
         Settings.CommandPrefix = "/t";
         Require(!AreChatSemanticSettingsValid(Settings), "Long prefix must fail");
 
-        for (const std::string Prefix : {"a b", "\t", std::string("a\0b", 3)})
+        const std::array<std::string, 3> InvalidPrefixes{
+            std::string("a b"),
+            std::string("\t"),
+            std::string("a\0b", 3)
+        };
+        for (const std::string& Prefix : InvalidPrefixes)
         {
             Settings = {};
             Settings.CommandPrefix = Prefix;
@@ -634,20 +640,32 @@ namespace
         );
         auto Prepared = Repository.PrepareReplace(*Handle, Replacement);
         Require(Prepared.has_value(), "Known handle must prepare replacement");
-        Repository.Visit(
-            *Handle,
-            [](const FTSChatPayload& Payload)
-            {
-                Require(Payload.Messages[0].Comment == "old", "Pre-commit payload");
-            }
+        Require(
+            Repository.Visit(
+                *Handle,
+                [](const FTSChatPayload& Payload)
+                {
+                    Require(
+                        Payload.Messages[0].Comment == "old",
+                        "Pre-commit payload"
+                    );
+                }
+            ),
+            "Known payload must be visitable before replacement"
         );
         Repository.CommitReplace(*Prepared);
-        Repository.Visit(
-            *Handle,
-            [](const FTSChatPayload& Payload)
-            {
-                Require(Payload.Messages[0].Comment == "new", "Committed payload");
-            }
+        Require(
+            Repository.Visit(
+                *Handle,
+                [](const FTSChatPayload& Payload)
+                {
+                    Require(
+                        Payload.Messages[0].Comment == "new",
+                        "Committed payload"
+                    );
+                }
+            ),
+            "Known payload must be visitable after replacement"
         );
         Require(
             !Repository.PrepareReplace(FTSPayloadHandle{999}, Replacement).has_value(),
