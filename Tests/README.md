@@ -1,88 +1,107 @@
-# Organización de pruebas
+# Organización y certificación de pruebas
 
-`Tests/<Evento>/` contiene las suites propias de una familia concreta. Las siete
-familias tienen completos Adapter tipado, familia directa, Pipeline, Host, lifecycle e
-integración vertical JSON → Host. Las fases históricas MemberIdentity A → B → C
-están completas y publicadas; el baseline vigente es `f32e95b`.
+## Propósito
 
-`Tests/TSPipelineInfrastructureTests.cpp` cubre repositorios, bindings, preparación
-transaccional, consistencia ready/processing/terminal y piezas transversales del
-Pipeline, incluido el passthrough de settings.
-`Tests/TSHostInfrastructureTests.cpp` cubre comandos transversales, lease/ack del frente
-y FIFO del Host ante excepciones reintentables. Las suites por familia cubren que las
-completions definitivamente rechazadas se consuman sin bloquear trabajo posterior.
-`Tests/TikStudioEventQueueSystemTests.cpp` prueba el Core genérico. Los casos locales de
-hardening verifican prepare/commit, snapshots, desempates por `Sequence`, expiraciones,
-índices stale y repetición determinista.
-`Tests/TikStudioTikFinityJsonDecoderTests.cpp` y
-`Tests/TikStudioTikFinityChecklistTests.cpp` certifican la frontera transversal de los
-siete eventos.
+Las pruebas certifican el sistema portable desde tres perspectivas complementarias:
 
-`TikStudioEventHostTests` comienza con inputs portables ya normalizados y certifica
-exclusivamente el comportamiento del Event Host. `TikStudioVerticalIntegrationTests`
-compone JSON TikFinity → converter → Event Host → Pipeline → Core. Adapter y Host sólo
-se enlazan juntos en este runner de integración; el Host de producción no depende de
-TikFinity.
+- por capa, para aislar contratos y autoridades;
+- por familia, para mantener simetría entre los siete eventos base;
+- por integración vertical, para verificar la composición completa disponible.
 
-Las pruebas verticales permanecen organizadas dentro del directorio de cada evento.
-Cada evento que complete este recorrido debe añadir su equivalente vertical al runner
-de integración, sin mezclarlo con sus pruebas propias del Host.
+La certificación vigente corresponde al baseline `8afa3b6`
+(`fix(host): consume rejected completion commands`). El propietario ejecutó manualmente
+las suites el 2026-07-21 y certificó 305 PASS / 0 FAIL. No es un resultado de CI.
 
-Share dispone de repositorio tipado, admisión coordinada, dispatch, completion, Host y
-certificación vertical JSON → Host. Su familia produce exclusivamente
-`ETSEventFlow::Share`; `ShareMilestone` no está implementado y requiere una
-especificación posterior.
+## Runners actuales
 
-Like conserva `LikeCount` y `TotalLikeCount` como datos portables y produce únicamente
-`ETSEventFlow::Like`. `LikeMilestone` permanece reservado y no está implementado; no
-existe acumulación, umbral ni estado semántico para inferirlo.
+| Runner CTest | Responsabilidad | Casos certificados |
+| --- | --- | ---: |
+| `TikStudioEventCoreTests` | Políticas genéricas de cola | 20 |
+| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 117 |
+| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 69 |
+| `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
+| `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
+| `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
+| `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 7 |
+| **Total** |  | **305** |
 
-RoomUser dispone de Adapter tipado, familia directa, Pipeline, Host, lifecycle y
-certificación vertical JSON → Host. Preserva `TopViewers` por valor, en orden y sin
-deduplicación, y produce exclusivamente `ETSEventFlow::RoomUser`.
-`RoomUserMilestone` y `RoomUserTop1Change` permanecen reservados y no están
-implementados.
+Los siete runners están declarados explícitamente como ejecutables y registrados en
+CTest desde `CMakeLists.txt`.
 
-Gift conserva `RepeatCount`, `GiftType`, `bRepeatEnd` y `GroupId` como datos crudos y
-produce exclusivamente `ETSEventFlow::Gift`. Ninguno de esos metadatos activa
-`GiftCombo`, que permanece reservado hasta que una fase posterior defina su semántica.
-Su repositorio, admisión, dispatch, completion y lifecycle comparten el Coordinator y
-las autoridades globales existentes. `PostGift` y `PostGiftCompletion` usan el FIFO,
-owner thread, ready e `InFlight` compartidos; el dispatch variant incorpora la copia
-propietaria Gift. La certificación vertical recorre JSON Gift → converter → Host. Al
-publicarse el hardening posterior a Gift, Pipeline registraba 98 casos, Host 57 y
-Vertical Integration 6; esa cobertura conserva el FIFO si falla el mantenimiento y
-certifica la separación entre `DueExpirations` y el lifecycle de una completion.
+## Organización por familia
 
-Member conserva `ActionId` y el usuario portable completo y produce exclusivamente
-`ETSEventFlow::Member`. El flujo directo se denominaba `MemberIdentity` durante las
-fases 4I.1–4I.3 y fue renombrado porque `Member` describe el evento base, mientras
-“Identity” describía un detalle del payload. `MemberRate` permanece reservado: no
-existen ventanas temporales, conteos agregados, tasas ni estado entre decisiones. El baseline
-publicado `f59836f` fue certificado por el propietario con Core 10, Pipeline 112, Host
-66, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7: 287 PASS / 0
-FAIL.
+Las pruebas específicas de cada evento se distribuyen en:
 
-Migración nominal: `LikeUser` fue renombrado a `LikeMilestone` y `MemberNormalized`
-fue renombrado a `MemberRate`. Ambos continúan reservados y sin semántica operativa.
-Estos dos renombres fueron publicados en `f59836f` y no modificaron pruebas ni conteos.
+```text
+Tests/Chat/
+Tests/Gift/
+Tests/Like/
+Tests/Follow/
+Tests/Share/
+Tests/RoomUser/
+Tests/Member/
+```
 
-La actualización dinámica de settings fue publicada en `b7809bc` y certificada por el
-propietario con Core 15, Pipeline 113, Host 68, Adapter 62, JSON Decoder 20, Checklist
-10 y Vertical Integration 7: 295 PASS / 0 FAIL.
+Cada directorio contiene sólo los casos propios de esa familia en las capas que le
+corresponden. La infraestructura transversal permanece en archivos compartidos bajo
+`Tests/` y no se atribuye artificialmente a una familia.
 
-El hardening de invariantes compartidas fue publicado en `f32e95b`. Añade cinco casos
-Core, cuatro Pipeline y uno Host: los conteos registrados son Core 20, Pipeline 117,
-Host 69, Adapter 62, JSON Decoder 20, Checklist 10 y Vertical Integration 7, para un
-total de 305. En la validación manual del propietario las suites distintas de Host
-permanecieron correctas y Host terminó con 55 PASS / 14 FAIL.
+## Responsabilidad de las suites
 
-La corrección local distingue rechazos definitivos de completion de fallos
-reintentables: los primeros reconocen su lease exacto y dejan avanzar el FIFO; los
-segundos conservan el mismo frente. No añade pruebas ni cambia conteos y permanece
-pendiente de compilación, ejecución, certificación y publicación.
+### Core
 
-Las suites futuras deben añadirse al directorio de su evento y registrarse
-explícitamente desde un `main` pequeño. No se incluyen archivos `.cpp`, no se usa
-autorregistro global y la infraestructura transversal no se asigna arbitrariamente a
-una familia.
+Verifica identidad, prioridad, orden por `Sequence`, capacidad, TTL, expiración,
+settings, selección, lifecycle genérico y preparación/commit de las mutaciones.
+
+### Pipeline
+
+Verifica decisiones familiares, payloads, repositorios, bindings, parejas
+`FamilyKind / Flow`, ready, dispatch, completion, lifecycle y consistencia entre
+autoridades externas y Core.
+
+### Host
+
+Verifica publicación thread-safe, FIFO global, owner thread, un comando por ciclo,
+inputs, completions, actualizaciones de settings, lease/ack por `Sequence`, consumo de
+comandos definitivamente rechazados y recuperación de fallos reintentables.
+
+### Adapter
+
+Verifica que los converters TikFinity preserven y traduzcan correctamente los contratos
+decodificados hacia los siete tipos `FTS*Input` portables.
+
+### JSON Decoder
+
+Verifica el envelope JSON, los tipos, campos opcionales, rechazos y el variant tipado de
+los eventos mapeados.
+
+### Checklist
+
+Verifica que los siete nombres de evento y sus rutas decoder/formatter permanezcan
+cubiertos por el contrato TikFinity portable.
+
+### Vertical Integration
+
+Cada uno de los siete casos compone:
+
+```text
+JSON
+→ Adapter
+→ Host
+→ Pipeline
+→ Core
+→ dispatch
+→ completion
+```
+
+Esta suite recorre la composición portable disponible, pero no prueba WebSocket
+productivo, UE5, Blueprint, Tick productivo ni flujos derivados.
+
+## Registro de nuevas pruebas
+
+- Cada familia registra sus casos explícitamente desde el runner correspondiente.
+- No se incluyen archivos `.cpp` dentro de otros archivos fuente.
+- No se usa autorregistro global.
+- La infraestructura transversal no se asigna artificialmente a una familia.
+- Un nuevo evento o flujo añade cobertura sólo en las capas que realmente modifica.
+- La salida legible del runner no reemplaza las aserciones `Require`.
