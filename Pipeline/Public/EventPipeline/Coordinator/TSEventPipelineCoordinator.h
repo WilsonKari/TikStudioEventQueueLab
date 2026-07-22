@@ -595,6 +595,11 @@ private:
     );
 
     [[nodiscard]]
+    FTSEmissionBinding ResolveReadyBindingAuthority(
+        const FTSEmissionEnvelope& ReadyEmission
+    ) const;
+
+    [[nodiscard]]
     FTSEmissionBinding ValidateReadyBinding(
         const FTSEmissionEnvelope& ReadyEmission
     ) const;

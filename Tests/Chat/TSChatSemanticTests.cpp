@@ -1,4 +1,5 @@
 #include "EventPipeline/Families/TSChatFamily.h"
+#include "EventPipeline/Priority/TSCommonUserPriorityPolicy.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventPipeline/State/TSChatPendingBatchIndex.h"
 #include "TSPipelineTestSupport.h"
@@ -290,9 +291,19 @@ namespace
 
     void TestChatAccumulationPreservesIdentityOrderAndFrozenPriority()
     {
-        FTSEventPipelineCoordinator Coordinator(MakePendingCoreSettings());
+        const FTSEventPipelineSettings PipelineSettings;
+        FTSEventPipelineCoordinator Coordinator(
+            MakePendingCoreSettings(),
+            {},
+            PipelineSettings
+        );
         FTSChatInput First = MakeSemanticInput("batch-user", "one");
         First.User.bIsModerator = true;
+        const std::int64_t FrozenPriority =
+            FTSCommonUserPriorityPolicy::Evaluate(
+                First.User,
+                PipelineSettings.CommonUserPriority
+            ).TotalAdjustment;
         const FTSPipelineAdmissionResult Admission = Coordinator.SubmitChat(First);
         Require(Admission.Status == ETSPipelineAdmissionStatus::Accepted, "Initial batch");
 
@@ -331,7 +342,7 @@ namespace
             "Accumulated messages must preserve order"
         );
         Require(
-            Payload.CommonPriorityAdjustment == 15,
+            Payload.CommonPriorityAdjustment == FrozenPriority,
             "Common priority must remain frozen from the first user snapshot"
         );
         Require(
@@ -377,6 +388,11 @@ namespace
         const FTSPipelineAdmissionResult First = ReadyCoordinator.SubmitChat(
             MakeSemanticInput("same-user", "ready")
         );
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted &&
+                ReadyCoordinator.GetPendingChatBatchCount() == 0,
+            "A directly ready Chat must never enter the mutable index"
+        );
         const FTSPipelineAdmissionResult Successor = ReadyCoordinator.SubmitChat(
             MakeSemanticInput("same-user", "successor")
         );
@@ -410,6 +426,55 @@ namespace
         ReadyCoordinator.ValidateInternalConsistency();
     }
 
+    void TestChatAdmissionAutoPumpClosesOlderMutableBatch()
+    {
+        FTSEventPipelineCoordinator Coordinator;
+        const FTSPipelineAdmissionResult Blocker = Coordinator.SubmitChat(
+            MakeSemanticInput("blocker-user", "blocker")
+        );
+        Require(
+            Coordinator.BeginChatProcessing().Status ==
+                ETSPipelineDispatchStatus::Dispatched,
+            "Blocker must enter Processing"
+        );
+
+        const FTSPipelineAdmissionResult Older = Coordinator.SubmitChat(
+            MakeSemanticInput("older-user", "older")
+        );
+        Require(
+            Older.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Coordinator.GetPendingChatBatchCount() == 1,
+            "Older Chat must remain mutable while the blocker is Processing"
+        );
+        Require(
+            Coordinator.CompleteChatProcessing(
+                Blocker.AffectedEmissionId,
+                ETSProcessingResult::Cancelled
+            ).CancelResult.has_value(),
+            "Cancelling the blocker must leave the older Chat pending"
+        );
+
+        const FTSPipelineAdmissionResult Newer = Coordinator.SubmitChat(
+            MakeSemanticInput("newer-user", "newer")
+        );
+        Require(
+            Newer.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Newer.EnqueueResult->AutoPumpOutcome.Status ==
+                    ETSPumpStatus::EmissionReady &&
+                Newer.EnqueueResult->AutoPumpOutcome.ReadyEmission.EmissionId ==
+                    Older.AffectedEmissionId &&
+                Coordinator.GetPendingChatBatchCount() == 1,
+            "Admission Auto Pump must close only the older selected Chat"
+        );
+        Require(
+            Coordinator.SubmitChat(
+                MakeSemanticInput("newer-user", "newer append")
+            ).Status == ETSPipelineAdmissionStatus::Accumulated,
+            "The newly admitted pending Chat must remain mutable"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
     void TestChatLimitsRejectWithoutPartialMutation()
     {
         FTSEventPipelineSettings Settings;
@@ -421,18 +486,29 @@ namespace
             {},
             Settings
         );
+        FTSChatInput FirstInput = MakeSemanticInput("limited-user", "one");
+        FirstInput.Emotes.clear();
         const FTSPipelineAdmissionResult First = Coordinator.SubmitChat(
-            MakeSemanticInput("limited-user", "one")
+            std::move(FirstInput)
         );
-        Require(Coordinator.SubmitChat(
-            MakeSemanticInput("limited-user", "two")
-        ).Status == ETSPipelineAdmissionStatus::Accumulated, "Second message");
+        Require(
+            First.Status == ETSPipelineAdmissionStatus::Accepted,
+            "First message"
+        );
+        FTSChatInput Second = MakeSemanticInput("limited-user", "two");
+        Second.Emotes.clear();
+        Require(
+            Coordinator.SubmitChat(std::move(Second)).Status ==
+                ETSPipelineAdmissionStatus::Accumulated,
+            "Second message"
+        );
         const FTSChatPayload Before = ReadChatPayload(
             Coordinator,
             First.AffectedEmissionId
         );
 
         FTSChatInput Third = MakeSemanticInput("limited-user", "three");
+        Third.Emotes.clear();
         Third.User.Nickname = "must-not-replace";
         const FTSPipelineAdmissionResult Rejected = Coordinator.SubmitChat(Third);
         Require(
@@ -606,15 +682,26 @@ namespace
         );
 
         Clock.Advance(1s);
+        const FTSProcessDueExpirationsResult Expirations =
+            Coordinator.ProcessDueExpirations();
+        Require(
+            Expirations.LifecycleEvents.size() == 1 &&
+                Expirations.LifecycleEvents[0].Envelope.EmissionId ==
+                    First.AffectedEmissionId &&
+                Expirations.LifecycleEvents[0].Reason ==
+                    ETSEmissionTerminalReason::ExpiredDiscard &&
+                Coordinator.GetPendingChatBatchCount() == 0,
+            "Boundary maintenance must terminalize the expired predecessor"
+        );
         const FTSPipelineAdmissionResult Successor = Coordinator.SubmitChat(
             MakeSemanticInput("ttl-user", "at boundary")
         );
         Require(
             Successor.Status == ETSPipelineAdmissionStatus::Accepted &&
                 Successor.AffectedEmissionId != First.AffectedEmissionId &&
-                Successor.EnqueueResult->LifecycleEvents.size() == 1 &&
+                Successor.EnqueueResult->LifecycleEvents.empty() &&
                 Coordinator.GetPendingChatBatchCount() == 1,
-            "Now equal to ExpiresAt must terminalize and replace the old batch"
+            "Admission after boundary maintenance must create the successor"
         );
         Require(
             !Coordinator.VisitEmissionBinding(
@@ -719,6 +806,7 @@ namespace TikStudio::Tests
         Tests.push_back({"Chat initial payload timestamp command and priority", &TestChatInitialPayloadTimestampCommandAndPriority});
         Tests.push_back({"Chat accumulation identity order and frozen priority", &TestChatAccumulationPreservesIdentityOrderAndFrozenPriority});
         Tests.push_back({"Chat different users and ready successor remain separate", &TestChatDifferentUsersAndReadySuccessorRemainSeparate});
+        Tests.push_back({"Chat admission Auto Pump closes older mutable batch", &TestChatAdmissionAutoPumpClosesOlderMutableBatch});
         Tests.push_back({"Chat limits reject without partial mutation", &TestChatLimitsRejectWithoutPartialMutation});
         Tests.push_back({"Chat emote and batch byte costs are enforced", &TestChatEmoteAndBatchByteCostsAreEnforced});
         Tests.push_back({"Chat accumulation at capacity and rejected successor cleanup", &TestChatAccumulationWorksAtCapacityAndSuccessorDoesNotLeak});

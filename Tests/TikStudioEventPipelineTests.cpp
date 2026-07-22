@@ -6,7 +6,7 @@ int main()
     using namespace TikStudio::Tests;
 
     FTSTestCases Tests;
-    Tests.reserve(149);
+    Tests.reserve(150);
 
     RegisterCommonUserPriorityPolicyTests(Tests);
 

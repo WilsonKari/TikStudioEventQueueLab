@@ -555,8 +555,19 @@ namespace
             "Valid settings update must not alter Pipeline authorities"
         );
 
-        const FTSPipelineAdmissionResult Rejected =
+        const FTSPipelineAdmissionResult Accumulated =
             Coordinator.SubmitChat(MakeCompleteInput());
+        Require(
+            Accumulated.Status == ETSPipelineAdmissionStatus::Accumulated &&
+                Accumulated.AffectedEmissionId == Existing.AffectedEmissionId &&
+                !Accumulated.EnqueueResult.has_value(),
+            "Updated settings must not re-admit an existing mutable Chat batch"
+        );
+
+        FTSChatInput FutureInput = MakeCompleteInput();
+        FutureInput.User.UniqueId = "future-settings-user";
+        const FTSPipelineAdmissionResult Rejected =
+            Coordinator.SubmitChat(std::move(FutureInput));
         Require(
             Rejected.Status == ETSPipelineAdmissionStatus::RejectedByCore &&
                 Rejected.EnqueueResult.has_value() &&

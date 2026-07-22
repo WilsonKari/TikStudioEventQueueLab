@@ -730,8 +730,10 @@ namespace
 
         FTSChatInput TooLarge = MakeChatInput("too-large");
         TooLarge.Comment = "12345";
+        TooLarge.Emotes.clear();
         FTSChatInput Next = MakeChatInput("next");
         Next.Comment = "ok";
+        Next.Emotes.clear();
         Require(Host.PostChat(TooLarge), "Oversized signal");
         Require(!Host.PostChat(Next), "Next FIFO signal");
 

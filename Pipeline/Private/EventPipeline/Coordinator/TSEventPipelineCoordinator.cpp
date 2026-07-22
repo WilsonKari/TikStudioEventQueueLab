@@ -1227,7 +1227,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitMember(
     );
 }
 
-FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
+FTSEmissionBinding FTSEventPipelineCoordinator::ResolveReadyBindingAuthority(
     const FTSEmissionEnvelope& ReadyEmission
 ) const
 {
@@ -1290,6 +1290,17 @@ FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
     {
         throw std::logic_error("Pending ready binding has no payload");
     }
+
+    return Binding;
+}
+
+FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
+    const FTSEmissionEnvelope& ReadyEmission
+) const
+{
+    const FTSEmissionBinding Binding = ResolveReadyBindingAuthority(
+        ReadyEmission
+    );
 
     if (Binding.FamilyKind == ETSEventFamilyKind::Chat)
     {
@@ -2156,7 +2167,9 @@ FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
     }
     else
     {
-        ReadyBinding = ValidateReadyBinding(ReadyEmission);
+        // La entrada Chat sigue siendo mutable durante prepare; la validación
+        // post-commit se ejecutará cuando el ready ya haya cerrado su índice.
+        ReadyBinding = ResolveReadyBindingAuthority(ReadyEmission);
     }
 
     if (ReadyBinding.FamilyKind == ETSEventFamilyKind::Chat &&
