@@ -86,8 +86,8 @@ namespace
         Require(Repository.Size() == 0, "Empty repository size must be zero");
 
         FTSChatPayload FirstPayload;
-        FirstPayload.Input = MakeCompleteInput();
-        const FTSChatInput ExpectedFirstInput = FirstPayload.Input;
+        const FTSChatInput ExpectedFirstInput = MakeCompleteInput();
+        FirstPayload = MakeChatPayloadFromInput(ExpectedFirstInput);
 
         const std::optional<FTSPayloadHandle> FirstHandle =
             Repository.Insert(FirstPayload);
@@ -95,8 +95,10 @@ namespace
         Require(FirstHandle->Value != 0, "First payload handle must be non-zero");
 
         FTSChatPayload SecondPayload;
-        SecondPayload.Input.Comment = "Second payload";
-        const FTSChatInput ExpectedSecondInput = SecondPayload.Input;
+        FTSChatInput ExpectedSecondInput = MakeCompleteInput();
+        ExpectedSecondInput.Comment = "Second payload";
+        ExpectedSecondInput.User.UniqueId = "second-payload-user";
+        SecondPayload = MakeChatPayloadFromInput(ExpectedSecondInput);
 
         const std::optional<FTSPayloadHandle> SecondHandle =
             Repository.Insert(SecondPayload);
@@ -109,16 +111,16 @@ namespace
         Require(!Repository.Empty(), "Repository with payloads must not be empty");
         Require(Repository.Size() == 2, "Repository size must reflect both payloads");
 
-        FirstPayload.Input.Comment = "Mutated outside repository";
-        FirstPayload.Input.Emotes.clear();
-        FirstPayload.Input.User.Nickname = "Mutated User";
+        FirstPayload.Messages[0].Comment = "Mutated outside repository";
+        FirstPayload.Messages[0].Emotes.clear();
+        FirstPayload.User.Nickname = "Mutated User";
 
         const bool bVisitedFirst = Repository.Visit(
             *FirstHandle,
             [&](const FTSChatPayload& StoredPayload)
             {
-                RequireChatInputEqual(
-                    StoredPayload.Input,
+                RequireChatPayloadMatchesInput(
+                    StoredPayload,
                     ExpectedFirstInput,
                     "Stored first payload"
                 );
@@ -130,8 +132,8 @@ namespace
             *SecondHandle,
             [&](const FTSChatPayload& StoredPayload)
             {
-                RequireChatInputEqual(
-                    StoredPayload.Input,
+                RequireChatPayloadMatchesInput(
+                    StoredPayload,
                     ExpectedSecondInput,
                     "Stored second payload"
                 );
@@ -169,9 +171,13 @@ namespace
         Require(!Repository.Erase(UnknownHandle), "Unknown handle must not erase");
 
         FTSChatPayload FirstPayload;
-        FirstPayload.Input.Comment = "First erasable payload";
+        FirstPayload.Messages.push_back(
+            FTSChatMessageEntry{"First erasable payload"}
+        );
         FTSChatPayload SecondPayload;
-        SecondPayload.Input.Comment = "Second retained payload";
+        SecondPayload.Messages.push_back(
+            FTSChatMessageEntry{"Second retained payload"}
+        );
 
         const std::optional<FTSPayloadHandle> FirstHandle =
             Repository.Insert(FirstPayload);
@@ -191,7 +197,7 @@ namespace
         );
 
         FTSChatPayload ThirdPayload;
-        ThirdPayload.Input.Comment = "Third payload";
+        ThirdPayload.Messages.push_back(FTSChatMessageEntry{"Third payload"});
         const std::optional<FTSPayloadHandle> ThirdHandle =
             Repository.Insert(ThirdPayload);
         Require(ThirdHandle.has_value(), "Third payload insertion failed");

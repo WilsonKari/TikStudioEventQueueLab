@@ -830,8 +830,8 @@ namespace
                 ChatDispatch.Dispatch->Emission.EmissionId == ChatId,
             "Chat selected after RoomUser must dispatch"
         );
-        RequireChatInputEqual(
-            ChatDispatch.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Dispatch->Payload,
             ExpectedChat,
             "Chat after RoomUser payload"
         );

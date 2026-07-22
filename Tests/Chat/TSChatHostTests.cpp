@@ -94,8 +94,8 @@ namespace
         (void)RequireAcceptedChatAdmission(Cycle, "Worker PostChat");
         const FTSChatProcessingDispatch& Dispatch =
             RequireChatDispatch(Cycle, "Worker PostChat");
-        RequireChatInputEqual(
-            Dispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Dispatch.Payload,
             Expected,
             "Worker PostChat owned payload"
         );
@@ -119,8 +119,8 @@ namespace
             DispatchA.Emission.EmissionId == AId,
             "FIFO cycle A dispatch identity"
         );
-        RequireChatInputEqual(
-            DispatchA.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            DispatchA.Payload,
             InputA,
             "FIFO first payload"
         );
@@ -170,8 +170,8 @@ namespace
             DispatchB.Emission.EmissionId == BId,
             "FIFO completion must dispatch B after A"
         );
-        RequireChatInputEqual(
-            DispatchB.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            DispatchB.Payload,
             InputB,
             "FIFO second payload"
         );
@@ -530,9 +530,9 @@ namespace
             FirstCycle,
             "Retained first admission"
         );
-        RequireChatInputEqual(
+        RequireChatPayloadMatchesInput(
             RequireChatDispatch(FirstCycle, "Retained first dispatch")
-                .Payload.Input,
+                .Payload,
             FirstInput,
             "Retained first payload"
         );
@@ -630,6 +630,140 @@ namespace
             "Chat Failed"
         );
     }
+
+    void TestHostUsesCustomChatCommandSettings()
+    {
+        FTSEventPipelineSettings InvalidSettings;
+        InvalidSettings.Chat.CommandPrefix.clear();
+        bool bInvalidThrew = false;
+        try
+        {
+            FTSEventExecutionHost InvalidHost({}, {}, InvalidSettings);
+            (void)InvalidHost;
+        }
+        catch (const std::invalid_argument&)
+        {
+            bInvalidThrew = true;
+        }
+        Require(bInvalidThrew, "Host must reject invalid Chat settings");
+
+        FTSEventPipelineSettings PipelineSettings;
+        PipelineSettings.Chat.bOnlyAllowCommands = true;
+        PipelineSettings.Chat.CommandPrefix = "/t";
+        PipelineSettings.Chat.bRequireCommandBoundary = true;
+        FTSEventExecutionHost Host({}, {}, PipelineSettings);
+
+        Require(Host.PostChat(MakeChatInput("normal")), "Normal post signal");
+        const FTSEventHostCycleResult Filtered = Host.RunOneCycle();
+        Require(
+            Filtered.AdmissionResult.has_value() &&
+                Filtered.AdmissionResult->Status ==
+                    ETSPipelineAdmissionStatus::NoEmission &&
+                !Filtered.Dispatch.has_value(),
+            "Host must consume a filtered normal Chat command"
+        );
+
+        FTSChatInput Command = MakeChatInput("command");
+        Command.Comment = "/t jump";
+        Require(Host.PostChat(Command), "Command post signal");
+        const FTSEventHostCycleResult Accepted = Host.RunOneCycle();
+        const FTSChatProcessingDispatch& Dispatch =
+            RequireChatDispatch(Accepted, "Custom command dispatch");
+        Require(
+            Dispatch.Payload.Messages.size() == 1 &&
+                Dispatch.Payload.Messages[0].bIsCommand,
+            "Custom Host command must be classified in the payload"
+        );
+    }
+
+    void TestHostAccumulatesPendingChatAndDispatchesItAfterCompletion()
+    {
+        FTSEventExecutionHost Host;
+        const FTSChatInput Active = MakeChatInput("active");
+        Require(Host.PostChat(Active), "Active Chat signal");
+        const FTSEventHostCycleResult ActiveCycle = Host.RunOneCycle();
+        const FTSEmissionId ActiveId =
+            RequireAcceptedChatAdmission(ActiveCycle, "Active Chat");
+        (void)RequireChatDispatch(ActiveCycle, "Active Chat");
+
+        FTSChatInput First = MakeChatInput("pending-first");
+        FTSChatInput Second = MakeChatInput("pending-second");
+        Second.User = First.User;
+        Require(Host.PostChat(First), "Pending first signal");
+        const FTSEventHostCycleResult FirstCycle = Host.RunOneCycle();
+        const FTSEmissionId PendingId =
+            RequireAcceptedChatAdmission(FirstCycle, "Pending first");
+        Require(!FirstCycle.Dispatch.has_value(), "Pending first remains behind active");
+
+        Require(Host.PostChat(Second), "Pending second signal");
+        const FTSEventHostCycleResult SecondCycle = Host.RunOneCycle();
+        Require(
+            SecondCycle.AdmissionResult.has_value() &&
+                SecondCycle.AdmissionResult->Status ==
+                    ETSPipelineAdmissionStatus::Accumulated &&
+                SecondCycle.AdmissionResult->AffectedEmissionId == PendingId &&
+                !SecondCycle.Dispatch.has_value(),
+            "Same-user pending message must accumulate through Host"
+        );
+
+        Require(
+            Host.PostChatCompletion(ActiveId, ETSProcessingResult::Succeeded),
+            "Active completion signal"
+        );
+        const FTSEventHostCycleResult CompletionCycle = Host.RunOneCycle();
+        const FTSChatProcessingDispatch& PendingDispatch =
+            RequireChatDispatch(CompletionCycle, "Accumulated successor dispatch");
+        Require(
+            PendingDispatch.Emission.EmissionId == PendingId &&
+                PendingDispatch.Payload.Messages.size() == 2 &&
+                PendingDispatch.Payload.Messages[0].Comment == First.Comment &&
+                PendingDispatch.Payload.Messages[1].Comment == Second.Comment,
+            "Completion must dispatch the ordered accumulated batch"
+        );
+    }
+
+    void TestHostSemanticLimitConsumesCommandWithoutBlockingFifo()
+    {
+        FTSEventPipelineSettings PipelineSettings;
+        PipelineSettings.Chat.MaxMessageUtf8Bytes = 4;
+        FTSEventExecutionHost Host({}, {}, PipelineSettings);
+
+        FTSChatInput TooLarge = MakeChatInput("too-large");
+        TooLarge.Comment = "12345";
+        FTSChatInput Next = MakeChatInput("next");
+        Next.Comment = "ok";
+        Require(Host.PostChat(TooLarge), "Oversized signal");
+        Require(!Host.PostChat(Next), "Next FIFO signal");
+
+        const FTSEventHostCycleResult Rejected = Host.RunOneCycle();
+        Require(
+            Rejected.AdmissionResult.has_value() &&
+                Rejected.AdmissionResult->Status ==
+                    ETSPipelineAdmissionStatus::RejectedSemanticLimit &&
+                Rejected.bMoreCommandsPending,
+            "Semantic rejection must consume only its own FIFO command"
+        );
+        const FTSEventHostCycleResult NextCycle = Host.RunOneCycle();
+        (void)RequireAcceptedChatAdmission(NextCycle, "FIFO after semantic rejection");
+        (void)RequireChatDispatch(NextCycle, "FIFO after semantic rejection");
+    }
+
+    void TestHostChatTimestampUsesOwnerControlledClock()
+    {
+        FControlledClock Clock;
+        Clock.Advance(7s);
+        FTSEventExecutionHost Host({}, Clock.MakeProvider());
+        const FTSChatInput Input = MakeChatInput("timestamp");
+        Require(Host.PostChat(Input), "Timestamp Chat signal");
+        const FTSEventHostCycleResult Cycle = Host.RunOneCycle();
+        const FTSChatProcessingDispatch& Dispatch =
+            RequireChatDispatch(Cycle, "Timestamp Chat dispatch");
+        Require(
+            Dispatch.Payload.Messages.size() == 1 &&
+                Dispatch.Payload.Messages[0].ReceivedAt == Clock.Now,
+            "Chat timestamp must come from the owner-thread controlled clock"
+        );
+    }
 }
 
 namespace TikStudio::Tests
@@ -647,5 +781,9 @@ namespace TikStudio::Tests
         Tests.push_back({"Explicit Pump works when Auto Pump is disabled", &TestExplicitPumpWorksWhenAutoPumpIsDisabled});
         Tests.push_back({"Throwing maintenance preserves the pending command", &TestThrowingMaintenancePreservesPendingCommand});
         Tests.push_back({"Chat Failed completion is terminal and Host recovers", &TestChatFailedCompletionIsTerminalAndHostRecovers});
+        Tests.push_back({"Host uses custom Chat command settings", &TestHostUsesCustomChatCommandSettings});
+        Tests.push_back({"Host accumulates pending Chat and dispatches after completion", &TestHostAccumulatesPendingChatAndDispatchesItAfterCompletion});
+        Tests.push_back({"Host semantic limit consumes command without blocking FIFO", &TestHostSemanticLimitConsumesCommandWithoutBlockingFifo});
+        Tests.push_back({"Host Chat timestamp uses owner controlled clock", &TestHostChatTimestampUsesOwnerControlledClock});
     }
 }

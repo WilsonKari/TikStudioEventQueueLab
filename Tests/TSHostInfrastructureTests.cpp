@@ -236,7 +236,8 @@ namespace
             std::get_if<FTSChatProcessingDispatch>(&*Retried.Dispatch);
         Require(
             FirstDispatch != nullptr &&
-                FirstDispatch->Payload.Input.Comment == "leased-front",
+                FirstDispatch->Payload.Messages.size() == 1 &&
+                FirstDispatch->Payload.Messages[0].Comment == "leased-front",
             "Retried dispatch must belong to the original front command"
         );
 

@@ -735,8 +735,8 @@ namespace
                 ChatDispatch.Dispatch->Emission.EmissionId == ChatId,
             "Chat selected after Like must dispatch"
         );
-        RequireChatInputEqual(
-            ChatDispatch.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Dispatch->Payload,
             ExpectedChat,
             "Chat after Like payload"
         );

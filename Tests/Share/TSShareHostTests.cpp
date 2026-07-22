@@ -334,8 +334,8 @@ namespace
                 Dispatch.Emission.EmissionId == ChatId,
             "Share Confirm Auto Pump must expose Chat in the same cycle"
         );
-        RequireChatInputEqual(
-            Dispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Dispatch.Payload,
             ChatInput,
             "Captured Chat payload"
         );

@@ -63,8 +63,9 @@ class FTSEventExecutionHost final
 {
 public:
     explicit FTSEventExecutionHost(
-        FTSEventQueueSettings Settings = {},
-        FTSNowProvider NowProvider = {}
+        FTSEventQueueSettings CoreSettings = {},
+        FTSNowProvider NowProvider = {},
+        FTSEventPipelineSettings PipelineSettings = {}
     );
 
     // Los productores deben detenerse y finalizar antes de destruir el Host; el

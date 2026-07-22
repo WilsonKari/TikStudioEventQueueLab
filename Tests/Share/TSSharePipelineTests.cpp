@@ -715,8 +715,8 @@ namespace
                 ChatDispatch.Dispatch->Emission.EmissionId == ChatId,
             "Chat selected after Share must dispatch"
         );
-        RequireChatInputEqual(
-            ChatDispatch.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Dispatch->Payload,
             ExpectedChat,
             "Chat after Share payload"
         );

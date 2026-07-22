@@ -185,10 +185,15 @@ class FTSEventExecutionHost::FImpl final
 {
 public:
     FImpl(
-        FTSEventQueueSettings Settings,
-        FTSNowProvider NowProvider
+        FTSEventQueueSettings CoreSettings,
+        FTSNowProvider NowProvider,
+        FTSEventPipelineSettings PipelineSettings
     )
-        : Coordinator(std::move(Settings), std::move(NowProvider))
+        : Coordinator(
+              std::move(CoreSettings),
+              std::move(NowProvider),
+              std::move(PipelineSettings)
+          )
         , OwnerThreadId(std::this_thread::get_id())
     {
     }
@@ -919,12 +924,14 @@ private:
 };
 
 FTSEventExecutionHost::FTSEventExecutionHost(
-    FTSEventQueueSettings Settings,
-    FTSNowProvider NowProvider
+    FTSEventQueueSettings CoreSettings,
+    FTSNowProvider NowProvider,
+    FTSEventPipelineSettings PipelineSettings
 )
     : Impl(std::make_unique<FImpl>(
-        std::move(Settings),
-        std::move(NowProvider)
+        std::move(CoreSettings),
+        std::move(NowProvider),
+        std::move(PipelineSettings)
     ))
 {
 }

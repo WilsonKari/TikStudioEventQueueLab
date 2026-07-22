@@ -1073,8 +1073,8 @@ namespace
                 ChatDispatch.Dispatch->Emission.EmissionId == ChatId,
             "Chat selected after Member must dispatch"
         );
-        RequireChatInputEqual(
-            ChatDispatch.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Dispatch->Payload,
             ChatInput,
             "Chat after Member payload"
         );

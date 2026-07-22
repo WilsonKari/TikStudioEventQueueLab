@@ -192,8 +192,8 @@ namespace
                 ChatCycle.bMoreCommandsPending,
             "Host FIFO must process Chat first and retain three commands"
         );
-        RequireChatInputEqual(
-            RequireChatDispatch(ChatCycle, "Mixed Host FIFO Chat").Payload.Input,
+        RequireChatPayloadMatchesInput(
+            RequireChatDispatch(ChatCycle, "Mixed Host FIFO Chat").Payload,
             ChatInput,
             "Mixed Host FIFO Chat payload"
         );
@@ -392,8 +392,8 @@ namespace
                 Dispatch.Emission.EmissionId == ChatId,
             "Like Confirm Auto Pump must expose Chat in the same cycle"
         );
-        RequireChatInputEqual(
-            Dispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Dispatch.Payload,
             ChatInput,
             "Chat captured after Like payload"
         );

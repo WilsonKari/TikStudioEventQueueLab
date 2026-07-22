@@ -101,6 +101,40 @@ namespace TikStudio::Tests
         RequireUserEqual(Actual.User, Expected.User, Context + ": User");
     }
 
+    inline void RequireChatPayloadMatchesInput(
+        const FTSChatPayload& Actual,
+        const FTSChatInput& Expected,
+        const std::string& Context
+    )
+    {
+        RequireUserEqual(Actual.User, Expected.User, Context + ": User");
+        Require(
+            Actual.Messages.size() == 1,
+            Context + ": message count"
+        );
+        Require(
+            Actual.Messages[0].Comment == Expected.Comment,
+            Context + ": Comment"
+        );
+        Require(
+            Actual.Messages[0].Emotes.size() == Expected.Emotes.size(),
+            Context + ": Emote count"
+        );
+        for (std::size_t Index = 0; Index < Expected.Emotes.size(); ++Index)
+        {
+            Require(
+                Actual.Messages[0].Emotes[Index].EmoteId ==
+                    Expected.Emotes[Index].EmoteId,
+                Context + ": EmoteId"
+            );
+            Require(
+                Actual.Messages[0].Emotes[Index].EmoteImageUrl ==
+                    Expected.Emotes[Index].EmoteImageUrl,
+                Context + ": EmoteImageUrl"
+            );
+        }
+    }
+
     inline void RequireFollowInputEqual(
         const FTSFollowInput& Actual,
         const FTSFollowInput& Expected,
@@ -255,6 +289,25 @@ namespace TikStudio::Tests
         Input.User.GifterLevel = 11;
         Input.User.TeamMemberLevel = 13;
         return Input;
+    }
+
+    [[nodiscard]]
+    inline FTSChatPayload MakeChatPayloadFromInput(
+        const FTSChatInput& Input,
+        FTSEventQueueTimePoint ReceivedAt = {}
+    )
+    {
+        FTSChatPayload Payload;
+        Payload.User = Input.User;
+        Payload.Messages.push_back(
+            FTSChatMessageEntry{
+                Input.Comment,
+                Input.Emotes,
+                ReceivedAt,
+                false
+            }
+        );
+        return Payload;
     }
 
     [[nodiscard]]
@@ -634,6 +687,7 @@ namespace TikStudio::Tests
     {
         FTSChatInput Input = MakeCompleteInput();
         Input.Comment = Comment;
+        Input.User.UniqueId = Comment;
         const FTSPipelineAdmissionResult Admission =
             Coordinator.SubmitChat(std::move(Input));
 

@@ -852,8 +852,8 @@ namespace
                 ChatDispatch.Dispatch->Emission.EmissionId == ChatId,
             "Chat selected after Gift must dispatch"
         );
-        RequireChatInputEqual(
-            ChatDispatch.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Dispatch->Payload,
             ExpectedChat,
             "Chat after Gift payload"
         );

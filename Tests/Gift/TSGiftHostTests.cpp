@@ -222,8 +222,8 @@ namespace
                 ChatCycle.bMoreCommandsPending,
             "Host FIFO must process Chat first"
         );
-        RequireChatInputEqual(
-            RequireChatDispatch(ChatCycle, "Mixed FIFO Chat").Payload.Input,
+        RequireChatPayloadMatchesInput(
+            RequireChatDispatch(ChatCycle, "Mixed FIFO Chat").Payload,
             ChatInput,
             "Mixed FIFO Chat payload"
         );
@@ -517,8 +517,8 @@ namespace
                 Dispatch.Emission.EmissionId == ChatId,
             "Gift Confirm must expose Chat in the same cycle"
         );
-        RequireChatInputEqual(
-            Dispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Dispatch.Payload,
             ChatInput,
             "Chat captured after Gift payload"
         );

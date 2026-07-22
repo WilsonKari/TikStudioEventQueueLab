@@ -8,6 +8,7 @@ namespace TikStudio::Tests
 
     void RegisterChatPipelineFamilyTests(FTSTestCases& Tests);
     void RegisterChatPipelineCoordinatorTests(FTSTestCases& Tests);
+    void RegisterChatSemanticTests(FTSTestCases& Tests);
 
     void RegisterFollowPipelineFamilyTests(FTSTestCases& Tests);
     void RegisterFollowPipelineCoordinatorTests(FTSTestCases& Tests);

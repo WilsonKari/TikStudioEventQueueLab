@@ -18,13 +18,22 @@ namespace
     {
         FTSChatInput Input;
         Input.Comment = "Hello";
+        Input.User.UniqueId = "chat-candidate";
 
-        const TTSFamilyDecision<FTSChatPayload> Decision =
-            FTSChatFamily::Decide(Input);
+        const FTSChatFamilyDecision Decision = FTSChatFamily::Decide(
+            Input,
+            FTSEventQueueTimePoint{},
+            {}
+        );
 
-        Require(Decision.has_value(), "Chat must produce an admission candidate");
+        Require(
+            Decision.Status == ETSChatFamilyDecisionStatus::Candidate &&
+                Decision.Candidate.has_value(),
+            "Chat must produce an admission candidate"
+        );
 
-        const TTSAdmissionCandidate<FTSChatPayload>& Candidate = *Decision;
+        const TTSAdmissionCandidate<FTSChatPayload>& Candidate =
+            *Decision.Candidate;
         Require(
             Candidate.FamilyKind == ETSEventFamilyKind::Chat,
             "Chat candidate FamilyKind mismatch"
@@ -56,12 +65,18 @@ namespace
         FTSChatInput Input = MakeCompleteInput();
         const FTSChatInput Original = Input;
 
-        const TTSFamilyDecision<FTSChatPayload> Decision =
-            FTSChatFamily::Decide(Input);
+        const FTSChatFamilyDecision Decision = FTSChatFamily::Decide(
+            Input,
+            FTSEventQueueTimePoint{},
+            {}
+        );
 
-        Require(Decision.has_value(), "Chat snapshot must produce a candidate");
-        RequireChatInputEqual(
-            Decision->Payload.Input,
+        Require(
+            Decision.Candidate.has_value(),
+            "Chat snapshot must produce a candidate"
+        );
+        RequireChatPayloadMatchesInput(
+            Decision.Candidate->Payload,
             Original,
             "Chat payload snapshot"
         );
@@ -135,8 +150,8 @@ namespace
                 [&](const FTSChatPayload& Payload)
                 {
                     bVisitedPayload = true;
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         Input,
                         "First coordinated Chat payload"
                     );
@@ -159,6 +174,7 @@ namespace
         FirstInput.Comment = "First coordinated Chat";
         FTSChatInput SecondInput = MakeCompleteInput();
         SecondInput.Comment = "Second coordinated Chat";
+        SecondInput.User.UniqueId = "second-coordinated-user";
 
         const FTSPipelineAdmissionResult First =
             Coordinator.SubmitChat(FirstInput);
@@ -201,8 +217,8 @@ namespace
                 First.EnqueueResult->AdmittedEmission.EmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         FirstInput,
                         "First busy-path payload"
                     );
@@ -215,8 +231,8 @@ namespace
                 Second.EnqueueResult->AdmittedEmission.EmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         SecondInput,
                         "Second busy-path payload"
                     );
@@ -256,6 +272,7 @@ namespace
         FirstInput.Comment = "Capacity owner";
         FTSChatInput RejectedInput = MakeCompleteInput();
         RejectedInput.Comment = "Rejected at capacity";
+        RejectedInput.User.UniqueId = "capacity-rejected-user";
 
         const FTSPipelineAdmissionResult First =
             Coordinator.SubmitChat(FirstInput);
@@ -296,8 +313,8 @@ namespace
                 FirstEmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         FirstInput,
                         "Capacity-preserved payload"
                     );
@@ -407,8 +424,8 @@ namespace
             Result.Dispatch->Emission.Flow == ETSEventFlow::Chat,
             "Chat dispatch must preserve the Chat flow"
         );
-        RequireChatInputEqual(
-            Result.Dispatch->Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Result.Dispatch->Payload,
             Input,
             "Owned Chat processing dispatch"
         );
@@ -431,8 +448,8 @@ namespace
                 Result.Dispatch->Emission.EmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         Input,
                         "Stored payload after authorized dispatch"
                     );
@@ -528,8 +545,8 @@ namespace
                 SecondEmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         SecondInput,
                         "Pending second Chat payload"
                     );
@@ -563,18 +580,19 @@ namespace
             "Independent copy test requires a dispatch"
         );
 
-        Dispatch.Dispatch->Payload.Input.Comment = "Mutated dispatch comment";
-        Dispatch.Dispatch->Payload.Input.Emotes.clear();
-        Dispatch.Dispatch->Payload.Input.User.Nickname = "Mutated dispatch user";
-        Dispatch.Dispatch->Payload.Input.User.UniqueId = "mutated-user-id";
+        Dispatch.Dispatch->Payload.Messages[0].Comment =
+            "Mutated dispatch comment";
+        Dispatch.Dispatch->Payload.Messages[0].Emotes.clear();
+        Dispatch.Dispatch->Payload.User.Nickname = "Mutated dispatch user";
+        Dispatch.Dispatch->Payload.User.UniqueId = "mutated-user-id";
 
         Require(
             Coordinator.VisitChatPayloadForEmission(
                 Admission.EnqueueResult->AdmittedEmission.EmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         Input,
                         "Stored payload after dispatch mutation"
                     );
@@ -637,8 +655,8 @@ namespace
                 EmissionId,
                 [&](const FTSChatPayload& Payload)
                 {
-                    RequireChatInputEqual(
-                        Payload.Input,
+                    RequireChatPayloadMatchesInput(
+                        Payload,
                         Input,
                         "Payload after single ready consumption"
                     );

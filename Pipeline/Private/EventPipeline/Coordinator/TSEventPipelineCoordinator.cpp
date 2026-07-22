@@ -8,9 +8,14 @@
 #include "EventPipeline/Families/TSGiftFamily.h"
 #include "EventPipeline/Families/TSMemberFamily.h"
 
+#include <algorithm>
 #include <exception>
+#include <chrono>
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -174,6 +179,8 @@ namespace
         ETSExternalEmissionState ExpectedState =
             ETSExternalEmissionState::Bound;
         bool bClearsReady = false;
+        std::optional<FTSChatPendingBatchIndex::FPreparedEraseExact>
+            ChatIndexErase;
     };
 
     struct FPreparedLifecycleBatch
@@ -404,6 +411,7 @@ namespace
         const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         const FTSGiftPayloadRepository& GiftPayloadRepository,
         const FTSMemberPayloadRepository& MemberPayloadRepository,
+        const FTSChatPendingBatchIndex& ChatPendingBatchIndex,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
         const FTSEmissionLifecycleEvents& LifecycleEvents,
         ELifecycleBatchKind BatchKind,
@@ -506,18 +514,62 @@ namespace
                 );
             }
 
+            std::optional<
+                FTSChatPendingBatchIndex::FPreparedEraseExact
+            > ChatIndexErase;
+            if (Binding.FamilyKind == ETSEventFamilyKind::Chat)
+            {
+                std::string UserUniqueId;
+                const bool bFoundChatPayload = ChatPayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [&](const FTSChatPayload& Payload)
+                    {
+                        UserUniqueId = Payload.User.UniqueId;
+                    }
+                );
+                if (!bFoundChatPayload || UserUniqueId.empty())
+                {
+                    throw std::logic_error(
+                        "Chat lifecycle has no valid semantic payload"
+                    );
+                }
+
+                if (ExpectedState == ETSExternalEmissionState::Bound)
+                {
+                    ChatIndexErase =
+                        ChatPendingBatchIndex.PrepareEraseExact(
+                            UserUniqueId,
+                            EmissionId
+                        );
+                    if (!ChatIndexErase.has_value())
+                    {
+                        throw std::logic_error(
+                            "Pending Chat lifecycle has no exact index entry"
+                        );
+                    }
+                }
+                else if (ChatPendingBatchIndex.ContainsExact(
+                             UserUniqueId,
+                             EmissionId
+                         ))
+                {
+                    throw std::logic_error(
+                        "Processing Chat remains mutable in the pending index"
+                    );
+                }
+            }
+
             const bool bClearsReady = PendingReadyEmission.has_value() &&
                 PendingReadyEmission->EmissionId == EmissionId;
 
-            Prepared.Entries.push_back(
-                FValidatedLifecycleEntry{
-                    EmissionId,
-                    Binding.FamilyKind,
-                    Binding.PayloadHandle,
-                    ExpectedState,
-                    bClearsReady
-                }
-            );
+            FValidatedLifecycleEntry Entry;
+            Entry.EmissionId = EmissionId;
+            Entry.FamilyKind = Binding.FamilyKind;
+            Entry.PayloadHandle = Binding.PayloadHandle;
+            Entry.ExpectedState = ExpectedState;
+            Entry.bClearsReady = bClearsReady;
+            Entry.ChatIndexErase = std::move(ChatIndexErase);
+            Prepared.Entries.push_back(std::move(Entry));
         }
 
         return Prepared;
@@ -534,12 +586,18 @@ namespace
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
         FTSMemberPayloadRepository& MemberPayloadRepository,
+        FTSChatPendingBatchIndex& ChatPendingBatchIndex,
         std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
-        const FPreparedLifecycleBatch& Prepared
+        FPreparedLifecycleBatch& Prepared
     ) noexcept
     {
-        for (const FValidatedLifecycleEntry& Entry : Prepared.Entries)
+        for (FValidatedLifecycleEntry& Entry : Prepared.Entries)
         {
+            if (Entry.ChatIndexErase.has_value())
+            {
+                // Un lote deja de ser ampliable antes de limpiar payload y binding.
+                ChatPendingBatchIndex.CommitEraseExact(*Entry.ChatIndexErase);
+            }
             BindingRegistry.CommitTransitionState(
                 Entry.EmissionId,
                 Entry.ExpectedState,
@@ -565,11 +623,57 @@ namespace
     }
 }
 
+namespace
+{
+    [[nodiscard]]
+    FTSEventPipelineSettings ValidatePipelineSettings(
+        FTSEventPipelineSettings Settings
+    )
+    {
+        if (!FTSCommonUserPriorityPolicy::AreSettingsValid(
+                Settings.CommonUserPriority
+            ) ||
+            !AreChatSemanticSettingsValid(Settings.Chat))
+        {
+            throw std::invalid_argument("Invalid Event Pipeline settings");
+        }
+        return Settings;
+    }
+
+    [[nodiscard]]
+    std::shared_ptr<FTSNowProvider> MakeEffectiveNowProvider(
+        FTSNowProvider NowProvider
+    )
+    {
+        if (!NowProvider)
+        {
+            NowProvider = []()
+            {
+                return FTSEventQueueClock::now();
+            };
+        }
+        return std::make_shared<FTSNowProvider>(std::move(NowProvider));
+    }
+}
+
 FTSEventPipelineCoordinator::FTSEventPipelineCoordinator(
-    FTSEventQueueSettings Settings,
-    FTSNowProvider NowProvider
+    FTSEventQueueSettings CoreSettings,
+    FTSNowProvider NowProvider,
+    FTSEventPipelineSettings InPipelineSettings
 )
-    : Core(std::move(Settings), std::move(NowProvider))
+    : PipelineSettings(ValidatePipelineSettings(
+          std::move(InPipelineSettings)
+      ))
+    , EffectiveNowProvider(MakeEffectiveNowProvider(
+          std::move(NowProvider)
+      ))
+    , Core(
+          std::move(CoreSettings),
+          [Provider = EffectiveNowProvider]()
+          {
+              return (*Provider)();
+          }
+      )
 {
 }
 
@@ -627,7 +731,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
     std::optional<FTSEmissionBindingRegistry::FPreparedInsert>
         PreparedBindingInsert;
     FPreparedLifecycleBatch PreparedLifecycle;
-    std::optional<FTSEmissionEnvelope> PreparedReady;
+    FPreparedCorePumpOutcome PreparedReady;
 
     FTSEnqueueResult CoreResult = Core.EnqueuePrepared(
         Candidate.EnqueueRequest,
@@ -686,6 +790,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
                 MemberPayloadRepository,
+                ChatPendingBatchIndex,
                 PendingReadyEmission,
                 PreparedCoreResult.LifecycleEvents,
                 ELifecycleBatchKind::PendingOnly,
@@ -720,6 +825,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         RoomUserPayloadRepository,
         GiftPayloadRepository,
         MemberPayloadRepository,
+        ChatPendingBatchIndex,
         PendingReadyEmission,
         PreparedLifecycle
     );
@@ -727,6 +833,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
     ProvisionalGuard.Release();
 
     Result.Status = ETSPipelineAdmissionStatus::Accepted;
+    Result.AffectedEmissionId = CoreResult.AdmittedEmission.EmissionId;
     Result.EnqueueResult = std::move(CoreResult);
     return Result;
 }
@@ -735,12 +842,311 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
     FTSChatInput Input
 )
 {
-    return SubmitDecision(
-        FTSChatFamily::Decide(std::move(Input)),
-        ETSEventFamilyKind::Chat,
-        ETSEventFlow::Chat,
-        ChatPayloadRepository
+    // ReceivedAt y la comparación de expiración comparten una sola captura del
+    // proveedor efectivo en el owner thread.
+    const FTSEventQueueTimePoint Now = (*EffectiveNowProvider)();
+    FTSChatFamilyDecision Decision = FTSChatFamily::Decide(
+        std::move(Input),
+        Now,
+        PipelineSettings
     );
+
+    FTSPipelineAdmissionResult Result;
+    switch (Decision.Status)
+    {
+    case ETSChatFamilyDecisionStatus::NoEmission:
+        return Result;
+
+    case ETSChatFamilyDecisionStatus::RejectedInvalidInput:
+        Result.Status = ETSPipelineAdmissionStatus::RejectedInvalidInput;
+        return Result;
+
+    case ETSChatFamilyDecisionStatus::RejectedSemanticLimit:
+        Result.Status = ETSPipelineAdmissionStatus::RejectedSemanticLimit;
+        return Result;
+
+    case ETSChatFamilyDecisionStatus::Candidate:
+        break;
+
+    default:
+        throw std::logic_error("Chat family returned an invalid status");
+    }
+
+    if (!Decision.Candidate.has_value())
+    {
+        throw std::logic_error("Chat candidate status has no candidate");
+    }
+
+    TTSAdmissionCandidate<FTSChatPayload> Candidate =
+        std::move(*Decision.Candidate);
+    if (Candidate.FamilyKind != ETSEventFamilyKind::Chat ||
+        Candidate.EnqueueRequest.Flow != ETSEventFlow::Chat ||
+        Candidate.Payload.Messages.size() != 1)
+    {
+        throw std::logic_error("Chat candidate has an invalid route or shape");
+    }
+
+    const std::string UserUniqueId = Candidate.Payload.User.UniqueId;
+    std::optional<FTSChatPendingBatchEntry> ExistingEntry;
+    ChatPendingBatchIndex.VisitByUser(
+        UserUniqueId,
+        [&](const FTSChatPendingBatchEntry& Entry)
+        {
+            ExistingEntry = Entry;
+        }
+    );
+
+    if (ExistingEntry.has_value() && Now < ExistingEntry->ExpiresAt)
+    {
+        FTSEmissionBinding Binding;
+        const bool bFoundBinding = BindingRegistry.Visit(
+            ExistingEntry->EmissionId,
+            [&](const FTSEmissionBinding& StoredBinding)
+            {
+                Binding = StoredBinding;
+            }
+        );
+        if (!bFoundBinding ||
+            Binding.FamilyKind != ETSEventFamilyKind::Chat ||
+            Binding.ExpectedFlow != ETSEventFlow::Chat ||
+            Binding.ExternalState != ETSExternalEmissionState::Bound ||
+            Binding.PayloadHandle.Value == 0 ||
+            (PendingReadyEmission.has_value() &&
+             PendingReadyEmission->EmissionId == ExistingEntry->EmissionId))
+        {
+            throw std::logic_error(
+                "Pending Chat index does not match a mutable binding"
+            );
+        }
+
+        FTSChatPayload ExpandedPayload;
+        const bool bFoundPayload = ChatPayloadRepository.Visit(
+            Binding.PayloadHandle,
+            [&](const FTSChatPayload& StoredPayload)
+            {
+                ExpandedPayload = StoredPayload;
+            }
+        );
+        if (!bFoundPayload || ExpandedPayload.User.UniqueId != UserUniqueId)
+        {
+            throw std::logic_error(
+                "Pending Chat index does not match its payload"
+            );
+        }
+
+        ExpandedPayload.User = std::move(Candidate.Payload.User);
+        ExpandedPayload.Messages.push_back(
+            std::move(Candidate.Payload.Messages.front())
+        );
+        if (!FTSChatFamily::IsWithinBatchLimits(
+                ExpandedPayload,
+                PipelineSettings.Chat
+            ))
+        {
+            Result.Status =
+                ETSPipelineAdmissionStatus::RejectedSemanticLimit;
+            return Result;
+        }
+
+        std::optional<FTSChatPayloadRepository::FPreparedReplace>
+            PreparedReplace = ChatPayloadRepository.PrepareReplace(
+                Binding.PayloadHandle,
+                std::move(ExpandedPayload)
+            );
+        if (!PreparedReplace.has_value())
+        {
+            throw std::logic_error(
+                "Pending Chat payload could not prepare replacement"
+            );
+        }
+
+        ChatPayloadRepository.CommitReplace(*PreparedReplace);
+        Result.Status = ETSPipelineAdmissionStatus::Accumulated;
+        Result.AffectedEmissionId = ExistingEntry->EmissionId;
+        return Result;
+    }
+
+    // La prioridad común se congela sólo cuando nace un lote; acumulaciones no la
+    // recalculan ni multiplican por el número de mensajes.
+    const FTSCommonUserPriorityBreakdown Priority =
+        FTSCommonUserPriorityPolicy::Evaluate(
+            Candidate.Payload.User,
+            PipelineSettings.CommonUserPriority
+        );
+    Candidate.Payload.CommonPriorityAdjustment = Priority.TotalAdjustment;
+    Candidate.EnqueueRequest.PriorityAdjustment = Priority.TotalAdjustment;
+
+    const std::optional<FTSPayloadHandle> PayloadHandle =
+        ChatPayloadRepository.Insert(std::move(Candidate.Payload));
+    if (!PayloadHandle.has_value())
+    {
+        Result.Status =
+            ETSPipelineAdmissionStatus::RejectedPayloadIdentityExhausted;
+        return Result;
+    }
+
+    TProvisionalPayloadGuard<FTSChatPayloadRepository> ProvisionalGuard(
+        ChatPayloadRepository,
+        *PayloadHandle
+    );
+    std::optional<FTSEmissionBindingRegistry::FPreparedInsert>
+        PreparedBindingInsert;
+    std::optional<FTSChatPendingBatchIndex::FPreparedInsert>
+        PreparedIndexInsert;
+    FPreparedLifecycleBatch PreparedLifecycle;
+    FPreparedCorePumpOutcome PreparedReady;
+
+    FTSEnqueueResult CoreResult = Core.EnqueuePrepared(
+        Candidate.EnqueueRequest,
+        [&](const FTSEnqueueResult& PreparedCoreResult)
+        {
+            if (!IsAcceptedStatus(PreparedCoreResult.Status))
+            {
+                if (!PreparedCoreResult.LifecycleEvents.empty() ||
+                    PreparedCoreResult.AutoPumpOutcome.Status !=
+                        ETSPumpStatus::NotRequested)
+                {
+                    throw std::logic_error(
+                        "Rejected Chat admission prepared Core mutations"
+                    );
+                }
+                return;
+            }
+
+            const FTSEmissionEnvelope& Admitted =
+                PreparedCoreResult.AdmittedEmission;
+            if (Admitted.EmissionId == 0 ||
+                Admitted.Flow != ETSEventFlow::Chat)
+            {
+                throw std::logic_error(
+                    "Accepted Chat emission has invalid identity or flow"
+                );
+            }
+
+            FTSEmissionBinding Binding;
+            Binding.EmissionId = Admitted.EmissionId;
+            Binding.FamilyKind = ETSEventFamilyKind::Chat;
+            Binding.ExpectedFlow = ETSEventFlow::Chat;
+            Binding.PayloadHandle = *PayloadHandle;
+            Binding.ExternalState = ETSExternalEmissionState::Bound;
+
+            auto BindingInsert = BindingRegistry.PrepareInsert(Binding);
+            if (!BindingInsert.has_value())
+            {
+                throw std::logic_error(
+                    "Accepted Chat could not prepare its binding"
+                );
+            }
+
+            PreparedLifecycle = PrepareLifecycleBatch(
+                BindingRegistry,
+                ChatPayloadRepository,
+                FollowPayloadRepository,
+                SharePayloadRepository,
+                LikePayloadRepository,
+                RoomUserPayloadRepository,
+                GiftPayloadRepository,
+                MemberPayloadRepository,
+                ChatPendingBatchIndex,
+                PendingReadyEmission,
+                PreparedCoreResult.LifecycleEvents,
+                ELifecycleBatchKind::PendingOnly,
+                0
+            );
+            PreparedReady = PrepareCorePumpOutcome(
+                PreparedCoreResult.AutoPumpOutcome,
+                &Binding
+            );
+
+            const bool bAdmittedIsReady =
+                PreparedCoreResult.AutoPumpOutcome.Status ==
+                    ETSPumpStatus::EmissionReady &&
+                PreparedCoreResult.AutoPumpOutcome.ReadyEmission.EmissionId ==
+                    Admitted.EmissionId;
+            if (!bAdmittedIsReady)
+            {
+                const FTSChatPendingBatchEntry NewEntry{
+                    Admitted.EmissionId,
+                    Admitted.ExpiresAt
+                };
+                if (ExistingEntry.has_value())
+                {
+                    const bool bExpiredLifecycleFound =
+                        std::any_of(
+                            PreparedCoreResult.LifecycleEvents.begin(),
+                            PreparedCoreResult.LifecycleEvents.end(),
+                            [&](const FTSEmissionLifecycleEvent& Event)
+                            {
+                                return Event.Envelope.EmissionId ==
+                                    ExistingEntry->EmissionId;
+                            }
+                        );
+                    if (!bExpiredLifecycleFound)
+                    {
+                        throw std::logic_error(
+                            "Expired Chat predecessor was not terminalized"
+                        );
+                    }
+                    PreparedIndexInsert =
+                        ChatPendingBatchIndex.PrepareInsertAfterExactErase(
+                            UserUniqueId,
+                            ExistingEntry->EmissionId,
+                            NewEntry
+                        );
+                }
+                else
+                {
+                    PreparedIndexInsert = ChatPendingBatchIndex.PrepareInsert(
+                        UserUniqueId,
+                        NewEntry
+                    );
+                }
+
+                if (!PreparedIndexInsert.has_value())
+                {
+                    throw std::logic_error(
+                        "Accepted pending Chat could not prepare its index"
+                    );
+                }
+            }
+
+            PreparedBindingInsert.emplace(std::move(*BindingInsert));
+        }
+    );
+
+    if (!IsAcceptedStatus(CoreResult.Status))
+    {
+        ProvisionalGuard.RollbackNow();
+        Result.Status = ETSPipelineAdmissionStatus::RejectedByCore;
+        Result.EnqueueResult = std::move(CoreResult);
+        return Result;
+    }
+
+    BindingRegistry.CommitInsert(*PreparedBindingInsert);
+    CommitLifecycleBatch(
+        BindingRegistry,
+        ChatPayloadRepository,
+        FollowPayloadRepository,
+        SharePayloadRepository,
+        LikePayloadRepository,
+        RoomUserPayloadRepository,
+        GiftPayloadRepository,
+        MemberPayloadRepository,
+        ChatPendingBatchIndex,
+        PendingReadyEmission,
+        PreparedLifecycle
+    );
+    CommitCorePumpOutcome(PreparedReady);
+    if (PreparedIndexInsert.has_value())
+    {
+        ChatPendingBatchIndex.CommitInsert(*PreparedIndexInsert);
+    }
+    ProvisionalGuard.Release();
+
+    Result.Status = ETSPipelineAdmissionStatus::Accepted;
+    Result.AffectedEmissionId = CoreResult.AdmittedEmission.EmissionId;
+    Result.EnqueueResult = std::move(CoreResult);
+    return Result;
 }
 
 FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitFollow(
@@ -877,6 +1283,28 @@ FTSEmissionBinding FTSEventPipelineCoordinator::ValidateReadyBinding(
         ))
     {
         throw std::logic_error("Pending ready binding has no payload");
+    }
+
+    if (Binding.FamilyKind == ETSEventFamilyKind::Chat)
+    {
+        std::string UserUniqueId;
+        const bool bFoundChatPayload = ChatPayloadRepository.Visit(
+            Binding.PayloadHandle,
+            [&](const FTSChatPayload& Payload)
+            {
+                UserUniqueId = Payload.User.UniqueId;
+            }
+        );
+        if (!bFoundChatPayload || UserUniqueId.empty() ||
+            ChatPendingBatchIndex.ContainsExact(
+                UserUniqueId,
+                Binding.EmissionId
+            ))
+        {
+            throw std::logic_error(
+                "Ready Chat remains mutable in the pending index"
+            );
+        }
     }
 
     return Binding;
@@ -1143,7 +1571,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
     }
 
     FPreparedLifecycleBatch PreparedLifecycle;
-    std::optional<FTSEmissionEnvelope> PreparedReady;
+    FPreparedCorePumpOutcome PreparedReady;
 
     if (ProcessingResult == ETSProcessingResult::Succeeded)
     {
@@ -1167,6 +1595,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
                     MemberPayloadRepository,
+                    ChatPendingBatchIndex,
                     PendingReadyEmission,
                     PreparedCoreResult.LifecycleEvents,
                     ELifecycleBatchKind::Confirm,
@@ -1187,6 +1616,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
             RoomUserPayloadRepository,
             GiftPayloadRepository,
             MemberPayloadRepository,
+            ChatPendingBatchIndex,
             PendingReadyEmission,
             PreparedLifecycle
         );
@@ -1217,6 +1647,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
                 MemberPayloadRepository,
+                ChatPendingBatchIndex,
                 PendingReadyEmission,
                 PreparedCoreResult.LifecycleEvents,
                 ELifecycleBatchKind::Cancel,
@@ -1234,6 +1665,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         RoomUserPayloadRepository,
         GiftPayloadRepository,
         MemberPayloadRepository,
+        ChatPendingBatchIndex,
         PendingReadyEmission,
         PreparedLifecycle
     );
@@ -1349,7 +1781,7 @@ FTSEventPipelineCoordinator::CompleteMemberProcessing(
 FTSPumpResult FTSEventPipelineCoordinator::Pump()
 {
     FPreparedLifecycleBatch PreparedLifecycle;
-    std::optional<FTSEmissionEnvelope> PreparedReady;
+    FPreparedCorePumpOutcome PreparedReady;
     FTSPumpResult Result = Core.PumpPrepared(
         [&](const FTSPumpResult& PreparedCoreResult)
         {
@@ -1362,6 +1794,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
                 MemberPayloadRepository,
+                ChatPendingBatchIndex,
                 PendingReadyEmission,
                 PreparedCoreResult.LifecycleEvents,
                 ELifecycleBatchKind::PendingOnly,
@@ -1382,6 +1815,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
         RoomUserPayloadRepository,
         GiftPayloadRepository,
         MemberPayloadRepository,
+        ChatPendingBatchIndex,
         PendingReadyEmission,
         PreparedLifecycle
     );
@@ -1406,6 +1840,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
                     MemberPayloadRepository,
+                    ChatPendingBatchIndex,
                     PendingReadyEmission,
                     PreparedCoreResult.LifecycleEvents,
                     ELifecycleBatchKind::PendingOnly,
@@ -1423,6 +1858,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
         RoomUserPayloadRepository,
         GiftPayloadRepository,
         MemberPayloadRepository,
+        ChatPendingBatchIndex,
         PendingReadyEmission,
         PreparedLifecycle
     );
@@ -1453,6 +1889,12 @@ std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
 std::size_t FTSEventPipelineCoordinator::GetChatPayloadCount() const noexcept
 {
     return ChatPayloadRepository.Size();
+}
+
+std::size_t
+FTSEventPipelineCoordinator::GetPendingChatBatchCount() const noexcept
+{
+    return ChatPendingBatchIndex.Size();
 }
 
 std::size_t FTSEventPipelineCoordinator::GetFollowPayloadCount() const noexcept
@@ -1537,6 +1979,46 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
                 );
             }
 
+            if (Binding.FamilyKind == ETSEventFamilyKind::Chat)
+            {
+                std::string UserUniqueId;
+                const bool bFoundPayload = ChatPayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [&](const FTSChatPayload& Payload)
+                    {
+                        UserUniqueId = Payload.User.UniqueId;
+                    }
+                );
+                if (!bFoundPayload || UserUniqueId.empty())
+                {
+                    throw std::logic_error(
+                        "Live Chat binding has no valid semantic payload"
+                    );
+                }
+
+                const bool bIndexed = ChatPendingBatchIndex.ContainsExact(
+                    UserUniqueId,
+                    Binding.EmissionId
+                );
+                const bool bReady = PendingReadyEmission.has_value() &&
+                    PendingReadyEmission->EmissionId == Binding.EmissionId;
+                if (Binding.ExternalState == ETSExternalEmissionState::Bound &&
+                    bIndexed == bReady)
+                {
+                    throw std::logic_error(
+                        "Bound Chat index does not match ready state"
+                    );
+                }
+                if (Binding.ExternalState ==
+                        ETSExternalEmissionState::Processing &&
+                    bIndexed)
+                {
+                    throw std::logic_error(
+                        "Processing Chat remains in the pending index"
+                    );
+                }
+            }
+
             if (Binding.ExternalState ==
                 ETSExternalEmissionState::Processing)
             {
@@ -1544,6 +2026,61 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
             }
         }
     );
+
+    std::size_t IndexedChatCount = 0;
+    std::unordered_set<FTSEmissionId> IndexedEmissionIds;
+    IndexedEmissionIds.reserve(ChatPendingBatchIndex.Size());
+    ChatPendingBatchIndex.VisitAll(
+        [&](const std::string& UserUniqueId,
+            const FTSChatPendingBatchEntry& Entry)
+        {
+            ++IndexedChatCount;
+            if (!IndexedEmissionIds.insert(Entry.EmissionId).second)
+            {
+                throw std::logic_error(
+                    "Two Chat users reference the same pending emission"
+                );
+            }
+            FTSEmissionBinding Binding;
+            const bool bFoundBinding = BindingRegistry.Visit(
+                Entry.EmissionId,
+                [&](const FTSEmissionBinding& StoredBinding)
+                {
+                    Binding = StoredBinding;
+                }
+            );
+            if (!bFoundBinding ||
+                Binding.FamilyKind != ETSEventFamilyKind::Chat ||
+                Binding.ExpectedFlow != ETSEventFlow::Chat ||
+                Binding.ExternalState != ETSExternalEmissionState::Bound ||
+                (PendingReadyEmission.has_value() &&
+                 PendingReadyEmission->EmissionId == Entry.EmissionId))
+            {
+                throw std::logic_error(
+                    "Chat pending index references a non-mutable binding"
+                );
+            }
+
+            bool bPayloadMatches = false;
+            const bool bFoundPayload = ChatPayloadRepository.Visit(
+                Binding.PayloadHandle,
+                [&](const FTSChatPayload& Payload)
+                {
+                    bPayloadMatches = Payload.User.UniqueId == UserUniqueId;
+                }
+            );
+            if (!bFoundPayload || !bPayloadMatches)
+            {
+                throw std::logic_error(
+                    "Chat pending index key does not match its payload"
+                );
+            }
+        }
+    );
+    if (IndexedChatCount != ChatPendingBatchIndex.Size())
+    {
+        throw std::logic_error("Chat pending index changed during validation");
+    }
 
     if (ProcessingCount > 1)
     {
@@ -1564,15 +2101,16 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
     }
 }
 
-std::optional<FTSEmissionEnvelope>
+FTSEventPipelineCoordinator::FPreparedCorePumpOutcome
 FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
     const FTSPumpOutcome& PumpOutcome,
     const FTSEmissionBinding* PreparedBinding
 ) const
 {
+    FPreparedCorePumpOutcome Prepared;
     if (PumpOutcome.Status != ETSPumpStatus::EmissionReady)
     {
-        return std::nullopt;
+        return Prepared;
     }
 
     if (PendingReadyEmission.has_value())
@@ -1581,8 +2119,10 @@ FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
     }
 
     const FTSEmissionEnvelope& ReadyEmission = PumpOutcome.ReadyEmission;
-    if (PreparedBinding != nullptr &&
-        PreparedBinding->EmissionId == ReadyEmission.EmissionId)
+    FTSEmissionBinding ReadyBinding;
+    const bool bUsesPreparedBinding = PreparedBinding != nullptr &&
+        PreparedBinding->EmissionId == ReadyEmission.EmissionId;
+    if (bUsesPreparedBinding)
     {
         if (PreparedBinding->ExpectedFlow != ReadyEmission.Flow ||
             PreparedBinding->ExternalState !=
@@ -1606,20 +2146,52 @@ FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
                 "Prepared ready does not match its admission binding"
             );
         }
+        ReadyBinding = *PreparedBinding;
     }
     else
     {
-        (void)ValidateReadyBinding(ReadyEmission);
+        ReadyBinding = ValidateReadyBinding(ReadyEmission);
     }
 
-    return ReadyEmission;
+    if (ReadyBinding.FamilyKind == ETSEventFamilyKind::Chat &&
+        !bUsesPreparedBinding)
+    {
+        std::string UserUniqueId;
+        const bool bFoundPayload = ChatPayloadRepository.Visit(
+            ReadyBinding.PayloadHandle,
+            [&](const FTSChatPayload& Payload)
+            {
+                UserUniqueId = Payload.User.UniqueId;
+            }
+        );
+        if (!bFoundPayload || UserUniqueId.empty())
+        {
+            throw std::logic_error(
+                "Ready Chat has no valid semantic payload"
+            );
+        }
+
+        Prepared.ChatIndexErase = ChatPendingBatchIndex.PrepareEraseExact(
+            UserUniqueId,
+            ReadyEmission.EmissionId
+        );
+        if (!Prepared.ChatIndexErase.has_value())
+        {
+            throw std::logic_error(
+                "Ready Chat has no exact pending index entry"
+            );
+        }
+    }
+
+    Prepared.ReadyEmission = ReadyEmission;
+    return Prepared;
 }
 
 void FTSEventPipelineCoordinator::CommitCorePumpOutcome(
-    std::optional<FTSEmissionEnvelope>& PreparedReady
+    FPreparedCorePumpOutcome& PreparedOutcome
 ) noexcept
 {
-    if (!PreparedReady.has_value())
+    if (!PreparedOutcome.ReadyEmission.has_value())
     {
         return;
     }
@@ -1629,7 +2201,17 @@ void FTSEventPipelineCoordinator::CommitCorePumpOutcome(
         std::terminate();
     }
 
+    if (PreparedOutcome.ChatIndexErase.has_value())
+    {
+        // La selección autoritativa del Core cierra la ventana de acumulación.
+        ChatPendingBatchIndex.CommitEraseExact(
+            *PreparedOutcome.ChatIndexErase
+        );
+    }
+
     // Ready sólo notifica el InFlight ya comprometido; no introduce otra autoridad.
-    PendingReadyEmission.emplace(std::move(*PreparedReady));
-    PreparedReady.reset();
+    PendingReadyEmission.emplace(
+        std::move(*PreparedOutcome.ReadyEmission)
+    );
+    PreparedOutcome.ReadyEmission.reset();
 }

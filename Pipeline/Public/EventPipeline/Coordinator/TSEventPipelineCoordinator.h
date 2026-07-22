@@ -22,17 +22,23 @@
 #include "EventPipeline/Repositories/TSRoomUserPayloadRepository.h"
 #include "EventPipeline/Repositories/TSGiftPayloadRepository.h"
 #include "EventPipeline/Repositories/TSMemberPayloadRepository.h"
+#include "EventPipeline/Settings/TSEventPipelineSettings.h"
+#include "EventPipeline/State/TSChatPendingBatchIndex.h"
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
 enum class ETSPipelineAdmissionStatus : std::uint8_t
 {
     NoEmission,
+    RejectedInvalidInput,
+    RejectedSemanticLimit,
+    Accumulated,
     RejectedPayloadIdentityExhausted,
     RejectedByCore,
     Accepted
@@ -45,6 +51,8 @@ struct FTSPipelineAdmissionResult
 
     // Sólo contiene valor cuando el coordinador llegó a llamar al core.
     std::optional<FTSEnqueueResult> EnqueueResult;
+    // Identidad creada o ampliada; permanece cero cuando no existe emisión afectada.
+    FTSEmissionId AffectedEmissionId = 0;
 };
 
 enum class ETSPipelineDispatchStatus : std::uint8_t
@@ -96,8 +104,9 @@ class FTSEventPipelineCoordinator final
 {
 public:
     explicit FTSEventPipelineCoordinator(
-        FTSEventQueueSettings Settings = {},
-        FTSNowProvider NowProvider = {}
+        FTSEventQueueSettings CoreSettings = {},
+        FTSNowProvider NowProvider = {},
+        FTSEventPipelineSettings PipelineSettings = {}
     );
 
     FTSEventPipelineCoordinator(const FTSEventPipelineCoordinator&) = delete;
@@ -529,6 +538,9 @@ public:
     std::size_t GetChatPayloadCount() const noexcept;
 
     [[nodiscard]]
+    std::size_t GetPendingChatBatchCount() const noexcept;
+
+    [[nodiscard]]
     std::size_t GetFollowPayloadCount() const noexcept;
 
     [[nodiscard]]
@@ -551,6 +563,13 @@ public:
     void ValidateInternalConsistency() const;
 
 private:
+    struct FPreparedCorePumpOutcome
+    {
+        std::optional<FTSEmissionEnvelope> ReadyEmission;
+        std::optional<FTSChatPendingBatchIndex::FPreparedEraseExact>
+            ChatIndexErase;
+    };
+
     template <typename TPayload, typename TRepository>
     FTSPipelineAdmissionResult SubmitDecision(
         TTSFamilyDecision<TPayload> Decision,
@@ -581,15 +600,17 @@ private:
     ) const;
 
     [[nodiscard]]
-    std::optional<FTSEmissionEnvelope> PrepareCorePumpOutcome(
+    FPreparedCorePumpOutcome PrepareCorePumpOutcome(
         const FTSPumpOutcome& PumpOutcome,
         const FTSEmissionBinding* PreparedBinding = nullptr
     ) const;
 
     void CommitCorePumpOutcome(
-        std::optional<FTSEmissionEnvelope>& PreparedReady
+        FPreparedCorePumpOutcome& PreparedOutcome
     ) noexcept;
 
+    FTSEventPipelineSettings PipelineSettings;
+    std::shared_ptr<FTSNowProvider> EffectiveNowProvider;
     TikStudioEventQueueSystem Core;
     FTSChatPayloadRepository ChatPayloadRepository;
     FTSFollowPayloadRepository FollowPayloadRepository;
@@ -599,6 +620,7 @@ private:
     FTSGiftPayloadRepository GiftPayloadRepository;
     FTSMemberPayloadRepository MemberPayloadRepository;
     FTSEmissionBindingRegistry BindingRegistry;
+    FTSChatPendingBatchIndex ChatPendingBatchIndex;
     // Las siete familias operativas comparten el ready porque el core posee un único
     // InFlight.
     std::optional<FTSEmissionEnvelope> PendingReadyEmission;

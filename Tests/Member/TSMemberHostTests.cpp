@@ -251,8 +251,8 @@ namespace
                 ChatCycle.bMoreCommandsPending,
             "Host FIFO must process Chat first"
         );
-        RequireChatInputEqual(
-            RequireChatDispatch(ChatCycle, "Seven FIFO Chat").Payload.Input,
+        RequireChatPayloadMatchesInput(
+            RequireChatDispatch(ChatCycle, "Seven FIFO Chat").Payload,
             ChatInput,
             "Seven FIFO Chat payload"
         );
@@ -476,8 +476,8 @@ namespace
         const FTSChatProcessingDispatch& ChatDispatch =
             RequireChatDispatch(CompletionCycle, "Chat captured after Member");
         Require(ChatDispatch.Emission.EmissionId == ChatId, "Captured Chat ID");
-        RequireChatInputEqual(
-            ChatDispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            ChatDispatch.Payload,
             ChatInput,
             "Captured Chat payload"
         );
@@ -504,8 +504,8 @@ namespace
         const FTSEventHostCycleResult ChatCycle = Host.RunOneCycle();
         const FTSEmissionId ChatId =
             RequireAcceptedChatAdmission(ChatCycle, "Processing Chat");
-        RequireChatInputEqual(
-            RequireChatDispatch(ChatCycle, "Processing Chat").Payload.Input,
+        RequireChatPayloadMatchesInput(
+            RequireChatDispatch(ChatCycle, "Processing Chat").Payload,
             ChatInput,
             "Processing Chat payload"
         );
@@ -635,11 +635,11 @@ namespace
             AdmissionCycle,
             "Wrong-family Member completion Chat"
         );
-        RequireChatInputEqual(
+        RequireChatPayloadMatchesInput(
             RequireChatDispatch(
                 AdmissionCycle,
                 "Wrong-family Member completion Chat"
-            ).Payload.Input,
+            ).Payload,
             ChatInput,
             "Wrong-family preserved Chat payload"
         );
@@ -691,8 +691,8 @@ namespace
         const FTSEventHostCycleResult ChatCycle = Host.RunOneCycle();
         const FTSEmissionId ChatId =
             RequireAcceptedChatAdmission(ChatCycle, "Member expiry Chat");
-        RequireChatInputEqual(
-            RequireChatDispatch(ChatCycle, "Member expiry Chat").Payload.Input,
+        RequireChatPayloadMatchesInput(
+            RequireChatDispatch(ChatCycle, "Member expiry Chat").Payload,
             ChatInput,
             "Member expiry Chat payload"
         );

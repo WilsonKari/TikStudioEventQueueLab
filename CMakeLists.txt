@@ -59,6 +59,8 @@ add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
   Pipeline/Private/EventPipeline/Coordinator/TSEventPipelineCoordinator.cpp
   Pipeline/Private/EventPipeline/Priority/TSCommonUserPriorityPolicy.cpp
+  Pipeline/Private/EventPipeline/Settings/TSChatSemanticSettings.cpp
+  Pipeline/Private/EventPipeline/State/TSChatPendingBatchIndex.cpp
   Pipeline/Private/EventPipeline/Families/TSChatFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSFollowFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSShareFamily.cpp
@@ -168,6 +170,7 @@ add_executable(TikStudioEventPipelineTests
   Tests/TSPipelineInfrastructureTests.cpp
   Tests/Priority/TSCommonUserPriorityPolicyTests.cpp
   Tests/Chat/TSChatPipelineTests.cpp
+  Tests/Chat/TSChatSemanticTests.cpp
   Tests/Follow/TSFollowPipelineTests.cpp
   Tests/Share/TSSharePipelineTests.cpp
   Tests/Like/TSLikePipelineTests.cpp

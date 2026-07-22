@@ -98,10 +98,15 @@ namespace
                 Dispatch.Emission.Flow == ETSEventFlow::Chat,
             "Vertical Chat dispatch identity and flow"
         );
-        RequireChatInputEqual(
-            Dispatch.Payload.Input,
+        RequireChatPayloadMatchesInput(
+            Dispatch.Payload,
             ExpectedInput,
             "Vertical Chat payload snapshot"
+        );
+        Require(
+            Dispatch.Payload.Messages.size() == 1 &&
+                !Dispatch.Payload.Messages[0].bIsCommand,
+            "Vertical Chat must be classified as one normal semantic message"
         );
         Require(
             std::get_if<FTSFollowProcessingDispatch>(
