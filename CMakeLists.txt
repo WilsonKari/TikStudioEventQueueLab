@@ -58,6 +58,7 @@ target_include_directories(TikStudioEventCore
 add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/TikStudioEventPipelineContracts.cpp
   Pipeline/Private/EventPipeline/Coordinator/TSEventPipelineCoordinator.cpp
+  Pipeline/Private/EventPipeline/Priority/TSCommonUserPriorityPolicy.cpp
   Pipeline/Private/EventPipeline/Families/TSChatFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSFollowFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSShareFamily.cpp
@@ -165,6 +166,7 @@ add_test(
 add_executable(TikStudioEventPipelineTests
   Tests/TikStudioEventPipelineTests.cpp
   Tests/TSPipelineInfrastructureTests.cpp
+  Tests/Priority/TSCommonUserPriorityPolicyTests.cpp
   Tests/Chat/TSChatPipelineTests.cpp
   Tests/Follow/TSFollowPipelineTests.cpp
   Tests/Share/TSSharePipelineTests.cpp

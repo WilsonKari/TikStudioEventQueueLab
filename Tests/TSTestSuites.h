@@ -4,6 +4,8 @@
 
 namespace TikStudio::Tests
 {
+    void RegisterCommonUserPriorityPolicyTests(FTSTestCases& Tests);
+
     void RegisterChatPipelineFamilyTests(FTSTestCases& Tests);
     void RegisterChatPipelineCoordinatorTests(FTSTestCases& Tests);
 
