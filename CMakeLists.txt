@@ -38,6 +38,12 @@ option(
   OFF
 )
 
+option(
+  TIKSTUDIO_BUILD_EVENT_SCENARIO_RUNNER
+  "Build the interactive event scenario runner"
+  OFF
+)
+
 add_library(TikStudioEventCore STATIC
   Core/Private/EventQueueSystem/TikStudioEventQueueSystem.cpp
   Core/Private/EventQueueSystem/TSEventQueueSystemSettings.cpp
@@ -95,6 +101,36 @@ target_link_libraries(TikStudioEventHost
   PRIVATE
     Threads::Threads
 )
+
+if(TIKSTUDIO_BUILD_EVENT_SCENARIO_RUNNER)
+  add_executable(TikStudioEventScenarioRunner
+    Tools/EventScenarioRunner/main.cpp
+    Tools/EventScenarioRunner/README.md
+    Tools/EventScenarioRunner/Shared/TSScenarioContracts.h
+    Tools/EventScenarioRunner/Shared/TSScenarioClock.h
+    Tools/EventScenarioRunner/Shared/TSScenarioConsole.h
+    Tools/EventScenarioRunner/Shared/TSScenarioConsole.cpp
+    Tools/EventScenarioRunner/Shared/TSFlowScenarioProvider.h
+    Tools/EventScenarioRunner/Shared/TSFlowScenarioRegistry.h
+    Tools/EventScenarioRunner/Shared/TSFlowScenarioRegistry.cpp
+    Tools/EventScenarioRunner/Shared/TSEventScenarioRunner.h
+    Tools/EventScenarioRunner/Shared/TSEventScenarioRunner.cpp
+    Tools/EventScenarioRunner/Shared/TSScenarioReporter.h
+    Tools/EventScenarioRunner/Shared/TSScenarioReporter.cpp
+    Tools/EventScenarioRunner/Flows/Chat/TSChatScenarioProvider.h
+    Tools/EventScenarioRunner/Flows/Chat/TSChatScenarioProvider.cpp
+  )
+
+  target_include_directories(TikStudioEventScenarioRunner
+    PRIVATE
+      Tools/EventScenarioRunner
+  )
+
+  target_link_libraries(TikStudioEventScenarioRunner
+    PRIVATE
+      TikStudioEventHost
+  )
+endif()
 
 add_library(TikStudioEventSimulator STATIC
   Adapters/Simulator/TikStudioEventSimulator.cpp
