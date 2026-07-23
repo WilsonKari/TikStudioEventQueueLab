@@ -15,6 +15,8 @@ struct FTSChatSemanticSettings
     std::uint32_t MaxMessagesPerBatch = 8;
     std::size_t MaxMessageUtf8Bytes = 1024;
     std::size_t MaxBatchUtf8Bytes = 4096;
+    // Sólo una acumulación aceptada puede renovar el vencimiento del lote.
+    bool bRefreshTtlOnAppend = true;
 };
 
 [[nodiscard]]

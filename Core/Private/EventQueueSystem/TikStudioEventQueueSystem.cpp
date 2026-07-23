@@ -1,5 +1,6 @@
 #include "EventQueueSystem/TikStudioEventQueueSystem.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -11,6 +12,9 @@
 #include <vector>
 
 static_assert(std::is_nothrow_move_constructible_v<FTSEnqueueResult>);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSUpdatePendingSchedulingResult>
+);
 static_assert(std::is_nothrow_move_constructible_v<FTSPumpResult>);
 static_assert(std::is_nothrow_move_constructible_v<FTSConfirmResult>);
 static_assert(
@@ -70,6 +74,9 @@ public:
         EInternalEmissionState State = EInternalEmissionState::Pending;
         ETSEventExpirePolicy ExpirePolicy = ETSEventExpirePolicy::Discard;
         bool bProtectedFromEviction = false;
+        // Snapshot exacto para renovar sin consultar settings ni reconstruir TTL
+        // desde fechas que pueden contener el sentinel saturado de no expiración.
+        std::chrono::milliseconds EffectiveTTL{0};
         std::uint64_t Revision = 1;
     };
 
@@ -708,6 +715,138 @@ FTSUpdateFlowSettingsResult TikStudioEventQueueSystem::UpdateFlowSettings(
     return Result;
 }
 
+FTSUpdatePendingSchedulingResult
+TikStudioEventQueueSystem::UpdatePendingScheduling(
+    const FTSUpdatePendingSchedulingRequest& Request
+)
+{
+    return UpdatePendingSchedulingPrepared(
+        Request,
+        Impl->CaptureNow(),
+        [](const FTSUpdatePendingSchedulingResult&) noexcept
+        {
+        }
+    );
+}
+
+TikStudioEventQueueSystem::FPreparedUpdatePendingScheduling
+TikStudioEventQueueSystem::PrepareUpdatePendingScheduling(
+    const FTSUpdatePendingSchedulingRequest& Request,
+    FTSEventQueueTimePoint ObservedAt
+)
+{
+    FPreparedUpdatePendingScheduling Prepared;
+    if (Request.EmissionId == 0 ||
+        (!Request.bRefreshExpiration &&
+         !Request.NewPriorityScore.has_value()) ||
+        (Request.NewPriorityScore.has_value() &&
+         *Request.NewPriorityScore < 0))
+    {
+        return Prepared;
+    }
+
+    const auto RecordIt = Impl->Records.find(Request.EmissionId);
+    if (RecordIt == Impl->Records.end())
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::RejectedNotFound;
+        return Prepared;
+    }
+
+    const FImpl::FInternalEmissionRecord& Record = RecordIt->second;
+    if (Record.State != FImpl::EInternalEmissionState::Pending)
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::RejectedNotPending;
+        return Prepared;
+    }
+
+    if (Record.Envelope.ExpiresAt != FTSEventQueueTimePoint::max() &&
+        ObservedAt >= Record.Envelope.ExpiresAt)
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::RejectedExpired;
+        return Prepared;
+    }
+
+    if (Request.ExpectedExpiresAt.has_value() &&
+        *Request.ExpectedExpiresAt != Record.Envelope.ExpiresAt)
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::RejectedExpectationMismatch;
+        return Prepared;
+    }
+
+    const FTSEmissionEnvelope PreviousEnvelope = Record.Envelope;
+    FTSEmissionEnvelope UpdatedEnvelope = PreviousEnvelope;
+    if (Request.bRefreshExpiration)
+    {
+        const FTSEventQueueTimePoint CandidateExpiresAt =
+            FImpl::CalculateExpiresAt(ObservedAt, Record.EffectiveTTL);
+        UpdatedEnvelope.ExpiresAt = std::max(
+            PreviousEnvelope.ExpiresAt,
+            CandidateExpiresAt
+        );
+    }
+    if (Request.NewPriorityScore.has_value())
+    {
+        UpdatedEnvelope.PriorityScore = *Request.NewPriorityScore;
+    }
+
+    if (UpdatedEnvelope.ExpiresAt == PreviousEnvelope.ExpiresAt &&
+        UpdatedEnvelope.PriorityScore == PreviousEnvelope.PriorityScore)
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::Unchanged;
+        Prepared.Result.PreviousEmission = PreviousEnvelope;
+        Prepared.Result.UpdatedEmission = PreviousEnvelope;
+        return Prepared;
+    }
+
+    // Una revisión compartida invalida ambas vistas derivadas; el agotamiento se
+    // rechaza antes de clonar o publicar una identidad de índice reutilizada.
+    if (Record.Revision == std::numeric_limits<std::uint64_t>::max())
+    {
+        Prepared.Result.Status =
+            ETSUpdatePendingSchedulingStatus::RejectedRevisionExhausted;
+        return Prepared;
+    }
+
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
+    FImpl::FInternalEmissionRecord& UpdatedRecord =
+        PreparedImpl->Records.at(Request.EmissionId);
+    UpdatedRecord.Envelope = UpdatedEnvelope;
+    ++UpdatedRecord.Revision;
+
+    // Toda revisión real vuelve stale las dos claves anteriores, incluso cuando
+    // sólo cambió uno de sus campos de ordenación.
+    PreparedImpl->PriorityIndex.push(FImpl::FPriorityIndexEntry{
+        UpdatedRecord.Envelope.PriorityScore,
+        UpdatedRecord.Envelope.Sequence,
+        UpdatedRecord.Envelope.EmissionId,
+        UpdatedRecord.Revision
+    });
+    if (UpdatedRecord.Envelope.ExpiresAt !=
+        FTSEventQueueTimePoint::max())
+    {
+        PreparedImpl->ExpirationIndex.push(FImpl::FExpirationIndexEntry{
+            UpdatedRecord.Envelope.ExpiresAt,
+            UpdatedRecord.Envelope.Sequence,
+            UpdatedRecord.Envelope.EmissionId,
+            UpdatedRecord.Revision
+        });
+    }
+
+    Prepared.Result.Status = ETSUpdatePendingSchedulingStatus::Updated;
+    Prepared.Result.PreviousEmission = PreviousEnvelope;
+    Prepared.Result.UpdatedEmission = UpdatedEnvelope;
+    Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
+    return Prepared;
+}
+
 FTSEnqueueResult TikStudioEventQueueSystem::Enqueue(
     const FTSEnqueueRequest& Request
 )
@@ -795,6 +934,7 @@ TikStudioEventQueueSystem::PrepareEnqueue(
     Record.bProtectedFromEviction =
         Request.bProtectedFromEviction
         || FlowSettings.bExemptFromEviction;
+    Record.EffectiveTTL = Validation.EffectiveTTL;
     Record.Revision = 1;
 
     // Una colisión contradice la identidad monotónica: es una violación interna, no
@@ -1031,6 +1171,64 @@ TikStudioEventQueueSystem::PrepareProcessDueExpirations()
     Prepared.Mutation = FPreparedMutation(std::move(PreparedImpl));
 
     return Prepared;
+}
+
+const FTSEmissionEnvelope* TikStudioEventQueueSystem::FindLiveEmission(
+    FTSEmissionId EmissionId
+) const noexcept
+{
+    const auto RecordIt = Impl->Records.find(EmissionId);
+    return RecordIt == Impl->Records.end()
+        ? nullptr
+        : &RecordIt->second.Envelope;
+}
+
+bool TikStudioEventQueueSystem::IsPendingEmission(
+    FTSEmissionId EmissionId
+) const noexcept
+{
+    const auto RecordIt = Impl->Records.find(EmissionId);
+    return RecordIt != Impl->Records.end() &&
+        RecordIt->second.State == FImpl::EInternalEmissionState::Pending;
+}
+
+bool TikStudioEventQueueSystem::SetPendingRevisionForTesting(
+    FTSEmissionId EmissionId,
+    std::uint64_t Revision
+)
+{
+    const auto RecordIt = Impl->Records.find(EmissionId);
+    if (RecordIt == Impl->Records.end() ||
+        RecordIt->second.State != FImpl::EInternalEmissionState::Pending ||
+        Revision == 0)
+    {
+        return false;
+    }
+
+    std::unique_ptr<FImpl> PreparedImpl = std::make_unique<FImpl>(
+        *Impl,
+        FImpl::FPreparedStateTag{}
+    );
+    FImpl::FInternalEmissionRecord& Record =
+        PreparedImpl->Records.at(EmissionId);
+    Record.Revision = Revision;
+    PreparedImpl->PriorityIndex.push(FImpl::FPriorityIndexEntry{
+        Record.Envelope.PriorityScore,
+        Record.Envelope.Sequence,
+        Record.Envelope.EmissionId,
+        Record.Revision
+    });
+    if (Record.Envelope.ExpiresAt != FTSEventQueueTimePoint::max())
+    {
+        PreparedImpl->ExpirationIndex.push(FImpl::FExpirationIndexEntry{
+            Record.Envelope.ExpiresAt,
+            Record.Envelope.Sequence,
+            Record.Envelope.EmissionId,
+            Record.Revision
+        });
+    }
+    Impl->CommitPreparedState(*PreparedImpl);
+    return true;
 }
 
 void TikStudioEventQueueSystem::CommitPreparedMutation(

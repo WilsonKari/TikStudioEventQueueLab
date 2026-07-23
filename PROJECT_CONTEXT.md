@@ -1,6 +1,6 @@
 # TikStudioEventQueueLab — contexto operativo
 
-Última actualización: 2026-07-21.
+Última actualización: 2026-07-22.
 
 Este documento describe el estado autoritativo vigente. La evolución detallada hasta
 este baseline se conserva en
@@ -30,6 +30,22 @@ Fecha de certificación: 2026-07-21
 Estos resultados corresponden a una ejecución y certificación manual realizada por el
 propietario. No son un resultado de CI ni fueron ejecutados por el agente que actualizó
 este documento.
+
+### Estado local pendiente de certificación
+
+La base de trabajo actual es `f11fd03` (`fix(chat): synchronize ready batches and
+semantic tests`). Sobre ella se implementó localmente una actualización preparada de
+scheduling para emisiones `Pending` y la renovación opcional del TTL de lotes Chat al
+acumular. Core conserva el TTL efectivo admitido como snapshot privado, renueva sin
+acortar el vencimiento y republica sus índices derivados con una única revisión.
+
+Chat prepara la renovación, el reemplazo exacto de su índice y el payload acumulado
+antes del commit autoritativo. La prioridad del lote permanece congelada y el índice
+semántico continúa almacenando únicamente `EmissionId + ExpiresAt`.
+
+Se registraron localmente 26 casos Core y 153 casos Pipeline; junto con los runners no
+modificados suman 347 casos. Estos conteos son estáticos: esta tarea no compiló ni
+ejecutó las pruebas y no sustituye la certificación publicada de 305 PASS / 0 FAIL.
 
 ## 2. Objetivo del proyecto
 
@@ -96,6 +112,7 @@ Productores externos
 - prioridad y desempate determinista por `Sequence`;
 - TTL, expiración y capacidad por flujo;
 - settings y snapshots efectivos por emisión;
+- actualización preparada de prioridad o vencimiento para emisiones `Pending`;
 - selección y lifecycle genérico;
 - preparación completa antes del commit autoritativo.
 
@@ -166,9 +183,10 @@ JSON TikFinity
 ```
 
 Estas rutas base no son placeholders: conservan sus datos portables y producen el flujo
-correspondiente. Su semántica actual es deliberadamente directa; no mantienen estado
-semántico acumulativo entre inputs, no calculan ventanas, tasas, milestones o
-agrupaciones y no generan automáticamente flujos derivados.
+correspondiente. Follow, Share, Like, RoomUser, Gift y Member mantienen una semántica
+directa. Chat agrega mensajes por usuario mientras su lote continúa `Pending`, conserva
+la prioridad admitida y puede renovar el vencimiento usando el TTL efectivo congelado
+por Core. Ninguna familia calcula todavía tasas, milestones o flujos derivados.
 
 ## 6. Flujos derivados reservados
 
@@ -203,6 +221,8 @@ Sus defaults actuales son reservas técnicas, no requisitos finales de producto.
 - Un fallo no clasificado conserva el comando frontal para un reintento sin reorder.
 - Las actualizaciones de settings viajan por el FIFO y sólo afectan admisiones futuras.
 - Las emisiones vivas conservan snapshots de sus settings efectivos.
+- Una renovación Chat aceptada usa el mismo `Now` de su decisión y nunca revive una
+  emisión vencida; la terminalización continúa perteneciendo a expiraciones.
 
 ## 8. Pruebas y certificación
 

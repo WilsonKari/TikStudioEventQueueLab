@@ -954,19 +954,144 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
             return Result;
         }
 
-        std::optional<FTSChatPayloadRepository::FPreparedReplace>
-            PreparedReplace = ChatPayloadRepository.PrepareReplace(
+        if (!PipelineSettings.Chat.bRefreshTtlOnAppend)
+        {
+            auto PreparedReplace = ChatPayloadRepository.PrepareReplace(
                 Binding.PayloadHandle,
                 std::move(ExpandedPayload)
             );
-        if (!PreparedReplace.has_value())
+            if (!PreparedReplace.has_value())
+            {
+                throw std::logic_error(
+                    "Pending Chat payload could not prepare replacement"
+                );
+            }
+
+            ChatPayloadRepository.CommitReplace(*PreparedReplace);
+            Result.Status = ETSPipelineAdmissionStatus::Accumulated;
+            Result.AffectedEmissionId = ExistingEntry->EmissionId;
+            return Result;
+        }
+
+        FTSUpdatePendingSchedulingRequest SchedulingRequest;
+        SchedulingRequest.EmissionId = ExistingEntry->EmissionId;
+        SchedulingRequest.ExpectedExpiresAt = ExistingEntry->ExpiresAt;
+        SchedulingRequest.bRefreshExpiration = true;
+
+        std::optional<FTSChatPayloadRepository::FPreparedReplace>
+            PreparedPayloadReplace;
+        std::optional<FTSChatPendingBatchIndex::FPreparedReplaceExact>
+            PreparedIndexReplace;
+        const FTSUpdatePendingSchedulingResult SchedulingResult =
+            Core.UpdatePendingSchedulingPrepared(
+                SchedulingRequest,
+                Now,
+                [&](const FTSUpdatePendingSchedulingResult& PreparedCoreResult)
+                {
+                    switch (PreparedCoreResult.Status)
+                    {
+                    case ETSUpdatePendingSchedulingStatus::Updated:
+                    case ETSUpdatePendingSchedulingStatus::Unchanged:
+                        break;
+
+                    case ETSUpdatePendingSchedulingStatus::RejectedExpired:
+                        return;
+
+                    case ETSUpdatePendingSchedulingStatus::RejectedInvalidRequest:
+                    case ETSUpdatePendingSchedulingStatus::RejectedNotFound:
+                    case ETSUpdatePendingSchedulingStatus::RejectedNotPending:
+                    case ETSUpdatePendingSchedulingStatus::RejectedExpectationMismatch:
+                    case ETSUpdatePendingSchedulingStatus::RejectedRevisionExhausted:
+                    default:
+                        throw std::logic_error(
+                            "Pending Chat scheduling authority is incoherent"
+                        );
+                    }
+
+                    const FTSEmissionEnvelope& Previous =
+                        PreparedCoreResult.PreviousEmission;
+                    const FTSEmissionEnvelope& Updated =
+                        PreparedCoreResult.UpdatedEmission;
+                    if (Previous.EmissionId != ExistingEntry->EmissionId ||
+                        Updated.EmissionId != ExistingEntry->EmissionId ||
+                        Previous.Flow != ETSEventFlow::Chat ||
+                        Updated.Flow != ETSEventFlow::Chat ||
+                        Previous.ExpiresAt != ExistingEntry->ExpiresAt ||
+                        Updated.ExpiresAt < Previous.ExpiresAt ||
+                        Updated.PriorityScore != Previous.PriorityScore ||
+                        Updated.Sequence != Previous.Sequence ||
+                        Updated.CreatedAt != Previous.CreatedAt)
+                    {
+                        throw std::logic_error(
+                            "Pending Chat scheduling snapshots are incoherent"
+                        );
+                    }
+
+                    const bool bExpirationChanged =
+                        Updated.ExpiresAt != Previous.ExpiresAt;
+                    if ((PreparedCoreResult.Status ==
+                            ETSUpdatePendingSchedulingStatus::Updated) !=
+                        bExpirationChanged)
+                    {
+                        throw std::logic_error(
+                            "Pending Chat scheduling status does not match its update"
+                        );
+                    }
+
+                    PreparedPayloadReplace =
+                        ChatPayloadRepository.PrepareReplace(
+                            Binding.PayloadHandle,
+                            std::move(ExpandedPayload)
+                        );
+                    if (!PreparedPayloadReplace.has_value())
+                    {
+                        throw std::logic_error(
+                            "Pending Chat payload could not prepare replacement"
+                        );
+                    }
+
+                    if (bExpirationChanged)
+                    {
+                        const FTSChatPendingBatchEntry Replacement{
+                            ExistingEntry->EmissionId,
+                            Updated.ExpiresAt
+                        };
+                        PreparedIndexReplace =
+                            ChatPendingBatchIndex.PrepareReplaceExact(
+                                UserUniqueId,
+                                ExistingEntry->EmissionId,
+                                Replacement
+                            );
+                        if (!PreparedIndexReplace.has_value())
+                        {
+                            throw std::logic_error(
+                                "Pending Chat expiration could not prepare its index"
+                            );
+                        }
+                    }
+                }
+            );
+
+        if (SchedulingResult.Status ==
+            ETSUpdatePendingSchedulingStatus::RejectedExpired)
+        {
+            Result.Status = ETSPipelineAdmissionStatus::RejectedByCore;
+            return Result;
+        }
+        if (!PreparedPayloadReplace.has_value())
         {
             throw std::logic_error(
-                "Pending Chat payload could not prepare replacement"
+                "Pending Chat scheduling committed without a payload token"
             );
         }
 
-        ChatPayloadRepository.CommitReplace(*PreparedReplace);
+        // Core ya comprometió el scheduling; los tokens externos preparados
+        // completan la misma transición en el owner thread sin operaciones lanzables.
+        if (PreparedIndexReplace.has_value())
+        {
+            ChatPendingBatchIndex.CommitReplaceExact(*PreparedIndexReplace);
+        }
+        ChatPayloadRepository.CommitReplace(*PreparedPayloadReplace);
         Result.Status = ETSPipelineAdmissionStatus::Accumulated;
         Result.AffectedEmissionId = ExistingEntry->EmissionId;
         return Result;
@@ -2090,6 +2215,24 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
             {
                 throw std::logic_error(
                     "Chat pending index key does not match its payload"
+                );
+            }
+
+            FTSEmissionEnvelope CoreEmission;
+            const bool bFoundCoreEmission = Core.VisitLiveEmission(
+                Entry.EmissionId,
+                [&](const FTSEmissionEnvelope& Emission)
+                {
+                    CoreEmission = Emission;
+                }
+            );
+            if (!bFoundCoreEmission ||
+                !Core.IsPendingEmission(Entry.EmissionId) ||
+                CoreEmission.Flow != ETSEventFlow::Chat ||
+                CoreEmission.ExpiresAt != Entry.ExpiresAt)
+            {
+                throw std::logic_error(
+                    "Chat pending index does not match Core scheduling"
                 );
             }
         }

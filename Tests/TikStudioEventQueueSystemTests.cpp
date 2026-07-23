@@ -5,9 +5,22 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+struct FTSEventQueueSystemTestAccess
+{
+    static bool SetPendingRevision(
+        TikStudioEventQueueSystem& Queue,
+        FTSEmissionId EmissionId,
+        std::uint64_t Revision
+    )
+    {
+        return Queue.SetPendingRevisionForTesting(EmissionId, Revision);
+    }
+};
 
 namespace
 {
@@ -1302,6 +1315,349 @@ namespace
         );
     }
 
+    void TestSchedulingRefreshUsesFrozenTtl()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        FTSFlowQueueSettings& Chat = ConfigureFlow(
+            Settings,
+            ETSEventFlow::Chat,
+            20,
+            10s,
+            10
+        );
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        RequireAccepted(A, ETSEventFlow::Chat, "Frozen TTL A");
+
+        FTSFlowQueueSettings UpdatedSettings = Chat;
+        UpdatedSettings.TTL = 30s;
+        Require(
+            Queue.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                UpdatedSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "Frozen TTL settings update"
+        );
+
+        Clock.Advance(4s);
+        FTSUpdatePendingSchedulingRequest Request;
+        Request.EmissionId = A.AdmittedEmission.EmissionId;
+        Request.ExpectedExpiresAt = A.AdmittedEmission.ExpiresAt;
+        Request.bRefreshExpiration = true;
+        const FTSUpdatePendingSchedulingResult Refreshed =
+            Queue.UpdatePendingScheduling(Request);
+        const FTSEventQueueTimePoint ExpectedRefreshedExpiry =
+            Clock.Now + std::chrono::duration_cast<
+                FTSEventQueueClock::duration
+            >(10s);
+        Require(
+            Refreshed.Status == ETSUpdatePendingSchedulingStatus::Updated &&
+                Refreshed.PreviousEmission.ExpiresAt ==
+                    A.AdmittedEmission.ExpiresAt &&
+                Refreshed.UpdatedEmission.ExpiresAt ==
+                    ExpectedRefreshedExpiry &&
+                Refreshed.UpdatedEmission.PriorityScore ==
+                    A.AdmittedEmission.PriorityScore,
+            "Refresh must use the TTL snapshot admitted with A"
+        );
+        Require(
+            Queue.GetNextWakeTime().WakeTime == ExpectedRefreshedExpiry,
+            "Refresh must publish the renewed wake"
+        );
+        bool bVisitedRefreshed = false;
+        Require(
+            Queue.VisitLiveEmission(
+                A.AdmittedEmission.EmissionId,
+                [&](const FTSEmissionEnvelope& Emission)
+                {
+                    bVisitedRefreshed =
+                        Emission.ExpiresAt == ExpectedRefreshedExpiry;
+                }
+            ) &&
+                bVisitedRefreshed &&
+                Queue.IsPendingEmission(A.AdmittedEmission.EmissionId),
+            "Read-only Core queries must expose the refreshed Pending snapshot"
+        );
+
+        const FTSEnqueueResult B = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        Require(
+            B.AdmittedEmission.ExpiresAt ==
+                Clock.Now + std::chrono::duration_cast<
+                    FTSEventQueueClock::duration
+                >(30s),
+            "Later admissions must use the updated TTL"
+        );
+    }
+
+    void TestSchedulingWithoutExpirationIsUnchanged()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 20, 0ms, 10);
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        Require(
+            FTSEventQueueSystemTestAccess::SetPendingRevision(
+                Queue,
+                A.AdmittedEmission.EmissionId,
+                std::numeric_limits<std::uint64_t>::max() - 1
+            ),
+            "Unchanged revision fixture"
+        );
+
+        FTSUpdatePendingSchedulingRequest Request;
+        Request.EmissionId = A.AdmittedEmission.EmissionId;
+        Request.ExpectedExpiresAt = FTSEventQueueTimePoint::max();
+        Request.bRefreshExpiration = true;
+        Request.NewPriorityScore = A.AdmittedEmission.PriorityScore;
+        const FTSUpdatePendingSchedulingResult Result =
+            Queue.UpdatePendingScheduling(Request);
+        Require(
+            Result.Status == ETSUpdatePendingSchedulingStatus::Unchanged &&
+                Result.PreviousEmission.ExpiresAt ==
+                    FTSEventQueueTimePoint::max() &&
+                Result.UpdatedEmission.PriorityScore ==
+                    A.AdmittedEmission.PriorityScore,
+            "No-expiration refresh with the same score must be unchanged"
+        );
+        Require(
+            Queue.GetNextWakeTime().Status ==
+                ETSNextWakeStatus::NoWakeScheduled,
+            "Unchanged no-expiration scheduling must not create a wake"
+        );
+        FTSUpdatePendingSchedulingRequest ChangePriority;
+        ChangePriority.EmissionId = A.AdmittedEmission.EmissionId;
+        ChangePriority.NewPriorityScore = 0;
+        const FTSUpdatePendingSchedulingResult Changed =
+            Queue.UpdatePendingScheduling(ChangePriority);
+        Require(
+            Changed.Status == ETSUpdatePendingSchedulingStatus::Updated,
+            "Unchanged must not consume the final available revision"
+        );
+        ChangePriority.NewPriorityScore = 1;
+        Require(
+            Queue.UpdatePendingScheduling(ChangePriority).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedRevisionExhausted,
+            "The following real change must observe the exhausted revision"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Changed.UpdatedEmission,
+            "Unchanged scheduling priority key"
+        );
+    }
+
+    void TestTtlOnlySchedulingUpdateRepublishesPriority()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 20, 10s, 10);
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        const FTSEnqueueResult B = Queue.Enqueue(
+            MakeRequest(ETSEventFlow::Chat, 10)
+        );
+
+        Clock.Advance(5s);
+        FTSUpdatePendingSchedulingRequest Request;
+        Request.EmissionId = A.AdmittedEmission.EmissionId;
+        Request.ExpectedExpiresAt = A.AdmittedEmission.ExpiresAt;
+        Request.bRefreshExpiration = true;
+        bool bPrepareThrew = false;
+        try
+        {
+            (void)Queue.UpdatePendingSchedulingPrepared(
+                Request,
+                Clock.Now,
+                [](const FTSUpdatePendingSchedulingResult&)
+                {
+                    throw std::runtime_error("Prepared scheduling failure");
+                }
+            );
+        }
+        catch (const std::runtime_error&)
+        {
+            bPrepareThrew = true;
+        }
+        Require(
+            bPrepareThrew &&
+                Queue.GetNextWakeTime().WakeTime ==
+                    A.AdmittedEmission.ExpiresAt,
+            "Scheduling callback failure must preserve Core"
+        );
+        const FTSUpdatePendingSchedulingResult Updated =
+            Queue.UpdatePendingScheduling(Request);
+        Require(
+            Updated.Status == ETSUpdatePendingSchedulingStatus::Updated &&
+                Updated.UpdatedEmission.ExpiresAt >
+                    Updated.PreviousEmission.ExpiresAt,
+            "TTL-only scheduling update"
+        );
+
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            B.AdmittedEmission,
+            "TTL-only update keeps higher priority B"
+        );
+        (void)Queue.Confirm(B.AdmittedEmission.EmissionId);
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Updated.UpdatedEmission,
+            "TTL-only update republishes A priority key"
+        );
+    }
+
+    void TestPrioritySchedulingUpdateRepublishesExpiration()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 20, 10s, 10);
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        const FTSEnqueueResult B = Queue.Enqueue(
+            MakeRequestWithTTL(ETSEventFlow::Chat, 10, 20s)
+        );
+
+        FTSUpdatePendingSchedulingRequest RaiseA;
+        RaiseA.EmissionId = A.AdmittedEmission.EmissionId;
+        RaiseA.ExpectedExpiresAt = A.AdmittedEmission.ExpiresAt;
+        RaiseA.NewPriorityScore = 40;
+        const FTSUpdatePendingSchedulingResult Raised =
+            Queue.UpdatePendingScheduling(RaiseA);
+        Require(
+            Raised.Status == ETSUpdatePendingSchedulingStatus::Updated &&
+                Raised.UpdatedEmission.PriorityScore == 40 &&
+                Raised.UpdatedEmission.ExpiresAt ==
+                    A.AdmittedEmission.ExpiresAt,
+            "Absolute priority update must preserve expiration"
+        );
+        Require(
+            Queue.GetNextWakeTime().WakeTime == A.AdmittedEmission.ExpiresAt,
+            "Priority-only update must republish the expiration key"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            Raised.UpdatedEmission,
+            "Raised A must outrank B"
+        );
+        (void)Queue.CancelInFlight(A.AdmittedEmission.EmissionId);
+
+        FTSUpdatePendingSchedulingRequest ZeroB;
+        ZeroB.EmissionId = B.AdmittedEmission.EmissionId;
+        ZeroB.NewPriorityScore = 0;
+        Require(
+            Queue.UpdatePendingScheduling(ZeroB).Status ==
+                ETSUpdatePendingSchedulingStatus::Updated,
+            "Zero must be a valid absolute priority"
+        );
+        ZeroB.NewPriorityScore = -1;
+        Require(
+            Queue.UpdatePendingScheduling(ZeroB).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedInvalidRequest,
+            "Negative absolute priority must be rejected"
+        );
+    }
+
+    void TestSchedulingRevisionExhaustionIsAtomic()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 20, 10s, 10);
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        Require(
+            FTSEventQueueSystemTestAccess::SetPendingRevision(
+                Queue,
+                A.AdmittedEmission.EmissionId,
+                std::numeric_limits<std::uint64_t>::max()
+            ),
+            "Revision exhaustion fixture"
+        );
+
+        FTSUpdatePendingSchedulingRequest Request;
+        Request.EmissionId = A.AdmittedEmission.EmissionId;
+        Request.NewPriorityScore = 40;
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedRevisionExhausted,
+            "Exhausted revision must reject without wrap"
+        );
+        Require(
+            Queue.GetNextWakeTime().WakeTime == A.AdmittedEmission.ExpiresAt,
+            "Exhausted revision must preserve the expiration index"
+        );
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            A.AdmittedEmission,
+            "Exhausted revision must preserve the priority index"
+        );
+    }
+
+    void TestSchedulingRejectionsDoNotReviveExpiredOrInFlight()
+    {
+        FTSEventQueueSettings Settings = MakeSettings(false, false);
+        ConfigureFlow(Settings, ETSEventFlow::Chat, 20, 5s, 10);
+        FControlledClock Clock;
+        TikStudioEventQueueSystem Queue(Settings, Clock.MakeProvider());
+        const FTSEnqueueResult A = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+
+        FTSUpdatePendingSchedulingRequest Request;
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedInvalidRequest,
+            "Zero scheduling identity must be invalid"
+        );
+        Request.EmissionId = A.AdmittedEmission.EmissionId;
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedInvalidRequest,
+            "Scheduling request without an operation must be invalid"
+        );
+        Request.ExpectedExpiresAt = A.AdmittedEmission.ExpiresAt +
+            std::chrono::duration_cast<FTSEventQueueClock::duration>(1s);
+        Request.bRefreshExpiration = true;
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedExpectationMismatch,
+            "Mismatched expiration expectation"
+        );
+
+        Clock.Advance(5s);
+        Request.ExpectedExpiresAt = A.AdmittedEmission.ExpiresAt;
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedExpired,
+            "Expired pending emission must not be revived"
+        );
+        const FTSProcessDueExpirationsResult Expired =
+            Queue.ProcessDueExpirations();
+        Require(
+            Expired.LifecycleEvents.size() == 1 &&
+                Expired.LifecycleEvents.front().Envelope.EmissionId ==
+                    A.AdmittedEmission.EmissionId,
+            "Expiration maintenance remains the terminal authority"
+        );
+
+        const FTSEnqueueResult B = Queue.Enqueue(MakeRequest(ETSEventFlow::Chat));
+        RequireReadyEmission(
+            Queue.Pump().Outcome,
+            B.AdmittedEmission,
+            "InFlight rejection setup"
+        );
+        Request.EmissionId = B.AdmittedEmission.EmissionId;
+        Request.ExpectedExpiresAt.reset();
+        Require(
+            Queue.UpdatePendingScheduling(Request).Status ==
+                ETSUpdatePendingSchedulingStatus::RejectedNotPending,
+            "InFlight scheduling must be rejected"
+        );
+        Require(
+            !Queue.IsPendingEmission(B.AdmittedEmission.EmissionId),
+            "The rejected target must remain InFlight"
+        );
+    }
+
     using FTestFunction = void (*)();
 
     struct FTestCase
@@ -1333,7 +1689,13 @@ int main()
         {"Equal priority uses global cross-flow Sequence", &TestEqualPriorityUsesGlobalSequenceAcrossFlows},
         {"Equal expirations ignore stale indexes deterministically", &TestEqualExpirationsAndStaleIndexesRemainDeterministic},
         {"Repeated scenario produces identical trace", &TestRepeatedScenarioProducesIdenticalIdentityAndLifecycleOrder},
-        {"Wrong Confirm ID preserves InFlight", &TestConfirmWrongIdPreservesInFlight}
+        {"Wrong Confirm ID preserves InFlight", &TestConfirmWrongIdPreservesInFlight},
+        {"Scheduling refresh uses frozen TTL", &TestSchedulingRefreshUsesFrozenTtl},
+        {"No-expiration scheduling is unchanged", &TestSchedulingWithoutExpirationIsUnchanged},
+        {"TTL-only scheduling republishes priority", &TestTtlOnlySchedulingUpdateRepublishesPriority},
+        {"Priority scheduling republishes expiration", &TestPrioritySchedulingUpdateRepublishesExpiration},
+        {"Scheduling revision exhaustion is atomic", &TestSchedulingRevisionExhaustionIsAtomic},
+        {"Scheduling rejections preserve authority", &TestSchedulingRejectionsDoNotReviveExpiredOrInFlight}
     };
 
     std::size_t PassedCount = 0;

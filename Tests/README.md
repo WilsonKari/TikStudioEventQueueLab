@@ -28,6 +28,14 @@ las suites el 2026-07-21 y certificó 305 PASS / 0 FAIL. No es un resultado de C
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
 
+## Estado local no certificado
+
+Sobre `f11fd03` se añadieron seis casos Core para la actualización de scheduling y tres
+casos Pipeline netos para la renovación Chat. El registro local queda en 26 casos Core,
+153 Pipeline y 347 casos totales. Son conteos estáticos: no se compiló ni se ejecutó
+ninguna suite durante esta tarea, por lo que la certificación vigente continúa siendo
+305 PASS / 0 FAIL sobre `8afa3b6`.
+
 ## Organización por familia
 
 Las pruebas específicas de cada evento se distribuyen en:
@@ -51,13 +59,14 @@ corresponden. La infraestructura transversal permanece en archivos compartidos b
 ### Core
 
 Verifica identidad, prioridad, orden por `Sequence`, capacidad, TTL, expiración,
-settings, selección, lifecycle genérico y preparación/commit de las mutaciones.
+settings, actualización preparada de scheduling `Pending`, selección, lifecycle
+genérico y preparación/commit de las mutaciones.
 
 ### Pipeline
 
 Verifica decisiones familiares, payloads, repositorios, bindings, parejas
-`FamilyKind / Flow`, ready, dispatch, completion, lifecycle y consistencia entre
-autoridades externas y Core.
+`FamilyKind / Flow`, acumulación y renovación Chat, ready, dispatch, completion,
+lifecycle y consistencia entre autoridades externas y Core.
 
 ### Host
 

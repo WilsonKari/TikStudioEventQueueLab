@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 struct FTSEnqueueRequest
@@ -109,6 +110,38 @@ struct FTSUpdateFlowSettingsResult
     ETSUpdateFlowSettingsStatus Status =
         ETSUpdateFlowSettingsStatus::RejectedInvalidFlow;
     ETSEventFlow Flow = ETSEventFlow::Chat;
+};
+
+struct FTSUpdatePendingSchedulingRequest
+{
+    FTSEmissionId EmissionId = 0;
+    // Verifica que el caller continúe sincronizado con el vencimiento autoritativo.
+    std::optional<FTSEventQueueTimePoint> ExpectedExpiresAt;
+    // Core recalcula desde el TTL efectivo congelado durante la admisión.
+    bool bRefreshExpiration = false;
+    // Peso absoluto final. Cero es válido; los valores negativos se rechazan.
+    std::optional<std::int64_t> NewPriorityScore;
+};
+
+enum class ETSUpdatePendingSchedulingStatus : std::uint8_t
+{
+    Updated,
+    Unchanged,
+    RejectedInvalidRequest,
+    RejectedNotFound,
+    RejectedNotPending,
+    RejectedExpired,
+    RejectedExpectationMismatch,
+    RejectedRevisionExhausted
+};
+
+struct FTSUpdatePendingSchedulingResult
+{
+    ETSUpdatePendingSchedulingStatus Status =
+        ETSUpdatePendingSchedulingStatus::RejectedInvalidRequest;
+    // Ambos snapshots sólo son significativos para Updated y Unchanged.
+    FTSEmissionEnvelope PreviousEmission{};
+    FTSEmissionEnvelope UpdatedEmission{};
 };
 
 enum class ETSConfirmStatus : std::uint8_t

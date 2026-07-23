@@ -78,6 +78,7 @@ namespace
         Require(Defaults.MaxMessagesPerBatch == 8, "Default message count");
         Require(Defaults.MaxMessageUtf8Bytes == 1024, "Default message bytes");
         Require(Defaults.MaxBatchUtf8Bytes == 4096, "Default batch bytes");
+        Require(Defaults.bRefreshTtlOnAppend, "Default TTL refresh");
         Require(AreChatSemanticSettingsValid(Defaults), "Defaults must be valid");
 
         FTSChatSemanticSettings Custom = Defaults;
@@ -88,6 +89,7 @@ namespace
         Custom.MaxMessagesPerBatch = 2;
         Custom.MaxMessageUtf8Bytes = 32;
         Custom.MaxBatchUtf8Bytes = 64;
+        Custom.bRefreshTtlOnAppend = false;
         Require(AreChatSemanticSettingsValid(Custom), "Custom settings must be valid");
     }
 
@@ -306,6 +308,8 @@ namespace
             ).TotalAdjustment;
         const FTSPipelineAdmissionResult Admission = Coordinator.SubmitChat(First);
         Require(Admission.Status == ETSPipelineAdmissionStatus::Accepted, "Initial batch");
+        const std::int64_t FrozenCorePriority =
+            Admission.EnqueueResult->AdmittedEmission.PriorityScore;
 
         FTSChatInput Second = MakeSemanticInput("batch-user", "two");
         Second.User.Nickname = "latest nickname";
@@ -350,6 +354,13 @@ namespace
             "Latest accepted user snapshot must replace the previous snapshot"
         );
         Coordinator.ValidateInternalConsistency();
+        const FTSPumpResult Pumped = Coordinator.Pump();
+        Require(
+            Pumped.Outcome.Status == ETSPumpStatus::EmissionReady &&
+                Pumped.Outcome.ReadyEmission.PriorityScore ==
+                    FrozenCorePriority,
+            "Accumulation must not recalculate the Core priority"
+        );
     }
 
     void TestChatDifferentUsersAndReadySuccessorRemainSeparate()
@@ -477,13 +488,14 @@ namespace
 
     void TestChatLimitsRejectWithoutPartialMutation()
     {
+        FControlledClock Clock;
         FTSEventPipelineSettings Settings;
         Settings.Chat.MaxMessagesPerBatch = 2;
         Settings.Chat.MaxMessageUtf8Bytes = 32;
         Settings.Chat.MaxBatchUtf8Bytes = 128;
         FTSEventPipelineCoordinator Coordinator(
             MakePendingCoreSettings(),
-            {},
+            Clock.MakeProvider(),
             Settings
         );
         FTSChatInput FirstInput = MakeSemanticInput("limited-user", "one");
@@ -506,6 +518,8 @@ namespace
             Coordinator,
             First.AffectedEmissionId
         );
+        const FTSNextWakeTimeResult WakeBefore = Coordinator.GetNextWakeTime();
+        Clock.Advance(1s);
 
         FTSChatInput Third = MakeSemanticInput("limited-user", "three");
         Third.Emotes.clear();
@@ -523,6 +537,11 @@ namespace
         );
         Require(After.Messages.size() == Before.Messages.size(), "Atomic message count");
         Require(After.User.Nickname == Before.User.Nickname, "Atomic user snapshot");
+        Require(
+            Coordinator.GetNextWakeTime().WakeTime == WakeBefore.WakeTime,
+            "Rejected append must preserve Core and Chat expiration"
+        );
+        Coordinator.ValidateInternalConsistency();
 
         FTSChatInput Oversized = MakeSemanticInput("large-user", std::string(33, 'x'));
         Require(
@@ -646,7 +665,7 @@ namespace
         Processing.ValidateInternalConsistency();
     }
 
-    void TestChatAppendDoesNotRenewTtlAndBoundaryCreatesSuccessor()
+    void TestChatAppendRenewsFrozenTtlAndBoundaryCreatesSuccessor()
     {
         FControlledClock Clock;
         FTSEventPipelineCoordinator Coordinator(
@@ -666,8 +685,11 @@ namespace
             "Append before TTL must accumulate"
         );
         Require(
-            Coordinator.GetNextWakeTime().WakeTime == FirstExpiry,
-            "Append must not renew ExpiresAt"
+            Coordinator.GetNextWakeTime().WakeTime ==
+                FirstExpiry + std::chrono::duration_cast<
+                    FTSEventQueueClock::duration
+                >(4s),
+            "Accepted append must renew from the frozen five-second TTL"
         );
         const FTSChatPayload AccumulatedPayload = ReadChatPayload(
             Coordinator,
@@ -680,8 +702,9 @@ namespace
                 AccumulatedPayload.Messages[1].ReceivedAt == Clock.Now,
             "Each accumulated message must retain its own Pipeline timestamp"
         );
+        Coordinator.ValidateInternalConsistency();
 
-        Clock.Advance(1s);
+        Clock.Advance(5s);
         const FTSProcessDueExpirationsResult Expirations =
             Coordinator.ProcessDueExpirations();
         Require(
@@ -711,6 +734,142 @@ namespace
             "Expired predecessor binding must be cleaned"
         );
         Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestChatRefreshKeepsAdmissionTtlAfterSettingsUpdate()
+    {
+        FControlledClock Clock;
+        FTSEventQueueSettings CoreSettings = MakePendingCoreSettings(10s);
+        FTSFlowQueueSettings* ChatSettings =
+            CoreSettings.TryGetFlowSettings(ETSEventFlow::Chat);
+        Require(ChatSettings != nullptr, "Chat TTL settings");
+        FTSFlowQueueSettings UpdatedSettings = *ChatSettings;
+        UpdatedSettings.TTL = 30s;
+
+        FTSEventPipelineCoordinator Coordinator(
+            CoreSettings,
+            Clock.MakeProvider()
+        );
+        const FTSPipelineAdmissionResult A = Coordinator.SubmitChat(
+            MakeSemanticInput("ttl-a", "one")
+        );
+        const FTSEventQueueTimePoint AInitialExpiry =
+            A.EnqueueResult->AdmittedEmission.ExpiresAt;
+        Require(
+            Coordinator.UpdateFlowSettings(
+                ETSEventFlow::Chat,
+                UpdatedSettings
+            ).Status == ETSUpdateFlowSettingsStatus::Updated,
+            "Chat TTL settings update"
+        );
+
+        Clock.Advance(4s);
+        Require(
+            Coordinator.SubmitChat(
+                MakeSemanticInput("ttl-a", "two")
+            ).Status == ETSPipelineAdmissionStatus::Accumulated,
+            "Existing Chat append after settings update"
+        );
+        const FTSEventQueueTimePoint ARefreshedExpiry =
+            AInitialExpiry + std::chrono::duration_cast<
+                FTSEventQueueClock::duration
+            >(4s);
+        Require(
+            Coordinator.GetNextWakeTime().WakeTime == ARefreshedExpiry,
+            "Existing Chat must refresh with its frozen ten-second TTL"
+        );
+
+        const FTSPipelineAdmissionResult B = Coordinator.SubmitChat(
+            MakeSemanticInput("ttl-b", "new")
+        );
+        Require(
+            B.Status == ETSPipelineAdmissionStatus::Accepted &&
+                B.EnqueueResult->AdmittedEmission.ExpiresAt ==
+                    Clock.Now + std::chrono::duration_cast<
+                        FTSEventQueueClock::duration
+                    >(30s),
+            "New Chat must use the updated thirty-second TTL"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestChatCanDisableTtlRefreshOnAppend()
+    {
+        FControlledClock Clock;
+        FTSEventPipelineSettings Settings;
+        Settings.Chat.bRefreshTtlOnAppend = false;
+        FTSEventPipelineCoordinator Coordinator(
+            MakePendingCoreSettings(5s),
+            Clock.MakeProvider(),
+            Settings
+        );
+        const FTSPipelineAdmissionResult First = Coordinator.SubmitChat(
+            MakeSemanticInput("fixed-ttl", "one")
+        );
+        const FTSEventQueueTimePoint InitialExpiry =
+            First.EnqueueResult->AdmittedEmission.ExpiresAt;
+
+        Clock.Advance(4s);
+        Require(
+            Coordinator.SubmitChat(
+                MakeSemanticInput("fixed-ttl", "two")
+            ).Status == ETSPipelineAdmissionStatus::Accumulated,
+            "Disabled refresh must still accumulate the payload"
+        );
+        Require(
+            Coordinator.GetNextWakeTime().WakeTime == InitialExpiry,
+            "Disabled refresh must preserve the admitted expiration"
+        );
+        Coordinator.ValidateInternalConsistency();
+    }
+
+    void TestChatWithoutExpirationAccumulatesUnchangedScheduling()
+    {
+        FControlledClock Clock;
+        FTSEventPipelineCoordinator Coordinator(
+            MakePendingCoreSettings(0ms),
+            Clock.MakeProvider()
+        );
+        FTSChatInput FirstInput = MakeSemanticInput("no-ttl", "one");
+        FirstInput.User.bIsModerator = true;
+        const FTSPipelineAdmissionResult First = Coordinator.SubmitChat(
+            FirstInput
+        );
+        const std::int64_t FrozenPriority =
+            First.EnqueueResult->AdmittedEmission.PriorityScore;
+
+        Clock.Advance(2s);
+        FTSChatInput SecondInput = MakeSemanticInput("no-ttl", "two");
+        SecondInput.User.bIsModerator = false;
+        SecondInput.User.bIsSubscriber = true;
+        const FTSPipelineAdmissionResult Appended = Coordinator.SubmitChat(
+            SecondInput
+        );
+        const FTSChatPayload Payload = ReadChatPayload(
+            Coordinator,
+            First.AffectedEmissionId
+        );
+        Require(
+            Appended.Status == ETSPipelineAdmissionStatus::Accumulated &&
+                Appended.AffectedEmissionId == First.AffectedEmissionId &&
+                Payload.Messages.size() == 2 &&
+                Payload.User.bIsSubscriber,
+            "No-expiration Chat must append to the same payload"
+        );
+        Require(
+            Coordinator.GetNextWakeTime().Status ==
+                ETSNextWakeStatus::NoWakeScheduled,
+            "No-expiration append must remain unscheduled"
+        );
+        Coordinator.ValidateInternalConsistency();
+        const FTSPumpResult Pumped = Coordinator.Pump();
+        Require(
+            Pumped.Outcome.Status == ETSPumpStatus::EmissionReady &&
+                Pumped.Outcome.ReadyEmission.PriorityScore == FrozenPriority &&
+                Pumped.Outcome.ReadyEmission.ExpiresAt ==
+                    FTSEventQueueTimePoint::max(),
+            "No-expiration append must preserve frozen Core scheduling"
+        );
     }
 
     void TestPayloadRepositoryPreparedReplacementIsAtomic()
@@ -810,7 +969,10 @@ namespace TikStudio::Tests
         Tests.push_back({"Chat limits reject without partial mutation", &TestChatLimitsRejectWithoutPartialMutation});
         Tests.push_back({"Chat emote and batch byte costs are enforced", &TestChatEmoteAndBatchByteCostsAreEnforced});
         Tests.push_back({"Chat accumulation at capacity and rejected successor cleanup", &TestChatAccumulationWorksAtCapacityAndSuccessorDoesNotLeak});
-        Tests.push_back({"Chat append keeps TTL and boundary creates successor", &TestChatAppendDoesNotRenewTtlAndBoundaryCreatesSuccessor});
+        Tests.push_back({"Chat append renews frozen TTL and boundary creates successor", &TestChatAppendRenewsFrozenTtlAndBoundaryCreatesSuccessor});
+        Tests.push_back({"Chat refresh keeps admission TTL after settings update", &TestChatRefreshKeepsAdmissionTtlAfterSettingsUpdate});
+        Tests.push_back({"Chat can disable TTL refresh on append", &TestChatCanDisableTtlRefreshOnAppend});
+        Tests.push_back({"Chat without expiration accumulates unchanged scheduling", &TestChatWithoutExpirationAccumulatesUnchangedScheduling});
         Tests.push_back({"Payload repository prepared replacement is atomic", &TestPayloadRepositoryPreparedReplacementIsAtomic});
         Tests.push_back({"Chat pending index prepared operations", &TestChatPendingIndexPreparedOperations});
     }
