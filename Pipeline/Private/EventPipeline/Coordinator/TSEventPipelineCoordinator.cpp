@@ -1038,17 +1038,20 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
                         );
                     }
 
-                    PreparedPayloadReplace =
+                    auto PreparedPayloadCandidate =
                         ChatPayloadRepository.PrepareReplace(
                             Binding.PayloadHandle,
                             std::move(ExpandedPayload)
                         );
-                    if (!PreparedPayloadReplace.has_value())
+                    if (!PreparedPayloadCandidate.has_value())
                     {
                         throw std::logic_error(
                             "Pending Chat payload could not prepare replacement"
                         );
                     }
+                    PreparedPayloadReplace.emplace(
+                        std::move(*PreparedPayloadCandidate)
+                    );
 
                     if (bExpirationChanged)
                     {
