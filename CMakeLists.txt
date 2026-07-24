@@ -72,6 +72,7 @@ add_library(TikStudioEventPipeline STATIC
   Pipeline/Private/EventPipeline/Families/TSShareFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSShareMilestoneFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSLikeFamily.cpp
+  Pipeline/Private/EventPipeline/Families/TSLikeMilestoneFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSRoomUserFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSGiftFamily.cpp
   Pipeline/Private/EventPipeline/Families/TSGiftComboFamily.cpp
@@ -213,6 +214,7 @@ add_executable(TikStudioEventPipelineTests
   Tests/Share/TSSharePipelineTests.cpp
   Tests/ShareMilestone/TSShareMilestonePipelineTests.cpp
   Tests/Like/TSLikePipelineTests.cpp
+  Tests/LikeMilestone/TSLikeMilestonePipelineTests.cpp
   Tests/RoomUser/TSRoomUserPipelineTests.cpp
   Tests/Gift/TSGiftPipelineTests.cpp
   Tests/GiftCombo/TSGiftComboPipelineTests.cpp

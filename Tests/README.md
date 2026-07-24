@@ -8,9 +8,9 @@ Las pruebas certifican el sistema portable desde tres perspectivas complementari
 - por familia, para mantener simetría entre los siete eventos base;
 - por integración vertical, para verificar la composición completa disponible.
 
-La certificación vigente corresponde al baseline `8b76573`
-(`feat(share-milestone): complete pipeline lifecycle`). El propietario ejecutó las
-suites automatizadas y certificó 390 PASS / 0 FAIL. No es un resultado de CI.
+La certificación vigente corresponde al baseline `4519d67`
+(`feat(host): complete share-milestone vertical integration`). El propietario ejecutó
+las suites automatizadas y certificó 401 PASS / 0 FAIL. No es un resultado de CI.
 
 Por separado, el propietario validó manualmente los cinco escenarios Chat del Scenario
 Runner: 5 PASS / 0 FAIL. La herramienta interactiva no está registrada en CTest y ese
@@ -22,12 +22,12 @@ resultado no altera el conteo certificado.
 | --- | --- | ---: |
 | `TikStudioEventCoreTests` | Políticas genéricas de cola | 26 |
 | `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 181 |
-| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 83 |
+| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 93 |
 | `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
 | `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
 | `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
-| `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 8 |
-| **Total** |  | **390** |
+| `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 9 |
+| **Total** |  | **401** |
 
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
@@ -39,13 +39,16 @@ directa explícita está completa, pero no existe clasificación automática des
 converter, semántica acumulativa, `ComboKey`, `bIsFinal` ni interpretación productiva
 de `repeatEnd`.
 
-ShareMilestone A y B están publicados, compilados y certificados en `8b76573`.
+ShareMilestone A, B y C están publicados, compilados y certificados en `4519d67`. La
+ruta explícita está completa; su semántica real de milestones continúa pendiente.
 
-ShareMilestone C se implementó localmente: añade input, completion y dispatch al Host,
-mantiene un único FIFO y enruta Share/ShareMilestone mediante `FamilyKind + Flow`.
-Registra 10 pruebas Host y una integración vertical explícita desde JSON Share. El
-conteo estático local queda en 93 casos Host, 9 casos verticales y 401 casos
-automáticos totales; la certificación vigente continúa siendo 390 PASS / 0 FAIL.
+LikeMilestone A se implementó localmente. Reutiliza `FTSLikeInput`, añade
+`FTSLikeMilestonePayload`, una familia propia y un candidato estructural
+`Like / LikeMilestone`. Sus dos pruebas familiares están registradas pero no fueron
+ejecutadas. La pareja aún no está autorizada por `IsSupportedFamilyFlowPair` y no
+existen repositorio, Coordinator, dispatch, completion, Host ni integración vertical.
+El conteo estático local queda en 183 casos Pipeline y 403 casos automáticos totales;
+la certificación vigente continúa siendo 401 PASS / 0 FAIL.
 
 ## Organización por familia
 
@@ -56,6 +59,7 @@ Tests/Chat/
 Tests/Gift/
 Tests/GiftCombo/
 Tests/Like/
+Tests/LikeMilestone/
 Tests/Follow/
 Tests/Share/
 Tests/ShareMilestone/
@@ -82,7 +86,9 @@ Verifica decisiones familiares, payloads, repositorios, bindings, parejas
 lifecycle y consistencia entre autoridades externas y Core. GiftCombo B cubre además
 su recorrido completo dentro del Pipeline y la convivencia bidireccional con Gift.
 ShareMilestone B cubre el recorrido equivalente dentro del Pipeline y la convivencia
-bidireccional con Share directo.
+bidireccional con Share directo. LikeMilestone A cubre únicamente la forma estructural
+del payload, el candidato directo y la independencia entre llamadas; no certifica un
+recorrido operativo.
 
 ### Host
 
