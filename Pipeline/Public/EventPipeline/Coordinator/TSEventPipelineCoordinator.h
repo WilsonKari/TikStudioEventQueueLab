@@ -7,6 +7,8 @@
 #include "EventPipeline/Processing/TSFollowProcessingDispatch.h"
 #include "EventPipeline/Processing/TSShareProcessingCompletion.h"
 #include "EventPipeline/Processing/TSShareProcessingDispatch.h"
+#include "EventPipeline/Processing/TSShareMilestoneProcessingCompletion.h"
+#include "EventPipeline/Processing/TSShareMilestoneProcessingDispatch.h"
 #include "EventPipeline/Processing/TSLikeProcessingCompletion.h"
 #include "EventPipeline/Processing/TSLikeProcessingDispatch.h"
 #include "EventPipeline/Processing/TSRoomUserProcessingCompletion.h"
@@ -20,6 +22,7 @@
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
 #include "EventPipeline/Repositories/TSFollowPayloadRepository.h"
 #include "EventPipeline/Repositories/TSSharePayloadRepository.h"
+#include "EventPipeline/Repositories/TSShareMilestonePayloadRepository.h"
 #include "EventPipeline/Repositories/TSLikePayloadRepository.h"
 #include "EventPipeline/Repositories/TSRoomUserPayloadRepository.h"
 #include "EventPipeline/Repositories/TSGiftPayloadRepository.h"
@@ -81,6 +84,8 @@ using FTSFollowDispatchResult =
 
 using FTSShareDispatchResult =
     TTSPipelineDispatchResult<FTSShareProcessingDispatch>;
+using FTSShareMilestoneDispatchResult =
+    TTSPipelineDispatchResult<FTSShareMilestoneProcessingDispatch>;
 
 using FTSLikeDispatchResult =
     TTSPipelineDispatchResult<FTSLikeProcessingDispatch>;
@@ -141,6 +146,9 @@ public:
     FTSPipelineAdmissionResult SubmitShare(FTSShareInput Input);
 
     [[nodiscard]]
+    FTSPipelineAdmissionResult SubmitShareMilestone(FTSShareInput Input);
+
+    [[nodiscard]]
     FTSPipelineAdmissionResult SubmitLike(FTSLikeInput Input);
 
     [[nodiscard]]
@@ -163,6 +171,9 @@ public:
 
     [[nodiscard]]
     FTSShareDispatchResult BeginShareProcessing();
+
+    [[nodiscard]]
+    FTSShareMilestoneDispatchResult BeginShareMilestoneProcessing();
 
     [[nodiscard]]
     FTSLikeDispatchResult BeginLikeProcessing();
@@ -193,6 +204,13 @@ public:
 
     [[nodiscard]]
     FTSShareProcessingCompletionResult CompleteShareProcessing(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    FTSShareMilestoneProcessingCompletionResult
+    CompleteShareMilestoneProcessing(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
     );
@@ -371,6 +389,50 @@ public:
         if (!bFoundPayload)
         {
             throw std::logic_error("Share binding references a missing payload");
+        }
+
+        return true;
+    }
+
+    template <typename TCallback>
+    [[nodiscard]]
+    bool VisitShareMilestonePayloadForEmission(
+        FTSEmissionId EmissionId,
+        TCallback&& Callback
+    ) const
+    {
+        FTSEmissionBinding Binding;
+        const bool bFoundBinding = BindingRegistry.Visit(
+            EmissionId,
+            [&](const FTSEmissionBinding& StoredBinding)
+            {
+                Binding = StoredBinding;
+            }
+        );
+
+        if (!bFoundBinding)
+        {
+            return false;
+        }
+
+        if (Binding.FamilyKind != ETSEventFamilyKind::Share ||
+            Binding.ExpectedFlow != ETSEventFlow::ShareMilestone)
+        {
+            throw std::logic_error(
+                "Emission binding is not a ShareMilestone binding"
+            );
+        }
+
+        const bool bFoundPayload = ShareMilestonePayloadRepository.Visit(
+            Binding.PayloadHandle,
+            std::forward<TCallback>(Callback)
+        );
+
+        if (!bFoundPayload)
+        {
+            throw std::logic_error(
+                "ShareMilestone binding references a missing payload"
+            );
         }
 
         return true;
@@ -612,6 +674,9 @@ public:
     std::size_t GetSharePayloadCount() const noexcept;
 
     [[nodiscard]]
+    std::size_t GetShareMilestonePayloadCount() const noexcept;
+
+    [[nodiscard]]
     std::size_t GetLikePayloadCount() const noexcept;
 
     [[nodiscard]]
@@ -688,6 +753,7 @@ private:
     FTSChatPayloadRepository ChatPayloadRepository;
     FTSFollowPayloadRepository FollowPayloadRepository;
     FTSSharePayloadRepository SharePayloadRepository;
+    FTSShareMilestonePayloadRepository ShareMilestonePayloadRepository;
     FTSLikePayloadRepository LikePayloadRepository;
     FTSRoomUserPayloadRepository RoomUserPayloadRepository;
     FTSGiftPayloadRepository GiftPayloadRepository;

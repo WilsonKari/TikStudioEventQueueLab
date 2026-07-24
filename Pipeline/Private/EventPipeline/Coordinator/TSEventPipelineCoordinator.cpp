@@ -3,6 +3,7 @@
 #include "EventPipeline/Families/TSChatFamily.h"
 #include "EventPipeline/Families/TSFollowFamily.h"
 #include "EventPipeline/Families/TSShareFamily.h"
+#include "EventPipeline/Families/TSShareMilestoneFamily.h"
 #include "EventPipeline/Families/TSLikeFamily.h"
 #include "EventPipeline/Families/TSRoomUserFamily.h"
 #include "EventPipeline/Families/TSGiftFamily.h"
@@ -30,6 +31,11 @@ static_assert(
     std::is_nothrow_move_constructible_v<FTSShareProcessingDispatch>
 );
 static_assert(
+    std::is_nothrow_move_constructible_v<
+        FTSShareMilestoneProcessingDispatch
+    >
+);
+static_assert(
     std::is_nothrow_move_constructible_v<FTSLikeProcessingDispatch>
 );
 static_assert(
@@ -48,6 +54,9 @@ static_assert(std::is_nothrow_move_constructible_v<FTSChatDispatchResult>);
 static_assert(std::is_nothrow_move_constructible_v<FTSFollowDispatchResult>);
 static_assert(
     std::is_nothrow_move_constructible_v<FTSShareDispatchResult>
+);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSShareMilestoneDispatchResult>
 );
 static_assert(
     std::is_nothrow_move_constructible_v<FTSLikeDispatchResult>
@@ -291,6 +300,8 @@ namespace
         const FTSChatPayloadRepository& ChatPayloadRepository,
         const FTSFollowPayloadRepository& FollowPayloadRepository,
         const FTSSharePayloadRepository& SharePayloadRepository,
+        const FTSShareMilestonePayloadRepository&
+            ShareMilestonePayloadRepository,
         const FTSLikePayloadRepository& LikePayloadRepository,
         const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         const FTSGiftPayloadRepository& GiftPayloadRepository,
@@ -317,12 +328,29 @@ namespace
             );
 
         case ETSEventFamilyKind::Share:
-            return SharePayloadRepository.Visit(
-                Binding.PayloadHandle,
-                [](const FTSSharePayload&)
-                {
-                }
-            );
+            switch (Binding.ExpectedFlow)
+            {
+            case ETSEventFlow::Share:
+                return SharePayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [](const FTSSharePayload&)
+                    {
+                    }
+                );
+
+            case ETSEventFlow::ShareMilestone:
+                return ShareMilestonePayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [](const FTSShareMilestonePayload&)
+                    {
+                    }
+                );
+
+            default:
+                throw std::logic_error(
+                    "Share binding references an unsupported flow"
+                );
+            }
 
         case ETSEventFamilyKind::Like:
             return LikePayloadRepository.Visit(
@@ -386,6 +414,7 @@ namespace
         FTSChatPayloadRepository& ChatPayloadRepository,
         FTSFollowPayloadRepository& FollowPayloadRepository,
         FTSSharePayloadRepository& SharePayloadRepository,
+        FTSShareMilestonePayloadRepository& ShareMilestonePayloadRepository,
         FTSLikePayloadRepository& LikePayloadRepository,
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
@@ -404,8 +433,21 @@ namespace
             return;
 
         case ETSEventFamilyKind::Share:
-            SharePayloadRepository.CommitErase(Entry.PayloadHandle);
-            return;
+            switch (Entry.ExpectedFlow)
+            {
+            case ETSEventFlow::Share:
+                SharePayloadRepository.CommitErase(Entry.PayloadHandle);
+                return;
+
+            case ETSEventFlow::ShareMilestone:
+                ShareMilestonePayloadRepository.CommitErase(
+                    Entry.PayloadHandle
+                );
+                return;
+
+            default:
+                std::terminate();
+            }
 
         case ETSEventFamilyKind::Like:
             LikePayloadRepository.CommitErase(Entry.PayloadHandle);
@@ -445,6 +487,8 @@ namespace
         const FTSChatPayloadRepository& ChatPayloadRepository,
         const FTSFollowPayloadRepository& FollowPayloadRepository,
         const FTSSharePayloadRepository& SharePayloadRepository,
+        const FTSShareMilestonePayloadRepository&
+            ShareMilestonePayloadRepository,
         const FTSLikePayloadRepository& LikePayloadRepository,
         const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         const FTSGiftPayloadRepository& GiftPayloadRepository,
@@ -542,6 +586,7 @@ namespace
                     ChatPayloadRepository,
                     FollowPayloadRepository,
                     SharePayloadRepository,
+                    ShareMilestonePayloadRepository,
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
@@ -623,6 +668,7 @@ namespace
         FTSChatPayloadRepository& ChatPayloadRepository,
         FTSFollowPayloadRepository& FollowPayloadRepository,
         FTSSharePayloadRepository& SharePayloadRepository,
+        FTSShareMilestonePayloadRepository& ShareMilestonePayloadRepository,
         FTSLikePayloadRepository& LikePayloadRepository,
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
@@ -650,6 +696,7 @@ namespace
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
@@ -829,6 +876,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
@@ -865,6 +913,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         ChatPayloadRepository,
         FollowPayloadRepository,
         SharePayloadRepository,
+        ShareMilestonePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
@@ -1222,6 +1271,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
@@ -1308,6 +1358,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
         ChatPayloadRepository,
         FollowPayloadRepository,
         SharePayloadRepository,
+        ShareMilestonePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
@@ -1351,6 +1402,18 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitShare(
         ETSEventFamilyKind::Share,
         ETSEventFlow::Share,
         SharePayloadRepository
+    );
+}
+
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitShareMilestone(
+    FTSShareInput Input
+)
+{
+    return SubmitDecision(
+        FTSShareMilestoneFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::ShareMilestone,
+        ShareMilestonePayloadRepository
     );
 }
 
@@ -1469,6 +1532,7 @@ FTSEmissionBinding FTSEventPipelineCoordinator::ResolveReadyBindingAuthority(
             ChatPayloadRepository,
             FollowPayloadRepository,
             SharePayloadRepository,
+            ShareMilestonePayloadRepository,
             LikePayloadRepository,
             RoomUserPayloadRepository,
             GiftPayloadRepository,
@@ -1605,6 +1669,19 @@ FTSShareDispatchResult FTSEventPipelineCoordinator::BeginShareProcessing()
         ETSEventFamilyKind::Share,
         ETSEventFlow::Share,
         SharePayloadRepository
+    );
+}
+
+FTSShareMilestoneDispatchResult
+FTSEventPipelineCoordinator::BeginShareMilestoneProcessing()
+{
+    return BeginProcessing<
+        FTSShareMilestonePayload,
+        FTSShareMilestoneProcessingDispatch
+    >(
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::ShareMilestone,
+        ShareMilestonePayloadRepository
     );
 }
 
@@ -1803,6 +1880,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                     ChatPayloadRepository,
                     FollowPayloadRepository,
                     SharePayloadRepository,
+                    ShareMilestonePayloadRepository,
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
@@ -1825,6 +1903,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
             ChatPayloadRepository,
             FollowPayloadRepository,
             SharePayloadRepository,
+            ShareMilestonePayloadRepository,
             LikePayloadRepository,
             RoomUserPayloadRepository,
             GiftPayloadRepository,
@@ -1857,6 +1936,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
@@ -1876,6 +1956,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         ChatPayloadRepository,
         FollowPayloadRepository,
         SharePayloadRepository,
+        ShareMilestonePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
@@ -1931,6 +2012,21 @@ FTSEventPipelineCoordinator::CompleteShareProcessing(
         ETSEventFamilyKind::Share,
         ETSEventFlow::Share,
         SharePayloadRepository
+    );
+}
+
+FTSShareMilestoneProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteShareMilestoneProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Share,
+        ETSEventFlow::ShareMilestone,
+        ShareMilestonePayloadRepository
     );
 }
 
@@ -2021,6 +2117,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
@@ -2043,6 +2140,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
         ChatPayloadRepository,
         FollowPayloadRepository,
         SharePayloadRepository,
+        ShareMilestonePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
@@ -2069,6 +2167,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
                     ChatPayloadRepository,
                     FollowPayloadRepository,
                     SharePayloadRepository,
+                    ShareMilestonePayloadRepository,
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
@@ -2088,6 +2187,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
         ChatPayloadRepository,
         FollowPayloadRepository,
         SharePayloadRepository,
+        ShareMilestonePayloadRepository,
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
@@ -2153,6 +2253,12 @@ std::size_t FTSEventPipelineCoordinator::GetSharePayloadCount() const noexcept
     return SharePayloadRepository.Size();
 }
 
+std::size_t
+FTSEventPipelineCoordinator::GetShareMilestonePayloadCount() const noexcept
+{
+    return ShareMilestonePayloadRepository.Size();
+}
+
 std::size_t FTSEventPipelineCoordinator::GetLikePayloadCount() const noexcept
 {
     return LikePayloadRepository.Size();
@@ -2186,6 +2292,7 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
         ChatPayloadRepository.Size() +
         FollowPayloadRepository.Size() +
         SharePayloadRepository.Size() +
+        ShareMilestonePayloadRepository.Size() +
         LikePayloadRepository.Size() +
         RoomUserPayloadRepository.Size() +
         GiftPayloadRepository.Size() +
@@ -2221,6 +2328,7 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
                     ChatPayloadRepository,
                     FollowPayloadRepository,
                     SharePayloadRepository,
+                    ShareMilestonePayloadRepository,
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
@@ -2408,6 +2516,7 @@ FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
                 ChatPayloadRepository,
                 FollowPayloadRepository,
                 SharePayloadRepository,
+                ShareMilestonePayloadRepository,
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,

@@ -536,6 +536,49 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeShareMilestoneSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* FlowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::ShareMilestone);
+        Require(
+            FlowSettings != nullptr,
+            "ShareMilestone settings must be available"
+        );
+        FlowSettings->bEnabled = bEnabled;
+        FlowSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeOperationalShareMilestoneSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL =
+            std::chrono::milliseconds{15000},
+        ETSEventExpirePolicy ExpirePolicy =
+            ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings =
+            MakeShareMilestoneSettings(true, 10);
+        FTSFlowQueueSettings* FlowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::ShareMilestone);
+        Require(
+            FlowSettings != nullptr,
+            "ShareMilestone settings must be available"
+        );
+        FlowSettings->TTL = TTL;
+        FlowSettings->ExpirePolicy = ExpirePolicy;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeLikeSettings(
         bool bEnabled,
         std::uint32_t MaxSlots
@@ -793,6 +836,32 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedShareMilestone(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSShareInput Input = MakeCompleteShareInput();
+        Input.User.UniqueId = UniqueId;
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitShareMilestone(std::move(Input));
+
+        Require(
+            Admission.Status == ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "ShareMilestone admission must succeed"
+        );
+        const FTSEmissionEnvelope& Emission =
+            Admission.EnqueueResult->AdmittedEmission;
+        Require(
+            Emission.EmissionId != 0 &&
+                Emission.Flow == ETSEventFlow::ShareMilestone,
+            "Accepted ShareMilestone admission has an invalid route"
+        );
+        return Emission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedLike(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& UniqueId
@@ -966,6 +1035,26 @@ namespace TikStudio::Tests
             Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
                 Dispatch.Dispatch.has_value(),
             "A ready Share must produce a dispatch"
+        );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyShareMilestone(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSShareMilestoneDispatchResult Dispatch =
+            Coordinator.BeginShareMilestoneProcessing();
+        Require(
+            Dispatch.Status == ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready ShareMilestone must produce a dispatch"
+        );
+        Require(
+            Dispatch.Dispatch->Emission.Flow ==
+                ETSEventFlow::ShareMilestone,
+            "ShareMilestone dispatch must preserve its flow"
         );
         return Dispatch.Dispatch->Emission.EmissionId;
     }

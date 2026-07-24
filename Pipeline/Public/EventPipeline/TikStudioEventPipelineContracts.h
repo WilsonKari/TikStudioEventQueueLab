@@ -16,8 +16,8 @@ enum class ETSEventFamilyKind : std::uint8_t
     Follow
 };
 
-// Única autoridad portable para las rutas operativas. Sólo GiftCombo está habilitado
-// como carril derivado; los demás valores derivados del Core continúan reservados.
+// Única autoridad portable para las rutas operativas. GiftCombo y ShareMilestone
+// están habilitados como carriles derivados; los demás continúan reservados.
 [[nodiscard]]
 constexpr bool IsSupportedFamilyFlowPair(
     ETSEventFamilyKind FamilyKind,
@@ -39,7 +39,8 @@ constexpr bool IsSupportedFamilyFlowPair(
         (FamilyKind == ETSEventFamilyKind::RoomUser &&
             Flow == ETSEventFlow::RoomUser) ||
         (FamilyKind == ETSEventFamilyKind::Share &&
-            Flow == ETSEventFlow::Share);
+            (Flow == ETSEventFlow::Share ||
+             Flow == ETSEventFlow::ShareMilestone));
 }
 
 // Identidad opaca dentro del repositorio tipado de una familia. Cero es inválido y
