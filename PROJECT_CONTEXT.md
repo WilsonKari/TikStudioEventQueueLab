@@ -10,22 +10,22 @@ el baseline histórico `8afa3b6` se conserva en
 
 ```text
 Rama: main
-Baseline certificado: 9620aa240ffe761abcec82eb7b8facf19e83fe73
-Commit: feat(share-milestone): add direct family decision
-Certificación automatizada por el propietario: 378 PASS / 0 FAIL
+Baseline certificado: 8b76573f94ff13f9d4dadfc4c733b16fbab255a3
+Commit: feat(share-milestone): complete pipeline lifecycle
+Certificación automatizada por el propietario: 390 PASS / 0 FAIL
 Fecha de certificación: 2026-07-24
 ```
 
 | Suite | Resultado certificado |
 | --- | ---: |
 | Core | 26 PASS / 0 FAIL |
-| Pipeline | 169 PASS / 0 FAIL |
+| Pipeline | 181 PASS / 0 FAIL |
 | Host | 83 PASS / 0 FAIL |
 | Adapter | 62 PASS / 0 FAIL |
 | JSON Decoder | 20 PASS / 0 FAIL |
 | Checklist | 10 PASS / 0 FAIL |
 | Vertical Integration | 8 PASS / 0 FAIL |
-| **Total** | **378 PASS / 0 FAIL** |
+| **Total** | **390 PASS / 0 FAIL** |
 
 Estos resultados corresponden a una ejecución automatizada de las suites realizada y
 certificada por el propietario. No son un resultado de CI ni fueron ejecutados por el
@@ -35,7 +35,7 @@ agente que actualizó este documento.
 
 El propietario validó manualmente los cinco escenarios Chat disponibles en
 `TikStudioEventScenarioRunner`: 5 PASS / 0 FAIL. Esta comprobación interactiva no forma
-parte de CTest ni altera los 378 casos certificados.
+parte de CTest ni altera los 390 casos certificados.
 
 ### Estado local pendiente de certificación
 
@@ -44,18 +44,19 @@ directa explícita está completa, comparte las autoridades globales y distingue
 GiftCombo mediante `FamilyKind + Flow`; la selección automática y su semántica
 coalescente continúan pendientes.
 
-ShareMilestone A está publicado, compilado y certificado en `9620aa2`.
-`FTSShareInput`, cuyo único miembro es `User`, alimenta un
-`FTSShareMilestonePayload` estructural propio y una familia sin estado que construye el
-candidato `Share / ShareMilestone`.
+ShareMilestone A y B están publicados, compilados y certificados en `8b76573`.
+`FTSShareInput` alimenta tanto Share directo como el payload estructural propio de
+ShareMilestone; ambos comparten `ETSEventFamilyKind::Share` y se distinguen por Flow.
 
-Sobre ese baseline se implementó localmente ShareMilestone B. La pareja
-`Share / ShareMilestone` queda autorizada con repositorio tipado propio, admisión,
-binding, ready global, dispatch, completion y lifecycle compartido. Share directo y
-ShareMilestone conservan autoridades de payload separadas y se enrutan por
-`FamilyKind + Flow`. Se añadieron 12 pruebas de Coordinator: el conteo estático local
-es 181 casos Pipeline y 390 casos automáticos totales. Estos cambios no fueron
-compilados, ejecutados ni certificados.
+Sobre ese baseline se implementó localmente ShareMilestone C. El Host añade
+`PostShareMilestone`, `PostShareMilestoneCompletion`, los dos command kinds, un wrapper
+privado para distinguir el input dentro del FIFO y una alternativa de dispatch propia.
+El routing ready consulta `FamilyKind + Flow` antes de consumir la notificación. Se
+registraron 10 pruebas Host y una integración vertical que selecciona
+`PostShareMilestone` explícitamente después de convertir JSON Share.
+
+El conteo estático local es 93 casos Host, 9 verticales y 401 casos automáticos
+totales. Estos cambios no fueron compilados, ejecutados ni certificados.
 
 ## 2. Objetivo del proyecto
 
@@ -214,19 +215,15 @@ ShareMilestone
 ```
 
 Estos valores existen en `ETSEventFlow` y poseen settings en Core. GiftCombo conserva
-la única ruta derivada A → B → C publicada, y la integración vertical puede elegirla
-explícitamente. ShareMilestone B añade localmente una segunda ruta operativa, limitada
-al Pipeline y pendiente de certificación. Aún no existe selección automática desde
-Gift, acumulación, `ComboKey`, `bIsFinal` ni interpretación semántica de `repeatEnd`.
+su ruta derivada A → B → C publicada. ShareMilestone A → B está publicado y su fase C
+completa localmente la ruta directa explícita en Host e integración vertical.
 
-ShareMilestone A está publicado y ShareMilestone B completa localmente su recorrido
-operativo dentro del Pipeline. Share continúa siendo el dominio y
-`ETSEventFamilyKind` compartido; `FTSShareInput` sigue siendo el contrato portable
-común. La ruta derivada posee repositorio propio, mientras binding, ready, Core e
-`InFlight` siguen siendo autoridades globales compartidas. La acumulación, el scope,
-los thresholds, el valor semántico del milestone, Host y la integración vertical
-permanecen pendientes. Los otros carriles continúan como reservas técnicas, no como
-requisitos finales de producto.
+Share y ShareMilestone comparten `FTSShareInput`, `ETSEventFamilyKind::Share`, owner
+thread, FIFO Host, Coordinator, Core, BindingRegistry, ready e `InFlight`. Share usa
+`ETSEventFlow::Share` y `FTSShareProcessingDispatch`; ShareMilestone usa
+`ETSEventFlow::ShareMilestone` y `FTSShareMilestoneProcessingDispatch`. No existe
+selección automática desde el converter, acumulación, scope, thresholds ni valor
+semántico calculado de milestone. Los otros carriles continúan como reservas técnicas.
 
 ## 7. Invariantes compartidas vigentes
 
@@ -254,22 +251,22 @@ La organización vigente de runners, suites y archivos se documenta en
 | Capa | Casos certificados |
 | --- | ---: |
 | Core | 26 |
-| Pipeline | 169 |
+| Pipeline | 181 |
 | Host | 83 |
 | Adapter | 62 |
 | JSON Decoder | 20 |
 | Checklist | 10 |
 | Vertical Integration | 8 |
-| **Total** | **378** |
+| **Total** | **390** |
 
 Las suites por capa verifican contratos específicos; las pruebas familiares residen en
 `Tests/<Evento>/`. Existe una prueba vertical por cada evento base y esas siete pruebas
 componen Adapter, Host, Pipeline y Core. El propietario ejecutó las suites automatizadas
-y certificó el resultado total de 378 PASS / 0 FAIL sobre `9620aa2`.
+y certificó el resultado total de 390 PASS / 0 FAIL sobre `8b76573`.
 
-ShareMilestone B añade localmente 12 casos de Coordinator a los dos casos familiares
-publicados en A. El conteo resultante de 181 casos Pipeline y 390 casos automáticos
-totales es sólo estático y permanece sin compilar, ejecutar ni certificar.
+ShareMilestone C añade localmente 10 casos Host y una integración vertical explícita.
+El conteo resultante de 93 casos Host, 9 verticales y 401 casos automáticos totales es
+sólo estático y permanece sin compilar, ejecutar ni certificar.
 
 ## 9. Flujo de trabajo
 
@@ -288,7 +285,7 @@ totales es sólo estático y permanece sin compilar, ejecutar ni certificar.
 Continúan fuera del alcance operativo actual:
 
 - bifurcación automática, acumulación y claves semánticas de GiftCombo;
-- Host y recorrido vertical C de ShareMilestone;
+- clasificación automática Share/ShareMilestone desde el converter;
 - acumulación, scope, thresholds y valor semántico de ShareMilestone;
 - WebSocket productivo hacia Host;
 - integración UE5 y Blueprint;
@@ -304,7 +301,6 @@ Estas capacidades requieren fases independientes y no se diseñan en este baseli
 
 ## 11. Próxima frontera
 
-La siguiente frontera de ShareMilestone será su fase C: integrar explícitamente la ruta
-ya operativa del Pipeline con el Host compartido y su recorrido vertical. La
-acumulación real de shares, el scope, los thresholds y el valor del milestone requieren
-una fase semántica posterior independiente.
+La ruta directa explícita ShareMilestone A → B → C está completa localmente. La
+siguiente frontera requiere un diseño semántico independiente para clasificación
+automática Share/ShareMilestone, acumulación, scope, thresholds y valor del milestone.

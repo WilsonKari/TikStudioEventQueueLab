@@ -8,9 +8,9 @@ Las pruebas certifican el sistema portable desde tres perspectivas complementari
 - por familia, para mantener simetría entre los siete eventos base;
 - por integración vertical, para verificar la composición completa disponible.
 
-La certificación vigente corresponde al baseline `9620aa2`
-(`feat(share-milestone): add direct family decision`). El propietario ejecutó las
-suites automatizadas y certificó 378 PASS / 0 FAIL. No es un resultado de CI.
+La certificación vigente corresponde al baseline `8b76573`
+(`feat(share-milestone): complete pipeline lifecycle`). El propietario ejecutó las
+suites automatizadas y certificó 390 PASS / 0 FAIL. No es un resultado de CI.
 
 Por separado, el propietario validó manualmente los cinco escenarios Chat del Scenario
 Runner: 5 PASS / 0 FAIL. La herramienta interactiva no está registrada en CTest y ese
@@ -21,13 +21,13 @@ resultado no altera el conteo certificado.
 | Runner CTest | Responsabilidad | Casos certificados |
 | --- | --- | ---: |
 | `TikStudioEventCoreTests` | Políticas genéricas de cola | 26 |
-| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 169 |
+| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 181 |
 | `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 83 |
 | `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
 | `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
 | `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
 | `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 8 |
-| **Total** |  | **378** |
+| **Total** |  | **390** |
 
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
@@ -39,17 +39,13 @@ directa explícita está completa, pero no existe clasificación automática des
 converter, semántica acumulativa, `ComboKey`, `bIsFinal` ni interpretación productiva
 de `repeatEnd`.
 
-ShareMilestone A está publicado, compilado y certificado en `9620aa2`. Reutiliza
-`FTSShareInput`, que sólo contiene `User`, y añade un payload estructural y una familia
-sin estado que construye candidatos `Share / ShareMilestone`.
+ShareMilestone A y B están publicados, compilados y certificados en `8b76573`.
 
-ShareMilestone B se implementó localmente: autoriza esa pareja y añade repositorio,
-admisión, binding, dispatch, completion y lifecycle dentro del Pipeline compartido.
-Se registraron 12 pruebas de Coordinator sin compilarlas ni ejecutarlas. El conteo
-estático local queda en 181 casos Pipeline y 390 casos automáticos totales; la
-certificación vigente continúa siendo 378 PASS / 0 FAIL. No se implementaron Host,
-integración vertical, acumulación, scope, thresholds ni un valor semántico de
-milestone.
+ShareMilestone C se implementó localmente: añade input, completion y dispatch al Host,
+mantiene un único FIFO y enruta Share/ShareMilestone mediante `FamilyKind + Flow`.
+Registra 10 pruebas Host y una integración vertical explícita desde JSON Share. El
+conteo estático local queda en 93 casos Host, 9 casos verticales y 401 casos
+automáticos totales; la certificación vigente continúa siendo 390 PASS / 0 FAIL.
 
 ## Organización por familia
 
@@ -85,13 +81,13 @@ Verifica decisiones familiares, payloads, repositorios, bindings, parejas
 `FamilyKind / Flow`, acumulación y renovación Chat, ready, dispatch, completion,
 lifecycle y consistencia entre autoridades externas y Core. GiftCombo B cubre además
 su recorrido completo dentro del Pipeline y la convivencia bidireccional con Gift.
-ShareMilestone B añade localmente el recorrido equivalente dentro del Pipeline y la
-convivencia bidireccional con Share directo; aún no cuenta con certificación manual.
+ShareMilestone B cubre el recorrido equivalente dentro del Pipeline y la convivencia
+bidireccional con Share directo.
 
 ### Host
 
 Verifica publicación thread-safe, FIFO global, owner thread, un comando por ciclo,
-ocho rutas operativas, inputs, completions, actualizaciones de settings, lease/ack por
+nueve rutas operativas, inputs, completions, actualizaciones de settings, lease/ack por
 `Sequence`, consumo de comandos definitivamente rechazados y recuperación de fallos
 reintentables.
 
@@ -112,7 +108,7 @@ cubiertos por el contrato TikFinity portable.
 
 ### Vertical Integration
 
-Los siete casos base y el caso local explícito GiftCombo componen:
+Los siete casos base y los casos explícitos GiftCombo y ShareMilestone componen:
 
 ```text
 JSON
@@ -126,8 +122,10 @@ JSON
 
 Esta suite recorre la composición portable disponible. GiftCombo usa el decoder y
 converter Gift existentes, pero el test selecciona `PostGiftCombo` explícitamente; no
-certifica bifurcación productiva. Tampoco prueba WebSocket productivo, UE5, Blueprint
-ni Tick productivo.
+certifica bifurcación productiva. ShareMilestone reutiliza el decoder y converter Share,
+pero el test selecciona `PostShareMilestone` explícitamente. No existe clasificación
+automática, acumulación, scope, thresholds ni valor calculado de milestone. Tampoco se
+prueban WebSocket productivo, UE5, Blueprint ni Tick productivo.
 
 ## Registro de nuevas pruebas
 

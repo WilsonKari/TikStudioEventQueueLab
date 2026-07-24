@@ -240,6 +240,7 @@ add_executable(TikStudioEventHostTests
   Tests/Chat/TSChatHostTests.cpp
   Tests/Follow/TSFollowHostTests.cpp
   Tests/Share/TSShareHostTests.cpp
+  Tests/ShareMilestone/TSShareMilestoneHostTests.cpp
   Tests/Like/TSLikeHostTests.cpp
   Tests/RoomUser/TSRoomUserHostTests.cpp
   Tests/Gift/TSGiftHostTests.cpp
@@ -267,6 +268,7 @@ add_executable(TikStudioVerticalIntegrationTests
   Tests/Chat/TSChatVerticalIntegrationTests.cpp
   Tests/Follow/TSFollowVerticalIntegrationTests.cpp
   Tests/Share/TSShareVerticalIntegrationTests.cpp
+  Tests/ShareMilestone/TSShareMilestoneVerticalIntegrationTests.cpp
   Tests/Like/TSLikeVerticalIntegrationTests.cpp
   Tests/RoomUser/TSRoomUserVerticalIntegrationTests.cpp
   Tests/Gift/TSGiftVerticalIntegrationTests.cpp

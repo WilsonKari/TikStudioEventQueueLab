@@ -123,6 +123,19 @@ namespace
     }
 
     void ValidateOwnedDispatch(
+        const FTSShareMilestoneProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::ShareMilestone)
+        {
+            throw std::logic_error(
+                "Invalid owned ShareMilestone dispatch"
+            );
+        }
+    }
+
+    void ValidateOwnedDispatch(
         const FTSLikeProcessingDispatch& Dispatch
     )
     {
@@ -228,6 +241,14 @@ public:
     }
 
     [[nodiscard]]
+    bool PostShareMilestone(FTSShareInput Input)
+    {
+        return PostCommand(
+            FPostedShareMilestoneInput{std::move(Input)}
+        );
+    }
+
+    [[nodiscard]]
     bool PostLike(FTSLikeInput Input)
     {
         return PostCommand(std::move(Input));
@@ -305,6 +326,21 @@ public:
         ValidateCompletionArguments(EmissionId, ProcessingResult);
         return PostCommand(
             FPostedShareCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
+    bool PostShareMilestoneCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedShareMilestoneCompletion{
+                EmissionId,
+                ProcessingResult
+            }
         );
     }
 
@@ -492,6 +528,11 @@ private:
         FTSGiftInput Input{};
     };
 
+    struct FPostedShareMilestoneInput
+    {
+        FTSShareInput Input{};
+    };
+
     struct FPostedChatCompletion
     {
         FTSEmissionId EmissionId = 0;
@@ -548,6 +589,13 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedShareMilestoneCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     // El productor publica un snapshot; sólo el owner thread lo aplica y las emisiones
     // existentes conservan los settings efectivos congelados durante su admisión.
     struct FPostedFlowSettingsUpdate
@@ -573,7 +621,9 @@ private:
         FPostedMemberCompletion,
         FPostedFlowSettingsUpdate,
         FPostedGiftComboInput,
-        FPostedGiftComboCompletion
+        FPostedGiftComboCompletion,
+        FPostedShareMilestoneInput,
+        FPostedShareMilestoneCompletion
     >;
 
     struct FPostedCommandEntry
@@ -799,6 +849,27 @@ private:
                             Completion.ProcessingResult
                         )
                     );
+                },
+                [&](FPostedShareMilestoneInput& Command)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::ShareMilestoneInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitShareMilestone(
+                            std::move(Command.Input)
+                        )
+                    );
+                },
+                [&](const FPostedShareMilestoneCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::ShareMilestoneCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteShareMilestoneProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
                 }
             },
             PostedCommand
@@ -873,24 +944,55 @@ private:
 
         case ETSEventFamilyKind::Share:
         {
-            FTSShareDispatchResult DispatchResult =
-                Coordinator.BeginShareProcessing();
-            ValidateDispatchResult(DispatchResult);
-            if (DispatchResult.Status !=
-                ETSPipelineDispatchStatus::Dispatched)
+            if (*Flow == ETSEventFlow::Share)
             {
-                throw std::logic_error(
-                    "Peeked Share ready did not produce a dispatch"
+                FTSShareDispatchResult DispatchResult =
+                    Coordinator.BeginShareProcessing();
+                ValidateDispatchResult(DispatchResult);
+                if (DispatchResult.Status !=
+                    ETSPipelineDispatchStatus::Dispatched)
+                {
+                    throw std::logic_error(
+                        "Peeked Share ready did not produce a dispatch"
+                    );
+                }
+
+                ValidateOwnedDispatch(*DispatchResult.Dispatch);
+                std::optional<FTSEventProcessingDispatch> Dispatch;
+                Dispatch.emplace(
+                    std::in_place_type<FTSShareProcessingDispatch>,
+                    std::move(*DispatchResult.Dispatch)
                 );
+                return Dispatch;
             }
 
-            ValidateOwnedDispatch(*DispatchResult.Dispatch);
-            std::optional<FTSEventProcessingDispatch> Dispatch;
-            Dispatch.emplace(
-                std::in_place_type<FTSShareProcessingDispatch>,
-                std::move(*DispatchResult.Dispatch)
+            if (*Flow == ETSEventFlow::ShareMilestone)
+            {
+                FTSShareMilestoneDispatchResult DispatchResult =
+                    Coordinator.BeginShareMilestoneProcessing();
+                ValidateDispatchResult(DispatchResult);
+                if (DispatchResult.Status !=
+                    ETSPipelineDispatchStatus::Dispatched)
+                {
+                    throw std::logic_error(
+                        "Peeked ShareMilestone ready did not produce a dispatch"
+                    );
+                }
+
+                ValidateOwnedDispatch(*DispatchResult.Dispatch);
+                std::optional<FTSEventProcessingDispatch> Dispatch;
+                Dispatch.emplace(
+                    std::in_place_type<
+                        FTSShareMilestoneProcessingDispatch
+                    >,
+                    std::move(*DispatchResult.Dispatch)
+                );
+                return Dispatch;
+            }
+
+            throw std::logic_error(
+                "Pending Share-domain ready has an unsupported flow"
             );
-            return Dispatch;
         }
 
         case ETSEventFamilyKind::Like:
@@ -1054,6 +1156,11 @@ bool FTSEventExecutionHost::PostShare(FTSShareInput Input)
     return Impl->PostShare(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostShareMilestone(FTSShareInput Input)
+{
+    return Impl->PostShareMilestone(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostLike(FTSLikeInput Input)
 {
     return Impl->PostLike(std::move(Input));
@@ -1101,6 +1208,17 @@ bool FTSEventExecutionHost::PostShareCompletion(
 )
 {
     return Impl->PostShareCompletion(EmissionId, ProcessingResult);
+}
+
+bool FTSEventExecutionHost::PostShareMilestoneCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostShareMilestoneCompletion(
+        EmissionId,
+        ProcessingResult
+    );
 }
 
 bool FTSEventExecutionHost::PostLikeCompletion(
