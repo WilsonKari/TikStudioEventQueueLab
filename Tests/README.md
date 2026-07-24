@@ -8,9 +8,9 @@ Las pruebas certifican el sistema portable desde tres perspectivas complementari
 - por familia, para mantener simetría entre los siete eventos base;
 - por integración vertical, para verificar la composición completa disponible.
 
-La certificación vigente corresponde al baseline `deb46df`
-(`feat(tools): add interactive event scenario runner`). El propietario ejecutó las
-suites automatizadas y certificó 351 PASS / 0 FAIL. No es un resultado de CI.
+La certificación vigente corresponde al baseline `d49bf49`
+(`feat(gift-combo): add direct family decision`). El propietario ejecutó las suites
+automatizadas y certificó 353 PASS / 0 FAIL. No es un resultado de CI.
 
 Por separado, el propietario validó manualmente los cinco escenarios Chat del Scenario
 Runner: 5 PASS / 0 FAIL. La herramienta interactiva no está registrada en CTest y ese
@@ -21,28 +21,33 @@ resultado no altera el conteo certificado.
 | Runner CTest | Responsabilidad | Casos certificados |
 | --- | --- | ---: |
 | `TikStudioEventCoreTests` | Políticas genéricas de cola | 26 |
-| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 153 |
+| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 155 |
 | `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 73 |
 | `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
 | `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
 | `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
 | `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 7 |
-| **Total** |  | **351** |
+| **Total** |  | **353** |
 
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
 
 ## Estado local no certificado
 
-Sobre `deb46df` se añadió GiftCombo A como decisión familiar directa. Reutiliza
-`FTSGiftInput`, pero posee `FTSGiftComboPayload` y `FTSGiftComboFamily`; el candidato
-resultante conserva el dominio `Gift` y selecciona `Flow = GiftCombo`.
+Sobre `d49bf49` se implementó localmente GiftCombo B. La pareja exacta
+`FamilyKind = Gift / Flow = GiftCombo` ya está autorizada y dispone de repositorio
+propio, admisión, binding, ready, dispatch, completion y limpieza de lifecycle dentro
+del Pipeline. Gift y GiftCombo comparten Core, registro de bindings, ready e `InFlight`,
+pero mantienen repositorios tipados separados y se enrutan por la pareja completa.
+En concreto, `FTSGiftComboPayloadRepository`, `SubmitGiftCombo`,
+`BeginGiftComboProcessing`, `CompleteGiftComboProcessing` y
+`PeekPendingReadyFlow` cubren los lifecycle Pending, Confirm y Cancel sin introducir
+clasificación ni acumulación semántica.
 
-Se registraron dos casos en Pipeline sin ejecutarlos. El conteo estático local queda en
-155 casos Pipeline y 353 casos totales, pero la certificación vigente continúa siendo
-351 PASS / 0 FAIL sobre `deb46df`. La pareja `Gift / GiftCombo` sigue no autorizada y
-las fases B/C, la bifurcación semántica, la acumulación y la integración operativa o
-end-to-end permanecen pendientes.
+Se añadieron 12 casos de Coordinator sin ejecutarlos. El conteo estático local queda en
+167 casos Pipeline y 365 casos totales, pero la certificación vigente continúa siendo
+353 PASS / 0 FAIL sobre `d49bf49`. GiftCombo C, la bifurcación semántica, la
+acumulación y la integración Host o end-to-end permanecen pendientes.
 
 ## Organización por familia
 
@@ -75,9 +80,8 @@ genérico y preparación/commit de las mutaciones.
 
 Verifica decisiones familiares, payloads, repositorios, bindings, parejas
 `FamilyKind / Flow`, acumulación y renovación Chat, ready, dispatch, completion,
-lifecycle y consistencia entre autoridades externas y Core. GiftCombo A sólo cubre la
-construcción del candidato tipado y la independencia de su snapshot; no cubre todavía
-admisión ni lifecycle.
+lifecycle y consistencia entre autoridades externas y Core. GiftCombo B cubre además
+su recorrido completo dentro del Pipeline y la convivencia bidireccional con Gift.
 
 ### Host
 

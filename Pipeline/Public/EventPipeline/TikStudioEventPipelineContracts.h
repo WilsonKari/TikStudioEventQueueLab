@@ -16,8 +16,8 @@ enum class ETSEventFamilyKind : std::uint8_t
     Follow
 };
 
-// Única autoridad portable para las rutas operativas. Los flujos derivados siguen
-// reservados aunque sean valores válidos del enum del Core.
+// Única autoridad portable para las rutas operativas. Sólo GiftCombo está habilitado
+// como carril derivado; los demás valores derivados del Core continúan reservados.
 [[nodiscard]]
 constexpr bool IsSupportedFamilyFlowPair(
     ETSEventFamilyKind FamilyKind,
@@ -28,7 +28,8 @@ constexpr bool IsSupportedFamilyFlowPair(
         (FamilyKind == ETSEventFamilyKind::Chat &&
             Flow == ETSEventFlow::Chat) ||
         (FamilyKind == ETSEventFamilyKind::Gift &&
-            Flow == ETSEventFlow::Gift) ||
+            (Flow == ETSEventFlow::Gift ||
+             Flow == ETSEventFlow::GiftCombo)) ||
         (FamilyKind == ETSEventFamilyKind::Follow &&
             Flow == ETSEventFlow::Follow) ||
         (FamilyKind == ETSEventFamilyKind::Like &&

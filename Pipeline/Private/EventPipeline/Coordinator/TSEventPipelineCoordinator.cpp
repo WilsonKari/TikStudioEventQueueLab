@@ -6,6 +6,7 @@
 #include "EventPipeline/Families/TSLikeFamily.h"
 #include "EventPipeline/Families/TSRoomUserFamily.h"
 #include "EventPipeline/Families/TSGiftFamily.h"
+#include "EventPipeline/Families/TSGiftComboFamily.h"
 #include "EventPipeline/Families/TSMemberFamily.h"
 
 #include <algorithm>
@@ -38,6 +39,9 @@ static_assert(
     std::is_nothrow_move_constructible_v<FTSGiftProcessingDispatch>
 );
 static_assert(
+    std::is_nothrow_move_constructible_v<FTSGiftComboProcessingDispatch>
+);
+static_assert(
     std::is_nothrow_move_constructible_v<FTSMemberProcessingDispatch>
 );
 static_assert(std::is_nothrow_move_constructible_v<FTSChatDispatchResult>);
@@ -53,6 +57,9 @@ static_assert(
 );
 static_assert(
     std::is_nothrow_move_constructible_v<FTSGiftDispatchResult>
+);
+static_assert(
+    std::is_nothrow_move_constructible_v<FTSGiftComboDispatchResult>
 );
 static_assert(
     std::is_nothrow_move_constructible_v<FTSMemberDispatchResult>
@@ -175,6 +182,7 @@ namespace
     {
         FTSEmissionId EmissionId = 0;
         ETSEventFamilyKind FamilyKind = ETSEventFamilyKind::Chat;
+        ETSEventFlow ExpectedFlow = ETSEventFlow::Chat;
         FTSPayloadHandle PayloadHandle{};
         ETSExternalEmissionState ExpectedState =
             ETSExternalEmissionState::Bound;
@@ -286,6 +294,7 @@ namespace
         const FTSLikePayloadRepository& LikePayloadRepository,
         const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         const FTSGiftPayloadRepository& GiftPayloadRepository,
+        const FTSGiftComboPayloadRepository& GiftComboPayloadRepository,
         const FTSMemberPayloadRepository& MemberPayloadRepository
     )
     {
@@ -332,12 +341,29 @@ namespace
             );
 
         case ETSEventFamilyKind::Gift:
-            return GiftPayloadRepository.Visit(
-                Binding.PayloadHandle,
-                [](const FTSGiftPayload&)
-                {
-                }
-            );
+            switch (Binding.ExpectedFlow)
+            {
+            case ETSEventFlow::Gift:
+                return GiftPayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [](const FTSGiftPayload&)
+                    {
+                    }
+                );
+
+            case ETSEventFlow::GiftCombo:
+                return GiftComboPayloadRepository.Visit(
+                    Binding.PayloadHandle,
+                    [](const FTSGiftComboPayload&)
+                    {
+                    }
+                );
+
+            default:
+                throw std::logic_error(
+                    "Gift binding references an unsupported flow"
+                );
+            }
 
         case ETSEventFamilyKind::Member:
             return MemberPayloadRepository.Visit(
@@ -363,6 +389,7 @@ namespace
         FTSLikePayloadRepository& LikePayloadRepository,
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
+        FTSGiftComboPayloadRepository& GiftComboPayloadRepository,
         FTSMemberPayloadRepository& MemberPayloadRepository
     ) noexcept
     {
@@ -389,8 +416,19 @@ namespace
             return;
 
         case ETSEventFamilyKind::Gift:
-            GiftPayloadRepository.CommitErase(Entry.PayloadHandle);
-            return;
+            switch (Entry.ExpectedFlow)
+            {
+            case ETSEventFlow::Gift:
+                GiftPayloadRepository.CommitErase(Entry.PayloadHandle);
+                return;
+
+            case ETSEventFlow::GiftCombo:
+                GiftComboPayloadRepository.CommitErase(Entry.PayloadHandle);
+                return;
+
+            default:
+                std::terminate();
+            }
 
         case ETSEventFamilyKind::Member:
             MemberPayloadRepository.CommitErase(Entry.PayloadHandle);
@@ -410,6 +448,7 @@ namespace
         const FTSLikePayloadRepository& LikePayloadRepository,
         const FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         const FTSGiftPayloadRepository& GiftPayloadRepository,
+        const FTSGiftComboPayloadRepository& GiftComboPayloadRepository,
         const FTSMemberPayloadRepository& MemberPayloadRepository,
         const FTSChatPendingBatchIndex& ChatPendingBatchIndex,
         const std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
@@ -506,6 +545,7 @@ namespace
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
+                    GiftComboPayloadRepository,
                     MemberPayloadRepository
                 ))
             {
@@ -565,6 +605,7 @@ namespace
             FValidatedLifecycleEntry Entry;
             Entry.EmissionId = EmissionId;
             Entry.FamilyKind = Binding.FamilyKind;
+            Entry.ExpectedFlow = Binding.ExpectedFlow;
             Entry.PayloadHandle = Binding.PayloadHandle;
             Entry.ExpectedState = ExpectedState;
             Entry.bClearsReady = bClearsReady;
@@ -585,6 +626,7 @@ namespace
         FTSLikePayloadRepository& LikePayloadRepository,
         FTSRoomUserPayloadRepository& RoomUserPayloadRepository,
         FTSGiftPayloadRepository& GiftPayloadRepository,
+        FTSGiftComboPayloadRepository& GiftComboPayloadRepository,
         FTSMemberPayloadRepository& MemberPayloadRepository,
         FTSChatPendingBatchIndex& ChatPendingBatchIndex,
         std::optional<FTSEmissionEnvelope>& PendingReadyEmission,
@@ -611,6 +653,7 @@ namespace
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository
             );
             BindingRegistry.CommitErase(Entry.EmissionId);
@@ -789,6 +832,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository,
                 ChatPendingBatchIndex,
                 PendingReadyEmission,
@@ -824,6 +868,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitDecision(
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
+        GiftComboPayloadRepository,
         MemberPayloadRepository,
         ChatPendingBatchIndex,
         PendingReadyEmission,
@@ -1180,6 +1225,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository,
                 ChatPendingBatchIndex,
                 PendingReadyEmission,
@@ -1265,6 +1311,7 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitChat(
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
+        GiftComboPayloadRepository,
         MemberPayloadRepository,
         ChatPendingBatchIndex,
         PendingReadyEmission,
@@ -1343,6 +1390,18 @@ FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitGift(
     );
 }
 
+FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitGiftCombo(
+    FTSGiftInput Input
+)
+{
+    return SubmitDecision(
+        FTSGiftComboFamily::Decide(std::move(Input)),
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::GiftCombo,
+        GiftComboPayloadRepository
+    );
+}
+
 FTSPipelineAdmissionResult FTSEventPipelineCoordinator::SubmitMember(
     FTSMemberInput Input
 )
@@ -1413,6 +1472,7 @@ FTSEmissionBinding FTSEventPipelineCoordinator::ResolveReadyBindingAuthority(
             LikePayloadRepository,
             RoomUserPayloadRepository,
             GiftPayloadRepository,
+            GiftComboPayloadRepository,
             MemberPayloadRepository
         ))
     {
@@ -1473,18 +1533,12 @@ FTSEventPipelineCoordinator::BeginProcessing(
     const FTSEmissionEnvelope ReadyEmission = *PendingReadyEmission;
     const FTSEmissionBinding Binding = ValidateReadyBinding(ReadyEmission);
 
-    // El ready sólo notifica qué binding autoritativo puede despacharse; inspeccionar
-    // otra familia no lo autoriza ni lo consume.
-    if (Binding.FamilyKind != ExpectedFamilyKind)
+    // El ready sólo notifica qué ruta autoritativa puede despacharse; ni FamilyKind
+    // ni Flow por separado bastan para autorizar o consumir esa notificación.
+    if (Binding.FamilyKind != ExpectedFamilyKind ||
+        Binding.ExpectedFlow != ExpectedFlow)
     {
         return Result;
-    }
-
-    if (Binding.ExpectedFlow != ExpectedFlow)
-    {
-        throw std::logic_error(
-            "Pending ready does not match the requested processing route"
-        );
     }
 
     ValidateSupportedFamilyFlowPair(ExpectedFamilyKind, ExpectedFlow);
@@ -1588,6 +1642,19 @@ FTSGiftDispatchResult FTSEventPipelineCoordinator::BeginGiftProcessing()
         ETSEventFamilyKind::Gift,
         ETSEventFlow::Gift,
         GiftPayloadRepository
+    );
+}
+
+FTSGiftComboDispatchResult
+FTSEventPipelineCoordinator::BeginGiftComboProcessing()
+{
+    return BeginProcessing<
+        FTSGiftComboPayload,
+        FTSGiftComboProcessingDispatch
+    >(
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::GiftCombo,
+        GiftComboPayloadRepository
     );
 }
 
@@ -1739,6 +1806,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
+                    GiftComboPayloadRepository,
                     MemberPayloadRepository,
                     ChatPendingBatchIndex,
                     PendingReadyEmission,
@@ -1760,6 +1828,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
             LikePayloadRepository,
             RoomUserPayloadRepository,
             GiftPayloadRepository,
+            GiftComboPayloadRepository,
             MemberPayloadRepository,
             ChatPendingBatchIndex,
             PendingReadyEmission,
@@ -1791,6 +1860,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository,
                 ChatPendingBatchIndex,
                 PendingReadyEmission,
@@ -1809,6 +1879,7 @@ FTSProcessingCompletionResult FTSEventPipelineCoordinator::CompleteProcessing(
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
+        GiftComboPayloadRepository,
         MemberPayloadRepository,
         ChatPendingBatchIndex,
         PendingReadyEmission,
@@ -1908,6 +1979,21 @@ FTSEventPipelineCoordinator::CompleteGiftProcessing(
     );
 }
 
+FTSGiftComboProcessingCompletionResult
+FTSEventPipelineCoordinator::CompleteGiftComboProcessing(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return CompleteProcessing(
+        EmissionId,
+        ProcessingResult,
+        ETSEventFamilyKind::Gift,
+        ETSEventFlow::GiftCombo,
+        GiftComboPayloadRepository
+    );
+}
+
 FTSMemberProcessingCompletionResult
 FTSEventPipelineCoordinator::CompleteMemberProcessing(
     FTSEmissionId EmissionId,
@@ -1938,6 +2024,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository,
                 ChatPendingBatchIndex,
                 PendingReadyEmission,
@@ -1959,6 +2046,7 @@ FTSPumpResult FTSEventPipelineCoordinator::Pump()
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
+        GiftComboPayloadRepository,
         MemberPayloadRepository,
         ChatPendingBatchIndex,
         PendingReadyEmission,
@@ -1984,6 +2072,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
+                    GiftComboPayloadRepository,
                     MemberPayloadRepository,
                     ChatPendingBatchIndex,
                     PendingReadyEmission,
@@ -2002,6 +2091,7 @@ FTSEventPipelineCoordinator::ProcessDueExpirations()
         LikePayloadRepository,
         RoomUserPayloadRepository,
         GiftPayloadRepository,
+        GiftComboPayloadRepository,
         MemberPayloadRepository,
         ChatPendingBatchIndex,
         PendingReadyEmission,
@@ -2024,6 +2114,17 @@ FTSEventPipelineCoordinator::PeekPendingReadyFamilyKind() const
     }
 
     return ValidateReadyBinding(*PendingReadyEmission).FamilyKind;
+}
+
+std::optional<ETSEventFlow>
+FTSEventPipelineCoordinator::PeekPendingReadyFlow() const
+{
+    if (!PendingReadyEmission.has_value())
+    {
+        return std::nullopt;
+    }
+
+    return ValidateReadyBinding(*PendingReadyEmission).ExpectedFlow;
 }
 
 std::size_t FTSEventPipelineCoordinator::GetBindingCount() const noexcept
@@ -2068,6 +2169,12 @@ std::size_t FTSEventPipelineCoordinator::GetGiftPayloadCount() const noexcept
     return GiftPayloadRepository.Size();
 }
 
+std::size_t
+FTSEventPipelineCoordinator::GetGiftComboPayloadCount() const noexcept
+{
+    return GiftComboPayloadRepository.Size();
+}
+
 std::size_t FTSEventPipelineCoordinator::GetMemberPayloadCount() const noexcept
 {
     return MemberPayloadRepository.Size();
@@ -2082,6 +2189,7 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
         LikePayloadRepository.Size() +
         RoomUserPayloadRepository.Size() +
         GiftPayloadRepository.Size() +
+        GiftComboPayloadRepository.Size() +
         MemberPayloadRepository.Size();
     if (PayloadCount != BindingRegistry.Size())
     {
@@ -2116,6 +2224,7 @@ void FTSEventPipelineCoordinator::ValidateInternalConsistency() const
                     LikePayloadRepository,
                     RoomUserPayloadRepository,
                     GiftPayloadRepository,
+                    GiftComboPayloadRepository,
                     MemberPayloadRepository
                 ))
             {
@@ -2302,6 +2411,7 @@ FTSEventPipelineCoordinator::PrepareCorePumpOutcome(
                 LikePayloadRepository,
                 RoomUserPayloadRepository,
                 GiftPayloadRepository,
+                GiftComboPayloadRepository,
                 MemberPayloadRepository
             ))
         {

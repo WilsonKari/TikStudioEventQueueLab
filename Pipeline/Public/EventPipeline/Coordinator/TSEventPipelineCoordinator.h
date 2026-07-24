@@ -13,6 +13,8 @@
 #include "EventPipeline/Processing/TSRoomUserProcessingDispatch.h"
 #include "EventPipeline/Processing/TSGiftProcessingCompletion.h"
 #include "EventPipeline/Processing/TSGiftProcessingDispatch.h"
+#include "EventPipeline/Processing/TSGiftComboProcessingCompletion.h"
+#include "EventPipeline/Processing/TSGiftComboProcessingDispatch.h"
 #include "EventPipeline/Processing/TSMemberProcessingCompletion.h"
 #include "EventPipeline/Processing/TSMemberProcessingDispatch.h"
 #include "EventPipeline/Repositories/TSChatPayloadRepository.h"
@@ -21,6 +23,7 @@
 #include "EventPipeline/Repositories/TSLikePayloadRepository.h"
 #include "EventPipeline/Repositories/TSRoomUserPayloadRepository.h"
 #include "EventPipeline/Repositories/TSGiftPayloadRepository.h"
+#include "EventPipeline/Repositories/TSGiftComboPayloadRepository.h"
 #include "EventPipeline/Repositories/TSMemberPayloadRepository.h"
 #include "EventPipeline/Settings/TSEventPipelineSettings.h"
 #include "EventPipeline/State/TSChatPendingBatchIndex.h"
@@ -88,6 +91,9 @@ using FTSRoomUserDispatchResult =
 using FTSGiftDispatchResult =
     TTSPipelineDispatchResult<FTSGiftProcessingDispatch>;
 
+using FTSGiftComboDispatchResult =
+    TTSPipelineDispatchResult<FTSGiftComboProcessingDispatch>;
+
 using FTSMemberDispatchResult =
     TTSPipelineDispatchResult<FTSMemberProcessingDispatch>;
 
@@ -144,6 +150,9 @@ public:
     FTSPipelineAdmissionResult SubmitGift(FTSGiftInput Input);
 
     [[nodiscard]]
+    FTSPipelineAdmissionResult SubmitGiftCombo(FTSGiftInput Input);
+
+    [[nodiscard]]
     FTSPipelineAdmissionResult SubmitMember(FTSMemberInput Input);
 
     [[nodiscard]]
@@ -163,6 +172,9 @@ public:
 
     [[nodiscard]]
     FTSGiftDispatchResult BeginGiftProcessing();
+
+    [[nodiscard]]
+    FTSGiftComboDispatchResult BeginGiftComboProcessing();
 
     [[nodiscard]]
     FTSMemberDispatchResult BeginMemberProcessing();
@@ -204,6 +216,12 @@ public:
     );
 
     [[nodiscard]]
+    FTSGiftComboProcessingCompletionResult CompleteGiftComboProcessing(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
     FTSMemberProcessingCompletionResult CompleteMemberProcessing(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
@@ -221,6 +239,9 @@ public:
     // Inspecciona el enrutamiento sin consumir ni autorizar el ready global.
     [[nodiscard]]
     std::optional<ETSEventFamilyKind> PeekPendingReadyFamilyKind() const;
+
+    [[nodiscard]]
+    std::optional<ETSEventFlow> PeekPendingReadyFlow() const;
 
     template <typename TCallback>
     [[nodiscard]]
@@ -489,6 +510,50 @@ public:
 
     template <typename TCallback>
     [[nodiscard]]
+    bool VisitGiftComboPayloadForEmission(
+        FTSEmissionId EmissionId,
+        TCallback&& Callback
+    ) const
+    {
+        FTSEmissionBinding Binding;
+        const bool bFoundBinding = BindingRegistry.Visit(
+            EmissionId,
+            [&](const FTSEmissionBinding& StoredBinding)
+            {
+                Binding = StoredBinding;
+            }
+        );
+
+        if (!bFoundBinding)
+        {
+            return false;
+        }
+
+        if (Binding.FamilyKind != ETSEventFamilyKind::Gift ||
+            Binding.ExpectedFlow != ETSEventFlow::GiftCombo)
+        {
+            throw std::logic_error(
+                "Emission binding is not a GiftCombo binding"
+            );
+        }
+
+        const bool bFoundPayload = GiftComboPayloadRepository.Visit(
+            Binding.PayloadHandle,
+            std::forward<TCallback>(Callback)
+        );
+
+        if (!bFoundPayload)
+        {
+            throw std::logic_error(
+                "GiftCombo binding references a missing payload"
+            );
+        }
+
+        return true;
+    }
+
+    template <typename TCallback>
+    [[nodiscard]]
     bool VisitMemberPayloadForEmission(
         FTSEmissionId EmissionId,
         TCallback&& Callback
@@ -554,6 +619,9 @@ public:
 
     [[nodiscard]]
     std::size_t GetGiftPayloadCount() const noexcept;
+
+    [[nodiscard]]
+    std::size_t GetGiftComboPayloadCount() const noexcept;
 
     [[nodiscard]]
     std::size_t GetMemberPayloadCount() const noexcept;
@@ -623,10 +691,11 @@ private:
     FTSLikePayloadRepository LikePayloadRepository;
     FTSRoomUserPayloadRepository RoomUserPayloadRepository;
     FTSGiftPayloadRepository GiftPayloadRepository;
+    FTSGiftComboPayloadRepository GiftComboPayloadRepository;
     FTSMemberPayloadRepository MemberPayloadRepository;
     FTSEmissionBindingRegistry BindingRegistry;
     FTSChatPendingBatchIndex ChatPendingBatchIndex;
-    // Las siete familias operativas comparten el ready porque el core posee un único
-    // InFlight.
+    // Todas las rutas operativas comparten el ready porque el core posee un único
+    // InFlight, incluso cuando dos flows pertenecen al mismo FamilyKind.
     std::optional<FTSEmissionEnvelope> PendingReadyEmission;
 };
