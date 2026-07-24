@@ -29,6 +29,7 @@ int main()
     RegisterSharePipelineCoordinatorTests(Tests);
     RegisterShareMilestonePipelineCoordinatorTests(Tests);
     RegisterLikePipelineCoordinatorTests(Tests);
+    RegisterLikeMilestonePipelineCoordinatorTests(Tests);
     RegisterRoomUserPipelineCoordinatorTests(Tests);
     RegisterGiftPipelineCoordinatorTests(Tests);
     RegisterGiftComboPipelineCoordinatorTests(Tests);

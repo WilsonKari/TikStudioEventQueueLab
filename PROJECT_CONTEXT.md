@@ -10,22 +10,22 @@ el baseline histórico `8afa3b6` se conserva en
 
 ```text
 Rama: main
-Baseline certificado: 4519d67554d5d1ba394e8bc1fd752fb24bbb1723
-Commit: feat(host): complete share-milestone vertical integration
-Certificación automatizada por el propietario: 401 PASS / 0 FAIL
+Baseline certificado: 50d63ab3ae3dcdad558abc7c316c70720162daf4
+Commit: feat(like-milestone): add direct family decision
+Certificación automatizada por el propietario: 403 PASS / 0 FAIL
 Fecha de certificación: 2026-07-24
 ```
 
 | Suite | Resultado certificado |
 | --- | ---: |
 | Core | 26 PASS / 0 FAIL |
-| Pipeline | 181 PASS / 0 FAIL |
+| Pipeline | 183 PASS / 0 FAIL |
 | Host | 93 PASS / 0 FAIL |
 | Adapter | 62 PASS / 0 FAIL |
 | JSON Decoder | 20 PASS / 0 FAIL |
 | Checklist | 10 PASS / 0 FAIL |
 | Vertical Integration | 9 PASS / 0 FAIL |
-| **Total** | **401 PASS / 0 FAIL** |
+| **Total** | **403 PASS / 0 FAIL** |
 
 Estos resultados corresponden a una ejecución automatizada de las suites realizada y
 certificada por el propietario. No son un resultado de CI ni fueron ejecutados por el
@@ -35,7 +35,7 @@ agente que actualizó este documento.
 
 El propietario validó manualmente los cinco escenarios Chat disponibles en
 `TikStudioEventScenarioRunner`: 5 PASS / 0 FAIL. Esta comprobación interactiva no forma
-parte de CTest ni altera los 401 casos certificados.
+parte de CTest ni altera los 403 casos certificados.
 
 ### Estado local pendiente de certificación
 
@@ -48,16 +48,19 @@ ShareMilestone A, B y C están publicados, compilados y certificados en `4519d67
 Su ruta explícita está completa y distingue Share de ShareMilestone mediante
 `FamilyKind + Flow`; la semántica real de milestones continúa pendiente.
 
-Sobre ese baseline se implementó localmente LikeMilestone A. `FTSLikeInput`, que ya
-contiene `LikeCount`, `TotalLikeCount` y `User`, se conserva por valor en un
+LikeMilestone A está publicado, compilado y certificado en `50d63ab`. `FTSLikeInput`,
+que ya contiene `LikeCount`, `TotalLikeCount` y `User`, se conserva por valor en un
 `FTSLikeMilestonePayload` propio. `FTSLikeMilestoneFamily` construye directamente un
 candidato estructural `Like / LikeMilestone` con defaults de admisión neutrales.
 
-La pareja `Like / LikeMilestone` continúa deliberadamente rechazada por
-`IsSupportedFamilyFlowPair`: todavía no existen repositorio, Coordinator, dispatch,
-completion ni lifecycle para ese carril. Se registraron dos pruebas familiares. El
-conteo estático local es 183 casos Pipeline y 403 casos automáticos totales; estos
-cambios no fueron compilados, ejecutados ni certificados.
+LikeMilestone B está implementado localmente. La pareja `Like / LikeMilestone` queda
+autorizada, con repositorio, dispatch, completion y API de Coordinator propios. El
+routing del dominio Like selecciona el repositorio mediante `FamilyKind + Flow`,
+mientras ready, `InFlight`, BindingRegistry, Core y lifecycle continúan compartidos.
+`LikeCount` y `TotalLikeCount` se preservan como datos sin calcular milestones. Se
+registraron 12 pruebas Coordinator adicionales: el conteo estático local es 195 casos
+Pipeline y 415 casos automáticos totales. Esta fase B no fue compilada, ejecutada ni
+certificada. LikeMilestone C, Host e integración vertical permanecen pendientes.
 
 ## 2. Objetivo del proyecto
 
@@ -225,13 +228,13 @@ thread, FIFO Host, Coordinator, Core, BindingRegistry, ready e `InFlight`. Share
 selección automática desde el converter, acumulación, scope, thresholds ni valor
 semántico calculado de milestone. Los otros carriles continúan como reservas técnicas.
 
-Like es el dominio y `ETSEventFamilyKind` compartido de LikeMilestone. La fase A añade
-únicamente un payload estructural propio, una familia de Pipeline propia y una decisión
-directa `Like / LikeMilestone`. `FTSLikeInput` continúa siendo el contrato portable
-común y sus contadores se preservan sin interpretación. La autoridad del contador, el
-scope, los thresholds, la deduplicación y la selección entre Like, LikeMilestone o
-ambos permanecen pendientes. La pareja se autorizará sólo cuando LikeMilestone B
-incorpore todas las autoridades operativas compatibles.
+Like y LikeMilestone comparten `FTSLikeInput`, `ETSEventFamilyKind::Like`, Core,
+BindingRegistry, ready global, `InFlight` global y lifecycle genérico. Like usa
+`ETSEventFlow::Like` y `FTSLikePayloadRepository`; LikeMilestone usa
+`ETSEventFlow::LikeMilestone` y `FTSLikeMilestonePayloadRepository`. El Coordinator
+distingue ambos mediante `FamilyKind + Flow`. `LikeCount` y `TotalLikeCount` se
+preservan sin interpretación: la autoridad del contador, el scope, los thresholds, la
+deduplicación y la selección entre Like, LikeMilestone o ambos permanecen pendientes.
 
 ## 7. Invariantes compartidas vigentes
 
@@ -259,22 +262,22 @@ La organización vigente de runners, suites y archivos se documenta en
 | Capa | Casos certificados |
 | --- | ---: |
 | Core | 26 |
-| Pipeline | 181 |
+| Pipeline | 183 |
 | Host | 93 |
 | Adapter | 62 |
 | JSON Decoder | 20 |
 | Checklist | 10 |
 | Vertical Integration | 9 |
-| **Total** | **401** |
+| **Total** | **403** |
 
 Las suites por capa verifican contratos específicos; las pruebas familiares residen en
 `Tests/<Evento>/`. Existe una prueba vertical por cada evento base y esas siete pruebas
 componen Adapter, Host, Pipeline y Core. El propietario ejecutó las suites automatizadas
-y certificó el resultado total de 401 PASS / 0 FAIL sobre `4519d67`.
+y certificó el resultado total de 403 PASS / 0 FAIL sobre `50d63ab`.
 
-LikeMilestone A añade localmente dos casos familiares. El conteo resultante de 183
-casos Pipeline y 403 casos automáticos totales es sólo estático y permanece sin
-compilar, ejecutar ni certificar.
+LikeMilestone B añade localmente 12 casos Coordinator a los dos casos familiares ya
+certificados de A. El conteo registrado resultante de 195 casos Pipeline y 415 casos
+automáticos totales es sólo estático y permanece sin compilar, ejecutar ni certificar.
 
 ## 9. Flujo de trabajo
 
@@ -295,8 +298,8 @@ Continúan fuera del alcance operativo actual:
 - bifurcación automática, acumulación y claves semánticas de GiftCombo;
 - clasificación automática Share/ShareMilestone desde el converter;
 - acumulación, scope, thresholds y valor semántico de ShareMilestone;
-- recorrido operativo, clasificación, acumulación, scope, thresholds y deduplicación
-  de LikeMilestone;
+- Host e integración vertical de LikeMilestone;
+- clasificación, acumulación, scope, thresholds y deduplicación de LikeMilestone;
 - WebSocket productivo hacia Host;
 - integración UE5 y Blueprint;
 - scheduler o Tick productivo;
@@ -311,7 +314,8 @@ Estas capacidades requieren fases independientes y no se diseñan en este baseli
 
 ## 11. Próxima frontera
 
-LikeMilestone A define localmente la forma estructural del candidato. La siguiente
-frontera será LikeMilestone B: autorización de la pareja, repositorio, Coordinator,
-dispatch, completion y lifecycle. La semántica real del contador y los milestones
-requiere una fase de diseño posterior independiente.
+LikeMilestone B define localmente el recorrido operativo completo dentro del Pipeline.
+La siguiente frontera será LikeMilestone C: Host compartido e integración vertical
+explícita. La clasificación o derivación, la emisión Like + LikeMilestone, el scope,
+los thresholds, la deduplicación y las regresiones o eventos fuera de orden requieren
+fases de diseño posteriores independientes.

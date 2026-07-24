@@ -615,6 +615,63 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeLikeMilestoneSettings(
+        bool bEnabled,
+        std::uint32_t MaxSlots
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* FlowSettings =
+            Settings.TryGetFlowSettings(
+                ETSEventFlow::LikeMilestone
+            );
+
+        Require(
+            FlowSettings != nullptr,
+            "LikeMilestone settings must be available"
+        );
+
+        FlowSettings->bEnabled = bEnabled;
+        FlowSettings->MaxSlots = MaxSlots;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings
+    MakeOperationalLikeMilestoneSettings(
+        bool bPumpAfterEnqueue,
+        bool bPumpAfterConfirm,
+        std::chrono::milliseconds TTL =
+            std::chrono::milliseconds{5000},
+        ETSEventExpirePolicy ExpirePolicy =
+            ETSEventExpirePolicy::Discard
+    )
+    {
+        FTSEventQueueSettings Settings =
+            MakeLikeMilestoneSettings(true, 10);
+
+        FTSFlowQueueSettings* FlowSettings =
+            Settings.TryGetFlowSettings(
+                ETSEventFlow::LikeMilestone
+            );
+
+        Require(
+            FlowSettings != nullptr,
+            "LikeMilestone settings must be available"
+        );
+
+        FlowSettings->TTL = TTL;
+        FlowSettings->ExpirePolicy = ExpirePolicy;
+
+        Settings.Pump.bPumpAfterEnqueueWhenIdle =
+            bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm =
+            bPumpAfterConfirm;
+
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeRoomUserSettings(
         bool bEnabled,
         std::uint32_t MaxSlots
@@ -885,6 +942,40 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEmissionId SubmitAcceptedLikeMilestone(
+        FTSEventPipelineCoordinator& Coordinator,
+        const std::string& UniqueId
+    )
+    {
+        FTSLikeInput Input = MakeCompleteLikeInput();
+        Input.User.UniqueId = UniqueId;
+
+        const FTSPipelineAdmissionResult Admission =
+            Coordinator.SubmitLikeMilestone(
+                std::move(Input)
+            );
+
+        Require(
+            Admission.Status ==
+                    ETSPipelineAdmissionStatus::Accepted &&
+                Admission.EnqueueResult.has_value(),
+            "LikeMilestone admission must succeed"
+        );
+
+        const FTSEmissionEnvelope& Emission =
+            Admission.EnqueueResult->AdmittedEmission;
+
+        Require(
+            Emission.EmissionId != 0 &&
+                Emission.Flow ==
+                    ETSEventFlow::LikeMilestone,
+            "Accepted LikeMilestone admission has an invalid route"
+        );
+
+        return Emission.EmissionId;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId SubmitAcceptedRoomUser(
         FTSEventPipelineCoordinator& Coordinator,
         const std::string& FirstViewerUniqueId
@@ -1071,6 +1162,30 @@ namespace TikStudio::Tests
                 Dispatch.Dispatch.has_value(),
             "A ready Like must produce a dispatch"
         );
+        return Dispatch.Dispatch->Emission.EmissionId;
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId BeginReadyLikeMilestone(
+        FTSEventPipelineCoordinator& Coordinator
+    )
+    {
+        const FTSLikeMilestoneDispatchResult Dispatch =
+            Coordinator.BeginLikeMilestoneProcessing();
+
+        Require(
+            Dispatch.Status ==
+                    ETSPipelineDispatchStatus::Dispatched &&
+                Dispatch.Dispatch.has_value(),
+            "A ready LikeMilestone must produce a dispatch"
+        );
+
+        Require(
+            Dispatch.Dispatch->Emission.Flow ==
+                ETSEventFlow::LikeMilestone,
+            "LikeMilestone dispatch must preserve its flow"
+        );
+
         return Dispatch.Dispatch->Emission.EmissionId;
     }
 
