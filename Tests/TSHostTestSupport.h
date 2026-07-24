@@ -567,6 +567,27 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeGiftComboSettings(
+        std::uint32_t MaxSlots = 10,
+        std::chrono::milliseconds TTL = std::chrono::milliseconds{60000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings;
+        FTSFlowQueueSettings* FlowSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::GiftCombo);
+        Require(FlowSettings != nullptr, "GiftCombo settings must exist");
+        FlowSettings->bEnabled = true;
+        FlowSettings->MaxSlots = MaxSlots;
+        FlowSettings->TTL = TTL;
+        FlowSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        Settings.Pump.bPumpAfterEnqueueWhenIdle = bPumpAfterEnqueue;
+        Settings.Pump.bPumpAfterConfirm = bPumpAfterConfirm;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEventQueueSettings MakeChatFollowSettings(
         std::uint32_t ChatMaxSlots = 10,
         std::uint32_t FollowMaxSlots = 10,
@@ -698,6 +719,66 @@ namespace TikStudio::Tests
     }
 
     [[nodiscard]]
+    inline FTSEventQueueSettings MakeChatGiftComboSettings(
+        std::uint32_t ChatMaxSlots = 10,
+        std::uint32_t GiftComboMaxSlots = 1,
+        std::chrono::milliseconds ChatTTL = std::chrono::milliseconds{8000},
+        std::chrono::milliseconds GiftComboTTL =
+            std::chrono::milliseconds{60000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeChatSettings(
+            ChatMaxSlots,
+            ChatTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* GiftComboSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::GiftCombo);
+        Require(
+            GiftComboSettings != nullptr,
+            "GiftCombo settings must exist"
+        );
+        GiftComboSettings->bEnabled = true;
+        GiftComboSettings->MaxSlots = GiftComboMaxSlots;
+        GiftComboSettings->TTL = GiftComboTTL;
+        GiftComboSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
+    inline FTSEventQueueSettings MakeGiftAndGiftComboSettings(
+        std::uint32_t GiftMaxSlots = 10,
+        std::uint32_t GiftComboMaxSlots = 10,
+        std::chrono::milliseconds GiftTTL = std::chrono::milliseconds{45000},
+        std::chrono::milliseconds GiftComboTTL =
+            std::chrono::milliseconds{60000},
+        bool bPumpAfterEnqueue = true,
+        bool bPumpAfterConfirm = true
+    )
+    {
+        FTSEventQueueSettings Settings = MakeGiftSettings(
+            GiftMaxSlots,
+            GiftTTL,
+            bPumpAfterEnqueue,
+            bPumpAfterConfirm
+        );
+        FTSFlowQueueSettings* GiftComboSettings =
+            Settings.TryGetFlowSettings(ETSEventFlow::GiftCombo);
+        Require(
+            GiftComboSettings != nullptr,
+            "GiftCombo settings must exist"
+        );
+        GiftComboSettings->bEnabled = true;
+        GiftComboSettings->MaxSlots = GiftComboMaxSlots;
+        GiftComboSettings->TTL = GiftComboTTL;
+        GiftComboSettings->ExpirePolicy = ETSEventExpirePolicy::Discard;
+        return Settings;
+    }
+
+    [[nodiscard]]
     inline FTSEmissionId RequireAcceptedAdmission(
         const FTSEventHostCycleResult& Cycle,
         ETSEventHostCommandKind ExpectedCommand,
@@ -801,6 +882,25 @@ namespace TikStudio::Tests
             ETSEventHostCommandKind::GiftInput,
             Context
         );
+    }
+
+    [[nodiscard]]
+    inline FTSEmissionId RequireAcceptedGiftComboAdmission(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        const FTSEmissionId EmissionId = RequireAcceptedAdmission(
+            Cycle,
+            ETSEventHostCommandKind::GiftComboInput,
+            Context
+        );
+        Require(
+            Cycle.AdmissionResult->EnqueueResult->AdmittedEmission.Flow ==
+                ETSEventFlow::GiftCombo,
+            Context + ": GiftCombo admission flow"
+        );
+        return EmissionId;
     }
 
     [[nodiscard]]
@@ -931,6 +1031,27 @@ namespace TikStudio::Tests
             Dispatch->Emission.EmissionId != 0 &&
                 Dispatch->Emission.Flow == ETSEventFlow::Gift,
             Context + ": Gift dispatch identity and flow"
+        );
+        return *Dispatch;
+    }
+
+    [[nodiscard]]
+    inline const FTSGiftComboProcessingDispatch& RequireGiftComboDispatch(
+        const FTSEventHostCycleResult& Cycle,
+        const std::string& Context
+    )
+    {
+        Require(Cycle.Dispatch.has_value(), Context + ": dispatch expected");
+        const FTSGiftComboProcessingDispatch* Dispatch =
+            std::get_if<FTSGiftComboProcessingDispatch>(&*Cycle.Dispatch);
+        Require(
+            Dispatch != nullptr,
+            Context + ": GiftCombo dispatch expected"
+        );
+        Require(
+            Dispatch->Emission.EmissionId != 0 &&
+                Dispatch->Emission.Flow == ETSEventFlow::GiftCombo,
+            Context + ": GiftCombo dispatch identity and flow"
         );
         return *Dispatch;
     }

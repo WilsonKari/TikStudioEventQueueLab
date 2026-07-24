@@ -241,6 +241,7 @@ add_executable(TikStudioEventHostTests
   Tests/Like/TSLikeHostTests.cpp
   Tests/RoomUser/TSRoomUserHostTests.cpp
   Tests/Gift/TSGiftHostTests.cpp
+  Tests/GiftCombo/TSGiftComboHostTests.cpp
   Tests/Member/TSMemberHostTests.cpp
 )
 
@@ -267,6 +268,7 @@ add_executable(TikStudioVerticalIntegrationTests
   Tests/Like/TSLikeVerticalIntegrationTests.cpp
   Tests/RoomUser/TSRoomUserVerticalIntegrationTests.cpp
   Tests/Gift/TSGiftVerticalIntegrationTests.cpp
+  Tests/GiftCombo/TSGiftComboVerticalIntegrationTests.cpp
   Tests/Member/TSMemberVerticalIntegrationTests.cpp
 )
 

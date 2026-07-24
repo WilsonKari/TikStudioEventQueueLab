@@ -39,6 +39,7 @@ namespace TikStudio::Tests
     void RegisterLikeHostTests(FTSTestCases& Tests);
     void RegisterRoomUserHostTests(FTSTestCases& Tests);
     void RegisterGiftHostTests(FTSTestCases& Tests);
+    void RegisterGiftComboHostTests(FTSTestCases& Tests);
     void RegisterMemberHostTests(FTSTestCases& Tests);
     void RegisterChatVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterFollowVerticalIntegrationTests(FTSTestCases& Tests);
@@ -46,6 +47,7 @@ namespace TikStudio::Tests
     void RegisterLikeVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterRoomUserVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterGiftVerticalIntegrationTests(FTSTestCases& Tests);
+    void RegisterGiftComboVerticalIntegrationTests(FTSTestCases& Tests);
     void RegisterMemberVerticalIntegrationTests(FTSTestCases& Tests);
 
     void RegisterTikFinityChatAdapterTests(FTSTestCases& Tests);

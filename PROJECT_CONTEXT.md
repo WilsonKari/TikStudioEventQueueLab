@@ -1,6 +1,6 @@
 # TikStudioEventQueueLab — contexto operativo
 
-Última actualización: 2026-07-23.
+Última actualización: 2026-07-24.
 
 Este documento describe el estado autoritativo vigente. La evolución detallada hasta
 el baseline histórico `8afa3b6` se conserva en
@@ -10,22 +10,22 @@ el baseline histórico `8afa3b6` se conserva en
 
 ```text
 Rama: main
-Baseline certificado: d49bf49440abd2a0cc49d3f9f33bf76c08e37a1b
-Commit: feat(gift-combo): add direct family decision
-Certificación automatizada por el propietario: 353 PASS / 0 FAIL
-Fecha de certificación: 2026-07-23
+Baseline certificado: f5108ae7dd5f28391c8b1aca9e52bc2c82548eff
+Commit: feat(gift-combo): complete pipeline lifecycle
+Certificación automatizada por el propietario: 365 PASS / 0 FAIL
+Fecha de certificación: 2026-07-24
 ```
 
 | Suite | Resultado certificado |
 | --- | ---: |
 | Core | 26 PASS / 0 FAIL |
-| Pipeline | 155 PASS / 0 FAIL |
+| Pipeline | 167 PASS / 0 FAIL |
 | Host | 73 PASS / 0 FAIL |
 | Adapter | 62 PASS / 0 FAIL |
 | JSON Decoder | 20 PASS / 0 FAIL |
 | Checklist | 10 PASS / 0 FAIL |
 | Vertical Integration | 7 PASS / 0 FAIL |
-| **Total** | **353 PASS / 0 FAIL** |
+| **Total** | **365 PASS / 0 FAIL** |
 
 Estos resultados corresponden a una ejecución automatizada de las suites realizada y
 certificada por el propietario. No son un resultado de CI ni fueron ejecutados por el
@@ -35,27 +35,26 @@ agente que actualizó este documento.
 
 El propietario validó manualmente los cinco escenarios Chat disponibles en
 `TikStudioEventScenarioRunner`: 5 PASS / 0 FAIL. Esta comprobación interactiva no forma
-parte de CTest ni altera los 353 casos certificados.
+parte de CTest ni altera los 365 casos certificados.
 
 ### Estado local pendiente de certificación
 
-GiftCombo A fue publicado y certificado en `d49bf49`. Sobre ese baseline se implementó
-localmente GiftCombo B: la pareja exacta `FamilyKind = Gift / Flow = GiftCombo` está
-autorizada y el carril dispone de repositorio propio, admisión, binding, ready,
-dispatch, completion y limpieza de lifecycle en el Pipeline.
+GiftCombo A y B fueron publicados y certificados en `f5108ae`. Sobre ese baseline se
+implementó localmente GiftCombo C. `PostGiftCombo` y
+`PostGiftComboCompletion` incorporan la ruta al único FIFO del Host; el wrapper privado
+de input conserva una sola alternativa directa `FTSGiftInput` y permite distinguir el
+carril sin alterar el contrato portable.
 
-Gift y GiftCombo comparten el Core, el registro autoritativo de bindings, la
-notificación ready, el único `InFlight` global y el lifecycle genérico. Gift usa
-`FTSGiftPayloadRepository` con `Flow = Gift`; GiftCombo usa
-`FTSGiftComboPayloadRepository` con `Flow = GiftCombo`. Toda selección o limpieza se
-enruta mediante `FamilyKind + Flow`, evitando que el dominio compartido Gift confunda
-ambos carriles.
+Gift y GiftCombo comparten owner thread, Coordinator, Core, BindingRegistry, ready
+global, único `InFlight` y lifecycle genérico. El Host consulta `FamilyKind + Flow`
+antes de consumir ready y entrega tipos de dispatch distintos. Existen siete
+`FamilyKind` y ocho rutas operativas del Host.
 
-Se registraron localmente 12 casos Pipeline adicionales, llevando el conteo estático a
-167 casos Pipeline y 365 casos totales. No se compiló ni se ejecutó ninguna prueba
-durante esta fase; estos conteos no sustituyen la certificación publicada de
-353 PASS / 0 FAIL. GiftCombo C, la bifurcación semántica y la integración Host o
-vertical continúan pendientes.
+Se registraron localmente 10 casos Host y una integración vertical explícita, llevando
+el conteo estático a 83 casos Host, 8 verticales y 376 casos totales. No se compiló ni
+se ejecutó ninguna prueba durante esta fase; estos conteos no sustituyen la
+certificación publicada de 365 PASS / 0 FAIL. La ruta vertical decodifica y convierte
+un JSON Gift, pero selecciona deliberadamente `PostGiftCombo`.
 
 ## 2. Objetivo del proyecto
 
@@ -146,7 +145,7 @@ Pipeline depende de Core y no invierte esa dependencia.
 `FTSEventExecutionHost` proporciona:
 
 - publicación thread-safe de inputs, completions y actualizaciones de settings;
-- un FIFO global entre todas las familias y tipos de comando;
+- un FIFO global entre todas las rutas y tipos de comando;
 - ejecución del Coordinator exclusivamente en el owner thread;
 - procesamiento de como máximo un comando por ciclo;
 - un único procesamiento global compartido;
@@ -213,11 +212,11 @@ ShareMilestone
 ```
 
 Estos valores existen en `ETSEventFlow` y poseen settings en Core. GiftCombo es la única
-excepción operativa parcial: su fase B autoriza `Gift / GiftCombo` y completa el
-recorrido interno del Pipeline, pero todavía no lo expone en Host ni en integración
-vertical y no existe selección semántica desde Gift. Los otros carriles no tienen
-semántica operativa. Sus defaults actuales son reservas técnicas, no requisitos finales
-de producto.
+excepción operativa: su ruta directa A → B → C está completa localmente y la
+integración vertical puede elegirla explícitamente. Aún no existe selección automática
+desde Gift, acumulación, `ComboKey`, `bIsFinal` ni interpretación semántica de
+`repeatEnd`. Los otros carriles no tienen semántica operativa; sus defaults actuales
+son reservas técnicas, no requisitos finales de producto.
 
 ## 7. Invariantes compartidas vigentes
 
@@ -245,22 +244,22 @@ La organización vigente de runners, suites y archivos se documenta en
 | Capa | Casos certificados |
 | --- | ---: |
 | Core | 26 |
-| Pipeline | 155 |
+| Pipeline | 167 |
 | Host | 73 |
 | Adapter | 62 |
 | JSON Decoder | 20 |
 | Checklist | 10 |
 | Vertical Integration | 7 |
-| **Total** | **353** |
+| **Total** | **365** |
 
 Las suites por capa verifican contratos específicos; las pruebas familiares residen en
 `Tests/<Evento>/`. Existe una prueba vertical por cada evento base y esas siete pruebas
 componen Adapter, Host, Pipeline y Core. El propietario ejecutó las suites automatizadas
-y certificó el resultado total de 353 PASS / 0 FAIL sobre `d49bf49`.
+y certificó el resultado total de 365 PASS / 0 FAIL sobre `f5108ae`.
 
-GiftCombo B registra localmente 12 casos adicionales en Pipeline. El conteo resultante
-de 167 casos Pipeline y 365 casos totales es sólo estático y permanece sin compilar,
-ejecutar ni certificar.
+GiftCombo C registra localmente 10 casos Host y un caso vertical. El conteo resultante
+de 83 casos Host, 8 verticales y 376 casos totales es sólo estático y permanece sin
+compilar, ejecutar ni certificar.
 
 ## 9. Flujo de trabajo
 
@@ -278,7 +277,7 @@ ejecutar ni certificar.
 
 Continúan fuera del alcance operativo actual:
 
-- recorrido Host/vertical C de GiftCombo y lógica de los demás flujos derivados;
+- bifurcación automática, acumulación y claves semánticas de GiftCombo;
 - WebSocket productivo hacia Host;
 - integración UE5 y Blueprint;
 - scheduler o Tick productivo;
@@ -293,6 +292,7 @@ Estas capacidades requieren fases independientes y no se diseñan en este baseli
 
 ## 11. Próxima frontera
 
-La siguiente frontera de GiftCombo será su fase C de integración Host/vertical. La
-bifurcación semántica entre Gift y GiftCombo permanece para una fase posterior,
-preservando intactas las siete rutas base certificadas.
+La siguiente frontera de GiftCombo será diseñar la bifurcación semántica entre Gift y
+GiftCombo, incluyendo acumulación, identidad de combo y finalización. La ruta directa
+explícita A → B → C ya está completa localmente, sin modificar las siete rutas base
+certificadas.

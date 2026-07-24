@@ -24,7 +24,9 @@ enum class ETSEventHostCommandKind : std::uint8_t
     GiftCompletion,
     MemberInput,
     MemberCompletion,
-    FlowSettingsUpdate
+    FlowSettingsUpdate,
+    GiftComboInput,
+    GiftComboCompletion
 };
 
 // El variant sólo transporta el resultado propietario fuera del Host; no forma parte
@@ -36,7 +38,8 @@ using FTSEventProcessingDispatch = std::variant<
     FTSLikeProcessingDispatch,
     FTSRoomUserProcessingDispatch,
     FTSGiftProcessingDispatch,
-    FTSMemberProcessingDispatch
+    FTSMemberProcessingDispatch,
+    FTSGiftComboProcessingDispatch
 >;
 
 struct FTSEventHostCycleResult
@@ -57,8 +60,8 @@ struct FTSEventHostCycleResult
     bool bMoreCommandsPending = false;
 };
 
-// Todas las familias comparten este owner thread, Coordinator y Core para preservar
-// un único InFlight y un orden operativo global.
+// Todas las rutas operativas comparten este owner thread, Coordinator y Core para
+// preservar un único InFlight y un orden operativo global.
 class FTSEventExecutionHost final
 {
 public:
@@ -97,6 +100,9 @@ public:
     bool PostGift(FTSGiftInput Input);
 
     [[nodiscard]]
+    bool PostGiftCombo(FTSGiftInput Input);
+
+    [[nodiscard]]
     bool PostMember(FTSMemberInput Input);
 
     [[nodiscard]]
@@ -131,6 +137,12 @@ public:
 
     [[nodiscard]]
     bool PostGiftCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    );
+
+    [[nodiscard]]
+    bool PostGiftComboCompletion(
         FTSEmissionId EmissionId,
         ETSProcessingResult ProcessingResult
     );

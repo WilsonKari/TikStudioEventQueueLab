@@ -156,6 +156,17 @@ namespace
     }
 
     void ValidateOwnedDispatch(
+        const FTSGiftComboProcessingDispatch& Dispatch
+    )
+    {
+        if (Dispatch.Emission.EmissionId == 0 ||
+            Dispatch.Emission.Flow != ETSEventFlow::GiftCombo)
+        {
+            throw std::logic_error("Invalid owned GiftCombo dispatch");
+        }
+    }
+
+    void ValidateOwnedDispatch(
         const FTSMemberProcessingDispatch& Dispatch
     )
     {
@@ -232,6 +243,12 @@ public:
     bool PostGift(FTSGiftInput Input)
     {
         return PostCommand(std::move(Input));
+    }
+
+    [[nodiscard]]
+    bool PostGiftCombo(FTSGiftInput Input)
+    {
+        return PostCommand(FPostedGiftComboInput{std::move(Input)});
     }
 
     [[nodiscard]]
@@ -326,6 +343,18 @@ public:
         ValidateCompletionArguments(EmissionId, ProcessingResult);
         return PostCommand(
             FPostedGiftCompletion{EmissionId, ProcessingResult}
+        );
+    }
+
+    [[nodiscard]]
+    bool PostGiftComboCompletion(
+        FTSEmissionId EmissionId,
+        ETSProcessingResult ProcessingResult
+    )
+    {
+        ValidateCompletionArguments(EmissionId, ProcessingResult);
+        return PostCommand(
+            FPostedGiftComboCompletion{EmissionId, ProcessingResult}
         );
     }
 
@@ -458,6 +487,11 @@ public:
     }
 
 private:
+    struct FPostedGiftComboInput
+    {
+        FTSGiftInput Input{};
+    };
+
     struct FPostedChatCompletion
     {
         FTSEmissionId EmissionId = 0;
@@ -507,6 +541,13 @@ private:
             ETSProcessingResult::Failed;
     };
 
+    struct FPostedGiftComboCompletion
+    {
+        FTSEmissionId EmissionId = 0;
+        ETSProcessingResult ProcessingResult =
+            ETSProcessingResult::Failed;
+    };
+
     // El productor publica un snapshot; sólo el owner thread lo aplica y las emisiones
     // existentes conservan los settings efectivos congelados durante su admisión.
     struct FPostedFlowSettingsUpdate
@@ -530,7 +571,9 @@ private:
         FPostedGiftCompletion,
         FTSMemberInput,
         FPostedMemberCompletion,
-        FPostedFlowSettingsUpdate
+        FPostedFlowSettingsUpdate,
+        FPostedGiftComboInput,
+        FPostedGiftComboCompletion
     >;
 
     struct FPostedCommandEntry
@@ -735,6 +778,27 @@ private:
                             Update.NewSettings
                         )
                     );
+                },
+                [&](FPostedGiftComboInput& Command)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::GiftComboInput;
+                    Result.AdmissionResult.emplace(
+                        Coordinator.SubmitGiftCombo(
+                            std::move(Command.Input)
+                        )
+                    );
+                },
+                [&](const FPostedGiftComboCompletion& Completion)
+                {
+                    Result.ProcessedCommand =
+                        ETSEventHostCommandKind::GiftComboCompletion;
+                    Result.CompletionResult.emplace(
+                        Coordinator.CompleteGiftComboProcessing(
+                            Completion.EmissionId,
+                            Completion.ProcessingResult
+                        )
+                    );
                 }
             },
             PostedCommand
@@ -747,6 +811,14 @@ private:
     {
         const std::optional<ETSEventFamilyKind> FamilyKind =
             Coordinator.PeekPendingReadyFamilyKind();
+        const std::optional<ETSEventFlow> Flow =
+            Coordinator.PeekPendingReadyFlow();
+        if (FamilyKind.has_value() != Flow.has_value())
+        {
+            throw std::logic_error(
+                "Pending ready route has incomplete authority"
+            );
+        }
         if (!FamilyKind.has_value())
         {
             return std::nullopt;
@@ -867,24 +939,53 @@ private:
 
         case ETSEventFamilyKind::Gift:
         {
-            FTSGiftDispatchResult DispatchResult =
-                Coordinator.BeginGiftProcessing();
-            ValidateDispatchResult(DispatchResult);
-            if (DispatchResult.Status !=
-                ETSPipelineDispatchStatus::Dispatched)
+            if (*Flow == ETSEventFlow::Gift)
             {
-                throw std::logic_error(
-                    "Peeked Gift ready did not produce a dispatch"
+                FTSGiftDispatchResult DispatchResult =
+                    Coordinator.BeginGiftProcessing();
+                ValidateDispatchResult(DispatchResult);
+                if (DispatchResult.Status !=
+                    ETSPipelineDispatchStatus::Dispatched)
+                {
+                    throw std::logic_error(
+                        "Peeked Gift ready did not produce a dispatch"
+                    );
+                }
+
+                ValidateOwnedDispatch(*DispatchResult.Dispatch);
+                std::optional<FTSEventProcessingDispatch> Dispatch;
+                Dispatch.emplace(
+                    std::in_place_type<FTSGiftProcessingDispatch>,
+                    std::move(*DispatchResult.Dispatch)
                 );
+                return Dispatch;
             }
 
-            ValidateOwnedDispatch(*DispatchResult.Dispatch);
-            std::optional<FTSEventProcessingDispatch> Dispatch;
-            Dispatch.emplace(
-                std::in_place_type<FTSGiftProcessingDispatch>,
-                std::move(*DispatchResult.Dispatch)
+            if (*Flow == ETSEventFlow::GiftCombo)
+            {
+                FTSGiftComboDispatchResult DispatchResult =
+                    Coordinator.BeginGiftComboProcessing();
+                ValidateDispatchResult(DispatchResult);
+                if (DispatchResult.Status !=
+                    ETSPipelineDispatchStatus::Dispatched)
+                {
+                    throw std::logic_error(
+                        "Peeked GiftCombo ready did not produce a dispatch"
+                    );
+                }
+
+                ValidateOwnedDispatch(*DispatchResult.Dispatch);
+                std::optional<FTSEventProcessingDispatch> Dispatch;
+                Dispatch.emplace(
+                    std::in_place_type<FTSGiftComboProcessingDispatch>,
+                    std::move(*DispatchResult.Dispatch)
+                );
+                return Dispatch;
+            }
+
+            throw std::logic_error(
+                "Pending Gift-domain ready has an unsupported flow"
             );
-            return Dispatch;
         }
 
         case ETSEventFamilyKind::Member:
@@ -968,6 +1069,11 @@ bool FTSEventExecutionHost::PostGift(FTSGiftInput Input)
     return Impl->PostGift(std::move(Input));
 }
 
+bool FTSEventExecutionHost::PostGiftCombo(FTSGiftInput Input)
+{
+    return Impl->PostGiftCombo(std::move(Input));
+}
+
 bool FTSEventExecutionHost::PostMember(FTSMemberInput Input)
 {
     return Impl->PostMember(std::move(Input));
@@ -1022,6 +1128,17 @@ bool FTSEventExecutionHost::PostGiftCompletion(
 )
 {
     return Impl->PostGiftCompletion(
+        EmissionId,
+        ProcessingResult
+    );
+}
+
+bool FTSEventExecutionHost::PostGiftComboCompletion(
+    FTSEmissionId EmissionId,
+    ETSProcessingResult ProcessingResult
+)
+{
+    return Impl->PostGiftComboCompletion(
         EmissionId,
         ProcessingResult
     );
