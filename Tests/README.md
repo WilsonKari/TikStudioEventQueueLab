@@ -8,9 +8,9 @@ Las pruebas certifican el sistema portable desde tres perspectivas complementari
 - por familia, para mantener simetría entre los siete eventos base;
 - por integración vertical, para verificar la composición completa disponible.
 
-La certificación vigente corresponde al baseline `f5108ae`
-(`feat(gift-combo): complete pipeline lifecycle`). El propietario ejecutó las suites
-automatizadas y certificó 365 PASS / 0 FAIL. No es un resultado de CI.
+La certificación vigente corresponde al baseline `698ddb33`
+(`feat(host): complete gift-combo vertical integration`). El propietario ejecutó las
+suites automatizadas y certificó 376 PASS / 0 FAIL. No es un resultado de CI.
 
 Por separado, el propietario validó manualmente los cinco escenarios Chat del Scenario
 Runner: 5 PASS / 0 FAIL. La herramienta interactiva no está registrada en CTest y ese
@@ -22,30 +22,33 @@ resultado no altera el conteo certificado.
 | --- | --- | ---: |
 | `TikStudioEventCoreTests` | Políticas genéricas de cola | 26 |
 | `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 167 |
-| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 73 |
+| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 83 |
 | `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
 | `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
 | `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
-| `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 7 |
-| **Total** |  | **365** |
+| `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 8 |
+| **Total** |  | **376** |
 
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
 
 ## Estado local no certificado
 
-GiftCombo A y B están publicados y certificados en `f5108ae`. Sobre ese baseline se
-implementó localmente GiftCombo C: `PostGiftCombo` y
-`PostGiftComboCompletion` incorporan el carril al FIFO global, y el Host distingue
-Gift de GiftCombo mediante `FamilyKind + Flow` antes de consumir ready. El dispatch
-variant contiene ocho rutas operativas, pero el contrato conserva siete `FamilyKind`.
+GiftCombo A, B y C están publicados, compilados y certificados en `698ddb33`. La ruta
+directa explícita está completa, pero no existe clasificación automática desde el
+converter, semántica acumulativa, `ComboKey`, `bIsFinal` ni interpretación productiva
+de `repeatEnd`.
 
-Se añadieron 10 casos Host y una integración vertical explícita. El conteo estático
-local queda en 83 casos Host, 8 verticales y 376 casos totales. No se compilaron ni
-ejecutaron; la certificación vigente continúa siendo 365 PASS / 0 FAIL sobre
-`f5108ae`. El test JSON elige deliberadamente `PostGiftCombo`: no existe clasificación
-automática desde el converter, semántica acumulativa, `ComboKey`, `bIsFinal` ni
-interpretación productiva de `repeatEnd`.
+Sobre ese baseline se implementó localmente ShareMilestone A. Reutiliza
+`FTSShareInput`, que sólo contiene `User`, y añade un payload estructural y una familia
+sin estado que construye candidatos `Share / ShareMilestone`. La pareja todavía es
+rechazada por `IsSupportedFamilyFlowPair`: no existen repositorio, Coordinator,
+dispatch, completion, Host ni recorrido vertical ShareMilestone.
+
+Se registraron dos pruebas familiares sin compilarlas ni ejecutarlas. El conteo
+estático local queda en 169 casos Pipeline y 378 casos automáticos totales; la
+certificación vigente continúa siendo 376 PASS / 0 FAIL. No se implementaron
+acumulación, scope, thresholds ni un valor semántico de milestone.
 
 ## Organización por familia
 
@@ -58,6 +61,7 @@ Tests/GiftCombo/
 Tests/Like/
 Tests/Follow/
 Tests/Share/
+Tests/ShareMilestone/
 Tests/RoomUser/
 Tests/Member/
 ```
@@ -80,6 +84,8 @@ Verifica decisiones familiares, payloads, repositorios, bindings, parejas
 `FamilyKind / Flow`, acumulación y renovación Chat, ready, dispatch, completion,
 lifecycle y consistencia entre autoridades externas y Core. GiftCombo B cubre además
 su recorrido completo dentro del Pipeline y la convivencia bidireccional con Gift.
+ShareMilestone A sólo verifica la construcción estructural del candidato y la
+independencia de sus snapshots; no certifica admisión operativa.
 
 ### Host
 

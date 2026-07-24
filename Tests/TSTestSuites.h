@@ -14,6 +14,7 @@ namespace TikStudio::Tests
     void RegisterFollowPipelineCoordinatorTests(FTSTestCases& Tests);
 
     void RegisterSharePipelineFamilyTests(FTSTestCases& Tests);
+    void RegisterShareMilestonePipelineFamilyTests(FTSTestCases& Tests);
     void RegisterSharePipelineCoordinatorTests(FTSTestCases& Tests);
 
     void RegisterLikePipelineFamilyTests(FTSTestCases& Tests);

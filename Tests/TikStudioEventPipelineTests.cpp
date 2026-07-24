@@ -14,6 +14,7 @@ int main()
     RegisterChatSemanticTests(Tests);
     RegisterFollowPipelineFamilyTests(Tests);
     RegisterSharePipelineFamilyTests(Tests);
+    RegisterShareMilestonePipelineFamilyTests(Tests);
     RegisterLikePipelineFamilyTests(Tests);
     RegisterRoomUserPipelineFamilyTests(Tests);
     RegisterGiftPipelineFamilyTests(Tests);
