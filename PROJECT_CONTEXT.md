@@ -1,51 +1,57 @@
 # TikStudioEventQueueLab — contexto operativo
 
-Última actualización: 2026-07-22.
+Última actualización: 2026-07-23.
 
 Este documento describe el estado autoritativo vigente. La evolución detallada hasta
-este baseline se conserva en
+el baseline histórico `8afa3b6` se conserva en
 [`docs/history/PROJECT_CONTEXT_BASELINE_8afa3b.md`](docs/history/PROJECT_CONTEXT_BASELINE_8afa3b.md).
 
 ## 1. Estado certificado
 
 ```text
 Rama: main
-Baseline certificado: 8afa3b658ea03b69f44119981c0683de50681e82
-Commit: fix(host): consume rejected completion commands
-Certificación manual del propietario: 305 PASS / 0 FAIL
-Fecha de certificación: 2026-07-21
+Baseline certificado: deb46df944f020c5d1038ed3b6c73729105cf7dd
+Commit: feat(tools): add interactive event scenario runner
+Certificación automatizada por el propietario: 351 PASS / 0 FAIL
+Fecha de certificación: 2026-07-23
 ```
 
 | Suite | Resultado certificado |
 | --- | ---: |
-| Core | 20 PASS / 0 FAIL |
-| Pipeline | 117 PASS / 0 FAIL |
-| Host | 69 PASS / 0 FAIL |
+| Core | 26 PASS / 0 FAIL |
+| Pipeline | 153 PASS / 0 FAIL |
+| Host | 73 PASS / 0 FAIL |
 | Adapter | 62 PASS / 0 FAIL |
 | JSON Decoder | 20 PASS / 0 FAIL |
 | Checklist | 10 PASS / 0 FAIL |
 | Vertical Integration | 7 PASS / 0 FAIL |
-| **Total** | **305 PASS / 0 FAIL** |
+| **Total** | **351 PASS / 0 FAIL** |
 
-Estos resultados corresponden a una ejecución y certificación manual realizada por el
-propietario. No son un resultado de CI ni fueron ejecutados por el agente que actualizó
-este documento.
+Estos resultados corresponden a una ejecución automatizada de las suites realizada y
+certificada por el propietario. No son un resultado de CI ni fueron ejecutados por el
+agente que actualizó este documento.
+
+### Validación manual del Scenario Runner
+
+El propietario validó manualmente los cinco escenarios Chat disponibles en
+`TikStudioEventScenarioRunner`: 5 PASS / 0 FAIL. Esta comprobación interactiva no forma
+parte de CTest ni altera los 351 casos certificados.
 
 ### Estado local pendiente de certificación
 
-La base de trabajo actual es `f11fd03` (`fix(chat): synchronize ready batches and
-semantic tests`). Sobre ella se implementó localmente una actualización preparada de
-scheduling para emisiones `Pending` y la renovación opcional del TTL de lotes Chat al
-acumular. Core conserva el TTL efectivo admitido como snapshot privado, renueva sin
-acortar el vencimiento y republica sus índices derivados con una única revisión.
+Sobre `deb46df` se implementó localmente GiftCombo A. Esta fase reutiliza
+`FTSGiftInput`, introduce un payload y una familia propios, y produce directamente un
+candidato con `FamilyKind = Gift` y `Flow = GiftCombo`.
 
-Chat prepara la renovación, el reemplazo exacto de su índice y el payload acumulado
-antes del commit autoritativo. La prioridad del lote permanece congelada y el índice
-semántico continúa almacenando únicamente `EmissionId + ExpiresAt`.
+La pareja `Gift / GiftCombo` permanece deliberadamente no autorizada por
+`IsSupportedFamilyFlowPair`; todavía no existen repositorio, Coordinator, dispatch,
+completion, lifecycle, Host ni integración vertical para este carril. Tampoco se
+implementó la bifurcación semántica que decidirá cuándo un Gift debe seguir Gift o
+GiftCombo.
 
-Se registraron localmente 26 casos Core y 153 casos Pipeline; junto con los runners no
-modificados suman 347 casos. Estos conteos son estáticos: esta tarea no compiló ni
-ejecutó las pruebas y no sustituye la certificación publicada de 305 PASS / 0 FAIL.
+Se registraron localmente dos casos Pipeline, llevando el conteo estático a 155 casos
+Pipeline y 353 casos totales. No se compiló ni se ejecutó ninguna prueba durante esta
+fase; estos conteos no sustituyen la certificación publicada de 351 PASS / 0 FAIL.
 
 ## 2. Objetivo del proyecto
 
@@ -186,7 +192,8 @@ Estas rutas base no son placeholders: conservan sus datos portables y producen e
 correspondiente. Follow, Share, Like, RoomUser, Gift y Member mantienen una semántica
 directa. Chat agrega mensajes por usuario mientras su lote continúa `Pending`, conserva
 la prioridad admitida y puede renovar el vencimiento usando el TTL efectivo congelado
-por Core. Ninguna familia calcula todavía tasas, milestones o flujos derivados.
+por Core. Las rutas base no calculan todavía tasas, milestones ni seleccionan flujos
+derivados; GiftCombo A sólo permite construir directamente su candidato estructural.
 
 ## 6. Flujos derivados reservados
 
@@ -201,10 +208,11 @@ RoomUserTop1Change
 ShareMilestone
 ```
 
-Estos valores existen en `ETSEventFlow` y poseen settings en Core, pero todavía no
-tienen semántica operativa. `IsSupportedFamilyFlowPair` no los autoriza como parejas
-activas del Pipeline, ninguna familia los emite y no deben considerarse implementados.
-Sus defaults actuales son reservas técnicas, no requisitos finales de producto.
+Estos valores existen en `ETSEventFlow` y poseen settings en Core. GiftCombo A añade
+únicamente la forma estructural de su candidato tipado: continúa sin una pareja
+autorizada ni recorrido operativo. Los otros carriles tampoco tienen semántica
+operativa. Ninguno debe considerarse integrado; sus defaults actuales son reservas
+técnicas, no requisitos finales de producto.
 
 ## 7. Invariantes compartidas vigentes
 
@@ -231,19 +239,23 @@ La organización vigente de runners, suites y archivos se documenta en
 
 | Capa | Casos certificados |
 | --- | ---: |
-| Core | 20 |
-| Pipeline | 117 |
-| Host | 69 |
+| Core | 26 |
+| Pipeline | 153 |
+| Host | 73 |
 | Adapter | 62 |
 | JSON Decoder | 20 |
 | Checklist | 10 |
 | Vertical Integration | 7 |
-| **Total** | **305** |
+| **Total** | **351** |
 
 Las suites por capa verifican contratos específicos; las pruebas familiares residen en
 `Tests/<Evento>/`. Existe una prueba vertical por cada evento base y esas siete pruebas
-componen Adapter, Host, Pipeline y Core. El propietario ejecutó y certificó manualmente
-el resultado total de 305 PASS / 0 FAIL sobre `8afa3b6`.
+componen Adapter, Host, Pipeline y Core. El propietario ejecutó las suites automatizadas
+y certificó el resultado total de 351 PASS / 0 FAIL sobre `deb46df`.
+
+GiftCombo A registra localmente dos casos adicionales en Pipeline. El conteo resultante
+de 155 casos Pipeline y 353 casos totales es sólo estático y permanece sin compilar,
+ejecutar ni certificar.
 
 ## 9. Flujo de trabajo
 
@@ -261,7 +273,7 @@ el resultado total de 305 PASS / 0 FAIL sobre `8afa3b6`.
 
 Continúan fuera del alcance operativo actual:
 
-- lógica de los seis flujos derivados;
+- recorrido operativo B/C de GiftCombo y lógica de los demás flujos derivados;
 - WebSocket productivo hacia Host;
 - integración UE5 y Blueprint;
 - scheduler o Tick productivo;
@@ -276,5 +288,7 @@ Estas capacidades requieren fases independientes y no se diseñan en este baseli
 
 ## 11. Próxima frontera
 
-La siguiente frontera será definir la primera semántica derivada preservando intactas
-las siete rutas base certificadas.
+La siguiente frontera de GiftCombo será autorizar su pareja únicamente junto con el
+repositorio, Coordinator, dispatch, completion y lifecycle correspondientes. La
+bifurcación semántica entre Gift y GiftCombo y la integración Host/vertical permanecen
+para fases posteriores, preservando intactas las siete rutas base certificadas.

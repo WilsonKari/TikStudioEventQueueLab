@@ -17,6 +17,7 @@ int main()
     RegisterLikePipelineFamilyTests(Tests);
     RegisterRoomUserPipelineFamilyTests(Tests);
     RegisterGiftPipelineFamilyTests(Tests);
+    RegisterGiftComboPipelineFamilyTests(Tests);
     RegisterMemberPipelineFamilyTests(Tests);
 
     RegisterPipelineInfrastructureTests(Tests);

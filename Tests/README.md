@@ -8,33 +8,41 @@ Las pruebas certifican el sistema portable desde tres perspectivas complementari
 - por familia, para mantener simetría entre los siete eventos base;
 - por integración vertical, para verificar la composición completa disponible.
 
-La certificación vigente corresponde al baseline `8afa3b6`
-(`fix(host): consume rejected completion commands`). El propietario ejecutó manualmente
-las suites el 2026-07-21 y certificó 305 PASS / 0 FAIL. No es un resultado de CI.
+La certificación vigente corresponde al baseline `deb46df`
+(`feat(tools): add interactive event scenario runner`). El propietario ejecutó las
+suites automatizadas y certificó 351 PASS / 0 FAIL. No es un resultado de CI.
+
+Por separado, el propietario validó manualmente los cinco escenarios Chat del Scenario
+Runner: 5 PASS / 0 FAIL. La herramienta interactiva no está registrada en CTest y ese
+resultado no altera el conteo certificado.
 
 ## Runners actuales
 
 | Runner CTest | Responsabilidad | Casos certificados |
 | --- | --- | ---: |
-| `TikStudioEventCoreTests` | Políticas genéricas de cola | 20 |
-| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 117 |
-| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 69 |
+| `TikStudioEventCoreTests` | Políticas genéricas de cola | 26 |
+| `TikStudioEventPipelineTests` | Familias, repositorios, bindings, dispatch y lifecycle | 153 |
+| `TikStudioEventHostTests` | FIFO, owner thread, comandos, completions y recuperación | 73 |
 | `TikStudioTikFinityAdapterTests` | Conversiones TikFinity hacia inputs portables | 62 |
 | `TikStudioTikFinityJsonDecoderTests` | Decodificación y validación del evento mapeado | 20 |
 | `TikStudioTikFinityChecklistTests` | Cobertura del contrato de los siete eventos | 10 |
 | `TikStudioVerticalIntegrationTests` | Composición portable end-to-end por familia | 7 |
-| **Total** |  | **305** |
+| **Total** |  | **351** |
 
 Los siete runners están declarados explícitamente como ejecutables y registrados en
 CTest desde `CMakeLists.txt`.
 
 ## Estado local no certificado
 
-Sobre `f11fd03` se añadieron seis casos Core para la actualización de scheduling y tres
-casos Pipeline netos para la renovación Chat. El registro local queda en 26 casos Core,
-153 Pipeline y 347 casos totales. Son conteos estáticos: no se compiló ni se ejecutó
-ninguna suite durante esta tarea, por lo que la certificación vigente continúa siendo
-305 PASS / 0 FAIL sobre `8afa3b6`.
+Sobre `deb46df` se añadió GiftCombo A como decisión familiar directa. Reutiliza
+`FTSGiftInput`, pero posee `FTSGiftComboPayload` y `FTSGiftComboFamily`; el candidato
+resultante conserva el dominio `Gift` y selecciona `Flow = GiftCombo`.
+
+Se registraron dos casos en Pipeline sin ejecutarlos. El conteo estático local queda en
+155 casos Pipeline y 353 casos totales, pero la certificación vigente continúa siendo
+351 PASS / 0 FAIL sobre `deb46df`. La pareja `Gift / GiftCombo` sigue no autorizada y
+las fases B/C, la bifurcación semántica, la acumulación y la integración operativa o
+end-to-end permanecen pendientes.
 
 ## Organización por familia
 
@@ -43,6 +51,7 @@ Las pruebas específicas de cada evento se distribuyen en:
 ```text
 Tests/Chat/
 Tests/Gift/
+Tests/GiftCombo/
 Tests/Like/
 Tests/Follow/
 Tests/Share/
@@ -66,7 +75,9 @@ genérico y preparación/commit de las mutaciones.
 
 Verifica decisiones familiares, payloads, repositorios, bindings, parejas
 `FamilyKind / Flow`, acumulación y renovación Chat, ready, dispatch, completion,
-lifecycle y consistencia entre autoridades externas y Core.
+lifecycle y consistencia entre autoridades externas y Core. GiftCombo A sólo cubre la
+construcción del candidato tipado y la independencia de su snapshot; no cubre todavía
+admisión ni lifecycle.
 
 ### Host
 
